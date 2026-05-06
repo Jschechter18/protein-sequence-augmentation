@@ -1,0 +1,13 @@
+# data files
+data/
+
+# model files
+models/
+
+# venv
+.venv/
+venv/
+
+# pycache
+__pycache__/
+*.pyc
