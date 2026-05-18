@@ -120,14 +120,14 @@ data_to_save = \
             """,
         # -----------------------------------------------------------------------------------------------------------------------
         "Additional Resources":
-            """""
+            """
             - Relevant literature on microbiome research and deep learning techniques.
             - Access to computational resources (e.g., GPUs) for model training.
             - Collaboration with domain experts in microbiology and health policy.
             """,
         # -----------------------------------------------------------------------------------------------------------------------
         "Proposed by": "Ashley Gyapomah and Joshua Schechter",
-        "Proposed by email": "ashleygya03@gwu.edu" and "j.schechter@gwu.edu",
+        "Proposed by email": "ashleygya03@gwu.edu; j.schechter@gwu.edu",
         "instructor": "Amir Jafari",
         "instructor_email": "ajafari@gwu.edu",
         "collaborator": "",
@@ -136,12 +136,22 @@ data_to_save = \
         # -----------------------------------------------------------------------------------------------------------------------
     }
 
+def save_to_markdown(data, output_file_path):
+    with open(output_file_path, "w") as md:
+        md.write(f"# {data['project_name']}\n\n")
+        md.write(f"**Version:** {data['Version']}\n\n")
+        md.write(f"**Year:** {data['Year']}\n\n")
+        md.write(f"**Semester:** {data['Semester']}\n\n")
 
+        for key, value in data.items():
+            if key not in ["project_name", "Version", "Year", "Semester"]:
+                md.write(f"## {key}\n\n{value}\n\n")
 
-os.makedirs(
-    os.getcwd() + os.sep + f'Arxiv{os.sep}Proposals{os.sep}{data_to_save["Year"]}{os.sep}{data_to_save["Semester"]}{os.sep}{data_to_save["Version"]}',
-    exist_ok=True)
-output_file_path = os.getcwd() + os.sep + f'Arxiv{os.sep}Proposals{os.sep}{data_to_save["Year"]}{os.sep}{data_to_save["Semester"]}{os.sep}{data_to_save["Version"]}{os.sep}'
-save_to_json(data_to_save, output_file_path + "input.json")
-shutil.copy(__file__, output_file_path)
-print(f"Data saved to {output_file_path}")
+output_folder = os.path.join(os.getcwd(), "proposal")
+os.makedirs(output_folder, exist_ok=True)
+
+save_to_json(data_to_save, os.path.join(output_folder, "input.json"))
+save_to_markdown(data_to_save, os.path.join(output_folder, "proposal.md"))
+
+shutil.copy(__file__, output_folder)
+print(f"Data saved to {output_folder}")

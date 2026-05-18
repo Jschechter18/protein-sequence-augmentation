@@ -1,55 +1,42 @@
-import json
-import os
-import shutil
+# Self-Supervised Autoencoder Representation Learning for Low-Label Microbiome Disease Classification
+
+**Version:** 7
+
+**Year:** 2027
+
+**Semester:** Summer
+
+## Objective
 
 
-def save_to_json(data, output_file_path):
-    with open(output_file_path, 'w') as output_file:
-        json.dump(data, output_file, indent=2)
-
-
-data_to_save = \
-    {
-        # -----------------------------------------------------------------------------------------------------------------------
-        "Version":
-            """7""",
-        # -----------------------------------------------------------------------------------------------------------------------
-        "Year":
-            """2027""",
-        # -----------------------------------------------------------------------------------------------------------------------
-        "Semester":
-            """Summer""",
-        # -----------------------------------------------------------------------------------------------------------------------
-        "project_name":
-            """Self-Supervised Autoencoder Representation Learning for Low-Label Microbiome Disease Classification""",
-        # -----------------------------------------------------------------------------------------------------------------------
-        "Objective":
-            """
             This project aims to develop a deep learning pipeline that uses autoencoder-based self-supervised learning to identify generalizable latent representations of human gut microbiome profiles. The central goal is to determine whether an autoencoder trained on large-scale unlabeled gut microbiome samples can learn useful microbial community features that improve downstream disease classification tasks when labeled data are limited.
 
             The project will compare disease classification performance using three feature representations: raw taxonomic abundance features, PCA-reduced features, and autoencoder-derived latent embeddings. Downstream classification tasks may include microbiome-associated conditions such as inflammatory bowel disease, colorectal cancer, obesity, type 2 diabetes, or depression-related phenotypes, depending on label availability and sample size.
 
             The broader objective is to evaluate whether deep representation learning can address a common challenge in microbiome-based prediction: high-dimensional microbial profiles combined with small labeled disease cohorts.
-            """,
-        # -----------------------------------------------------------------------------------------------------------------------
-        "Dataset":
-            """
+            
+
+## Dataset
+
+
             The primary dataset for this project will be curatedMetagenomicData, a publicly available R/Bioconductor resource that provides standardized human microbiome profiles across many studies. The package includes taxonomic relative abundance, gene families, marker abundance, pathway abundance, pathway coverage, and sample-level metadata. Taxonomic profiles are generated using MetaPhlAn3, while functional profiles are generated using HUMAnN3. 
 
             For this project, the initial pretraining dataset will consist of unlabeled human gut/stool microbiome samples using species-level relative abundance features. Disease labels will not be required during autoencoder pretraining. Metadata will be used mainly to filter samples by body site and later to identify labeled subsets for downstream disease-classification tasks.
 
             The cleaned input matrix for pretraining will be structured as samples by microbial features, where each row represents one gut microbiome sample and each column represents a microbial taxon or pathway feature. Additional downstream benchmark datasets may include labeled disease subsets from curatedMetagenomicData or external microbiome resources such as MicrobiomeHD, depending on feasibility.
 
-            """,
-        # -----------------------------------------------------------------------------------------------------------------------
-        "Rationale":
-            """
+            
+
+## Rationale
+
+
             The rationale for this project is to leverage deep representation learning techniques to improve microbiome-based disease prediction. By utilizing large, unlabeled datasets for pretraining, we aim to capture complex patterns in microbial communities that may be indicative of disease states. This approach has the potential to enhance the performance of downstream classification tasks, even with limited labeled data.
 
-            """,
-        # -----------------------------------------------------------------------------------------------------------------------
-        "Approach":
-            """ The approach for this project will involve several key steps:
+            
+
+## Approach
+
+ The approach for this project will involve several key steps:
 
             1. Data Preprocessing: We will begin by preprocessing the curatedMetagenomicData dataset to create the cleaned input matrix for pretraining. This will involve filtering samples by body site and ensuring that the data is structured correctly for model input.
 
@@ -61,10 +48,11 @@ data_to_save = \
 
             5. Evaluation: The final model will be evaluated on a separate test set to assess its performance in predicting disease states from microbiome profiles. We will use standard metrics such as accuracy, precision, recall, and F1-score to quantify its performance.
 
-            """,
-        # -----------------------------------------------------------------------------------------------------------------------
-        "Timeline":
-            """
+            
+
+## Timeline
+
+
             - Weeks 1-2: Data preprocessing and exploration of the curatedMetagenomicData dataset.
             - Weeks 3-4: Model selection and pretraining on unlabeled data.
             - Weeks 5-6: Fine-tuning on labeled disease subsets.
@@ -73,10 +61,11 @@ data_to_save = \
             - Weeks 11-12: Pilot testing with end-users and gathering feedback.
             - Weeks 13: Project wrap-up and documentation.
 
-            """,
-        # -----------------------------------------------------------------------------------------------------------------------
-        "Expected Number Students":
-            """
+            
+
+## Expected Number Students
+
+
             RECOMMENDED: 2 students
 
             ROLE DISTRIBUTION FOR 1 STUDENTS:
@@ -90,15 +79,17 @@ data_to_save = \
             Both students will contribute to literature review, interpretation, final report writing, presentation development, and GitHub documentation.
 
 
-            """,
-        # -----------------------------------------------------------------------------------------------------------------------
-        "Research Contributions":
-            """
+            
+
+## Research Contributions
+
+
             This project has the potential to contribute to the field of microbiome research by demonstrating the utility of deep representation learning techniques for improving disease prediction from microbiome data. By leveraging large, unlabeled datasets for pretraining, we can capture complex patterns in microbial communities that may be indicative of disease states. The findings from this project could inform future research on microbiome-based diagnostics and personalized medicine.
-            """,
-        # -----------------------------------------------------------------------------------------------------------------------
-        "Possible Issues":
-            """
+            
+
+## Possible Issues
+
+
             TECHNICAL CHALLENGES AND SOLUTIONS: 
             - Challenge: Limited labeled data for training supervised models.
               Solution: Utilize transfer learning and few-shot learning techniques to improve model performance with minimal labeled data.
@@ -117,31 +108,41 @@ data_to_save = \
             - Weeks 9-10: Focus on model development and training, incorporating feedback from earlier phases.
             - Weeks 11-12: Conduct comprehensive model evaluations and comparisons, refining approaches as needed.
             - Weeks 13-14: Prepare final reports and presentations, highlighting key findings and contributions.
-            """,
-        # -----------------------------------------------------------------------------------------------------------------------
-        "Additional Resources":
-            """""
+            
+
+## Additional Resources
+
+
             - Relevant literature on microbiome research and deep learning techniques.
             - Access to computational resources (e.g., GPUs) for model training.
             - Collaboration with domain experts in microbiology and health policy.
-            """,
-        # -----------------------------------------------------------------------------------------------------------------------
-        "Proposed by": "Ashley Gyapomah and Joshua Schechter",
-        "Proposed by email": "ashleygya03@gwu.edu" and "j.schechter@gwu.edu",
-        "instructor": "Amir Jafari",
-        "instructor_email": "ajafari@gwu.edu",
-        "collaborator": "",
-        "funding_opportunity": "",
-        "github_repo": "https://github.com/Jschechter18/protein-sequence-augmentation",
-        # -----------------------------------------------------------------------------------------------------------------------
-    }
+            
+
+## Proposed by
+
+Ashley Gyapomah and Joshua Schechter
+
+## Proposed by email
+
+ashleygya03@gwu.edu; j.schechter@gwu.edu
+
+## instructor
+
+Amir Jafari
+
+## instructor_email
+
+ajafari@gwu.edu
+
+## collaborator
 
 
 
-os.makedirs(
-    os.getcwd() + os.sep + f'Arxiv{os.sep}Proposals{os.sep}{data_to_save["Year"]}{os.sep}{data_to_save["Semester"]}{os.sep}{data_to_save["Version"]}',
-    exist_ok=True)
-output_file_path = os.getcwd() + os.sep + f'Arxiv{os.sep}Proposals{os.sep}{data_to_save["Year"]}{os.sep}{data_to_save["Semester"]}{os.sep}{data_to_save["Version"]}{os.sep}'
-save_to_json(data_to_save, output_file_path + "input.json")
-shutil.copy(__file__, output_file_path)
-print(f"Data saved to {output_file_path}")
+## funding_opportunity
+
+
+
+## github_repo
+
+https://github.com/Jschechter18/protein-sequence-augmentation
+
