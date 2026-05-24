@@ -10,9 +10,22 @@
 
 ## 1 Objective:  
 
-            This project will test whether adding controlled noise to the latent vector of a trained protein sequence autoencoder, then decoding that perturbed vector back into a protein sequence, can generate useful protein sequence augmentations. The main goal is to determine whether latent-space augmentation can improve protein sequence classification performance compared with no augmentation and direct mutation-based augmentation baselines.
+            This project will test whether adding controlled noise to the latent vector of a trained protein sequence autoencoder,
+            then decoding that perturbed vector back into a protein sequence, can generate useful protein sequence augmentations.
+            The main goal is to determine whether latent-space augmentation can improve protein sequence classification performance
+            compared with no augmentation and direct mutation-based augmentation baselines. If we can show that this augmentation strategy
+            is at least comperable, we want to find a way to argue that this is due to label preservation.
 
-            The project is motivated by the label-preservation problem in protein sequence augmentation. In many protein classification tasks, an augmented sequence inherits the original label, but even small amino acid changes can potentially alter biological meaning. This project will evaluate whether autoencoder-based latent-space perturbation can produce augmented sequences that are more useful, more protein-like, and potentially more label-preserving than direct input-level mutations.
+            The project is motivated by the label-preservation problem in protein sequence augmentation. In many protein classification
+            tasks, an augmented sequence inherits the original label, but even small amino acid changes can potentially alter biological
+            meaning, as proteins function can be extremely sensitive to mutations. This project will evaluate whether autoencoder-based
+            latent-space perturbation can produce augmented sequences that are more useful, more protein-like, and potentially more
+            label-preserving than direct input-level mutations.
+            
+            Models to train include:
+            - VAE (for latent-space augmentation)
+            - ESM-2 pretrained Classification
+            - 1D-CNN Classification
 
             
 
@@ -21,19 +34,33 @@
 
 ## 2 Dataset:  
 
-            The project will use the PEER benchmark as the primary source of protein sequence classification datasets. The initial focus will be on at least one protein classification task, such as protein solubility or protein localization, depending on data availability, task suitability, and implementation feasibility.
+            The project will use the PEER benchmark as the primary source of protein sequence classification datasets. The initial focus
+            will be on at least one protein classification task, such as protein solubility (binary classification) or protein localization (multiclass),
+            task suitability and implementation feasibility.
 
-            The dataset should include protein sequences, labels, and predefined train, validation, and test splits if available. The clean test set will be kept fixed across all experimental conditions so that each augmentation strategy is evaluated fairly under the same downstream classification setup.
+            The dataset should include protein sequences, labels, and predefined train, validation, and test splits (provided by PEER benchmark). The
+            clean test set will be kept fixed across all experimental conditions so that each augmentation strategy is evaluated fairly under
+            the same downstream classification setup.
 
             
 
 ## 3 Rationale:  
 
-            Protein sequence classification often occurs in low-data settings, where labeled biological data can be expensive, time-consuming, or difficult to obtain. Data augmentation is useful in these settings because it can increase the amount of training data and potentially improve downstream model generalization.
+            Protein sequence classification often occurs in low-data settings, where labeled biological data can be expensive, time-consuming,
+            or difficult to obtain. Data augmentation is useful in these settings because it can increase the amount of training data and
+            potentially improve downstream model generalization.
 
-            However, direct input-level augmentation of amino acid sequences can be risky. A random amino acid substitution, insertion, deletion, or even a conservative mutation may change biologically meaningful properties of the protein. For example, if a protein is originally labeled as soluble, a single amino acid change could theoretically alter its folding, stability, localization, or solubility. Since the true biological label of the mutated sequence is usually unknown, the augmented sequence may be incorrectly assigned the original label. This violates the label-preservation assumption and can hurt model performance.
+            However, direct input-level augmentation of amino acid sequences can be risky. A random amino acid substitution, insertion,
+            deletion, or even a conservative mutation may change biologically meaningful properties of the protein, and hence the true label. For
+            example, if a protein is originally labeled as soluble, a single amino acid change could theoretically alter its folding, stability,
+            localization, or solubility. Since the true biological label of the mutated sequence is usually unknown, the augmented sequence may be
+            incorrectly assigned the original label. This violates the label-preservation assumption and can hurt model performance.
 
-            Latent-space augmentation may be worth testing because a trained protein sequence autoencoder or variational autoencoder learns a compressed numerical representation of protein sequences. If this learned latent space captures useful biological structure, then small controlled perturbations in latent space may produce decoded sequences that remain closer to the original protein's label-relevant properties than direct input-level mutations. This does not guarantee label preservation, but it creates a testable hypothesis: latent-space noise augmentation may produce more useful training examples than direct mutation baselines.
+            Latent-space augmentation may be worth testing because a trained protein sequence autoencoder or variational autoencoder learns a
+            compressed numerical representation of protein sequences. If this learned latent space captures useful biological structure--which from our 
+            literature review we find that it likely does--then small controlled perturbations in latent space may produce decoded sequences that remain
+            closer to the original protein's label-relevant properties than direct input-level mutations. This does not guarantee label preservation,
+            but it creates a testable hypothesis: latent-space noise augmentation may produce more useful training examples than direct mutation baselines.
 
             
 
@@ -42,10 +69,18 @@
             The project will compare latent-space noise augmentation against direct mutation-based augmentation baselines for protein sequence classification.
 
             Experimental plan:
+            
+            0. Data preparation and preprocessing.
+                - Load the selected PEER benchmark dataset and prepare train, validation, and test splits.
+                - Preprocess protein sequences as needed for the autoencoder and classifier, including tokenization and encoding.
+                - Make sure to have the data fraction and mutation rate set already.
+                - For the train set, add a variable column called "augment_candidate" that will be a boolean value. When training, for each sequence we check to see if 
+                that sequence is an augment candidate. If it is, we apply the given augmentation strategy to that sequence. This allows for consistency across all models.
 
-            1. Train a protein sequence autoencoder or variational autoencoder as well as possible.
+            1. Train a protein sequence autoencoder (likely a Variational Autoencoder (VAE)) as well as possible.
                - The model will learn to encode protein sequences into latent vectors and decode latent vectors back into protein-like sequences.
                - Autoencoder quality will be important because poor reconstruction or poor decoding may limit the usefulness of latent-space augmentation.
+               - This means training the autoencoder alone is a key task for this project.
 
             2. Use the encoder to map original protein sequences into latent vectors.
                - Each original protein sequence will be passed through the encoder to obtain a latent representation z.
@@ -53,6 +88,7 @@
             3. Add small controlled noise to the latent vector z.
                - Noise will be applied at a fixed rate or magnitude for simplicity.
                - The goal is to slightly perturb the learned representation without moving too far away from the original sequence's latent neighborhood.
+               - This is where a VAE would be the most useful.
 
             4. Decode the perturbed latent vector back into a new protein sequence.
                - The decoder will generate a new protein-like sequence from the noisy latent vector.
@@ -63,7 +99,7 @@
                - Four versions of the classifier will be trained:
                  i. No augmentation
                  ii. Random substitution
-                 iii. BLOSUM/conservative mutation
+                 iii. BLOSUM/conservative mutation -> (note: this one will be pretty good already, so if latent-space can at least correlate to this, that is a good result)
                  iv. Latent-space noise augmentation
 
             6. Use a fixed data rate and fixed augmentation/mutation rate for simplicity.
@@ -87,14 +123,21 @@
 
 ## 5 Timeline:  
 
-            Week 1:    Finalize project scope, select PEER classification task, review dataset format, define evaluation protocol, and confirm train/validation/test split strategy.
-            Week 2:    Build dataset loading, preprocessing, tokenization, and baseline data-cleaning pipeline for the selected PEER task.
+            Note: subject to change
+            Week 1:    Finalize research question and project proposal. Find some papers for literature review and related work for justification.
+            Week 2:    Work on dataset and PEER classification tasks. Build dataset loading from peer repository. Begin preprocessing, tokenization, and baseline data-cleaning pipeline for the selected PEER task.
             Week 3:    Implement no-augmentation classifier baseline using ESM-2 or an ESM-2-based sequence classification pipeline.
-            Week 4:    Implement random substitution and BLOSUM/conservative mutation augmentation baselines at a fixed augmentation rate.
-            Week 5:    Train and validate the baseline classifiers under no augmentation, random substitution, and BLOSUM/conservative mutation settings.
-            Week 6:    Design and implement the protein sequence autoencoder or variational autoencoder architecture, including encoder, latent vector, decoder, and sequence reconstruction workflow.
-            Week 7:    Train the autoencoder/VAE, monitor reconstruction quality, tune basic hyperparameters, and inspect decoded sequence validity.
-            Week 8:    Implement latent-space noise augmentation by encoding sequences, perturbing latent vector z, decoding the perturbed vector, and saving generated augmented sequences.
+            Week 3:    1. Implement classifier training pipeline. There will be a space for augmentation, but early on we can set augmentation to false, so we can begin training the baseline classfier model.
+                       2. Begin implementing the autoencoder architecture and consider the pipeline. This will be important to start early as it is both the most difficult model to train, but also the most important.
+            Week 4:    1. Implement random substitution and BLOSUM/conservative mutation augmentation baselines at a fixed augmentation rate. Once this pipeline is ready, we can start training these baselines.
+                       2. Implement the training pipeline for the autoencoder. Take time to ensure this is done well, do not rush this.
+            Week 5:    1. Train and validate the baseline classifiers under no augmentation, random substitution, and BLOSUM/conservative mutation settings.
+                       2. Finalize training pipeline for autoencoder and begin training process. Try to get outputs to determine low hanging fruit improvements.
+            Week 6:    Train the autoencoder. Tune basic hyperparameters, and inspect decoded sequence validity.
+            Week 7:    1. Continue the autoencoder/VAE, monitor reconstruction quality, tune basic hyperparameters, and inspect decoded sequence validity.
+                       2. Implement latent-space noise augmentation by encoding sequences, perturbing latent vector z, decoding the perturbed vector, and saving generated augmented sequences.
+            Week 8:    1. Implement the rest of the classifier pipeline to allow for latent vector augmentation strategy.
+                       2. Finish the latent-space noise augmentation implementation so the classification pipeline can start training with it next week.
             Week 9:    Train the ESM-2 classifier using latent-space noise augmentation under the same fixed data rate and augmentation rate as the baselines.
             Week 10:   Evaluate all classifier variants on the same clean validation and test sets using F1 score and any additional classification metrics.
             Week 11:   Compute sequence-quality and biological plausibility indicators, including VEP-style scores as indicators only, sequence identity, edit distance, BLOSUM score, invalid sequence rate, and reconstruction-related metrics.
@@ -107,7 +150,7 @@
             KEY MILESTONES:
             - Week 2:  Dataset and preprocessing pipeline completed
             - Week 4:  Mutation-based augmentation baselines implemented
-            - Week 5:  Initial classifier baselines trained
+            - Week 5:  Initial classifier baselines trained, and pipeline for autoencoder training finalized
             - Week 7:  Autoencoder/VAE trained and evaluated for reconstruction quality
             - Week 9:  Latent-space augmentation classifier trained
             - Week 12: Full metric comparison completed
@@ -135,15 +178,15 @@
             ROLE DISTRIBUTION FOR 2 STUDENTS:
 
             Student 1:
-            - Responsibilities: Lead data setup and autoencoder training
+            - Responsibilities: Lead data setup, augemntation pipeline structure, autoencoder training
             - Prepare and clean the PEER benchmark dataset
             - Build sequence preprocessing and tokenization workflows
-            - Implement and train the protein sequence autoencoder or VAE
+            - Implement and train the protein sequence autoencoder/VAE
             - Evaluate reconstruction quality and decoded sequence validity
             - Generate latent-space augmented sequences
 
             Student 2:
-            - Responsibilities: Lead classification pipeline and augmentation pipeline
+            - Responsibilities: Lead classification pipeline implementation and augmentation pipeline
             - Implement the ESM-2 classifier or ESM-2-based classification workflow
             - Implement no-augmentation, random substitution, and BLOSUM/conservative mutation baselines
             - Train classifiers under the four augmentation settings
