@@ -2,7 +2,7 @@
 # Capstone Proposal
 ## Protein Sequence Augmentations in Latent Space
 ### Proposed by: Joshua Schechter and Ashley Gyapomah
-#### Email: 
+#### Email: j.schechter@gwu.edu, ashleygya03@gwu.edu
 #### Advisor: Amir Jafari
 #### The George Washington University, Washington DC  
 #### Data Science Program
@@ -16,7 +16,7 @@
 
             
 
-![Figure 1: Example figure](2026_Summer_7.png)
+![Figure 1: Example figure](2026_Summer_0.png)
 *Figure 1: Caption*
 
 ## 2 Dataset:  
