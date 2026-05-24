@@ -57,10 +57,13 @@
             incorrectly assigned the original label. This violates the label-preservation assumption and can hurt model performance.
 
             Latent-space augmentation may be worth testing because a trained protein sequence autoencoder or variational autoencoder learns a
-            compressed numerical representation of protein sequences. If this learned latent space captures useful biological structure--which from our 
-            literature review we find that it likely does--then small controlled perturbations in latent space may produce decoded sequences that remain
-            closer to the original protein's label-relevant properties than direct input-level mutations. This does not guarantee label preservation,
-            but it creates a testable hypothesis: latent-space noise augmentation may produce more useful training examples than direct mutation baselines.
+            compressed numerical representation of protein sequences. In previous studies, the latent-space in VAEs were used to generate protein
+            variants could sometimes preserve biological functionality, (Hawkins-Hooker, et al. 2021).
+            
+            Since it has been shown that biological information may be preserved in latent-space, small controlled perturbations in latent space may
+            produce decoded sequences that remain closer to the original protein's label-relevant properties than direct input-level mutations. This
+            does not guarantee label preservation, but it creates a testable hypothesis: latent-space noise augmentation may produce more useful
+            training examples than direct mutation baselines.
 
             
 
