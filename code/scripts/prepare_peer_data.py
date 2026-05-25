@@ -30,7 +30,7 @@ except ImportError:
     lmdb = None
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 PEER_REPO = REPO_ROOT / "external" / "PEER_Benchmark"
 RAW_ROOT = REPO_ROOT / "data" / "raw" / "peer"
 PROCESSED_ROOT = REPO_ROOT / "data" / "processed" / "peer"

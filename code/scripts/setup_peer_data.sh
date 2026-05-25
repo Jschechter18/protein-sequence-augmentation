@@ -2,7 +2,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PEER_REPO_DIR="$REPO_ROOT/external/PEER_Benchmark"
 PYTHON_BIN="${PYTHON:-python}"
 
@@ -36,6 +36,6 @@ fi
 
 echo "[PEER] Preparing official localization and solubility splits"
 cd "$REPO_ROOT"
-"$PYTHON_BIN" scripts/prepare_peer_data.py
+"$PYTHON_BIN" code/scripts/prepare_peer_data.py
 
 echo "[PEER] Setup complete"

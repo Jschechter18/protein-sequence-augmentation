@@ -15,26 +15,29 @@
 ## Setup:
 
 1. Create and activate python virtual environemnt
-   bash```
+   bash
+
+   ```
    python -m venv .venv
    source .venv/bin/activate
 
-   ```
 
    ```
 
 2. Install required packages
-   bash```
+   bash
+
+   ```
    pip install -r requirements.txt
 
    ```
 
-   ```
-
 3. Set up data directory through shell script
-   bash```
-   bash scripts/setup_peer_data.sh
+   bash
+
    ```
+   bash code/scripts/setup_peer_data.sh
+
 
    ```
 
