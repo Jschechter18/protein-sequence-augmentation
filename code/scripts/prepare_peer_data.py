@@ -65,7 +65,15 @@ SPLITS = ("train", "valid", "test")
 
 
 def main() -> None:
-    """Run the end-to-end PEER data preparation workflow."""
+    """Run the end-to-end PEER data preparation workflow.
+
+    Raises
+    ------
+    ImportError
+        _description_
+    """
+    
+    
     if lmdb is None:
         raise ImportError(
             "The `lmdb` package is required to prepare PEER data. "
@@ -97,7 +105,16 @@ def main() -> None:
 
 
 def validate_peer_checkout() -> None:
-    """Confirm the expected official PEER repository/config files exist."""
+    """Confirm the expected official PEER repository/config files exist.
+
+    Raises
+    ------
+    FileNotFoundError
+        _description_
+    FileNotFoundError
+        _description_
+    """
+        
     if not PEER_REPO.exists():
         raise FileNotFoundError(
             f"Expected the official PEER repo at {PEER_REPO}, but it was not found. "
@@ -118,7 +135,26 @@ def validate_peer_checkout() -> None:
 
 
 def ensure_dataset_lmdbs(dataset_name: str, config: dict) -> dict:
-    """Return split->LMDB paths, downloading/extracting official archives as needed."""
+    """Return split->LMDB paths, downloading/extracting official archives as needed.
+
+
+    Parameters
+    ----------
+    dataset_name : str
+        _description_
+    config : dict
+        _description_
+
+    Returns
+    -------
+    dict
+        _description_
+
+    Raises
+    ------
+    FileNotFoundError
+        _description_
+    """
     # Fast path for repeated runs: if split files are already present, skip network I/O.
     discovered = discover_split_lmdbs(config)
     if all(discovered.values()):
@@ -154,7 +190,18 @@ def discover_split_lmdbs(config: dict) -> dict:
 
     We first check the canonical extraction location and then fall back to a
     recursive search under data/raw/peer to tolerate minor directory changes.
+
+    Parameters
+    ----------
+    config : dict
+        _description_
+
+    Returns
+    -------
+    dict
+        _description_
     """
+    
     split_paths = {}
     for split in SPLITS:
         basename = f"{config['split_basename']}_{split}.lmdb"
@@ -169,7 +216,22 @@ def discover_split_lmdbs(config: dict) -> dict:
 
 
 def export_dataset(dataset_name: str, config: dict, lmdb_paths: dict) -> dict:
-    """Export all official splits for one dataset and build metadata summary."""
+    """Export all official splits for one dataset and build metadata summary.
+
+    Parameters
+    ----------
+    dataset_name : str
+        _description_
+    config : dict
+        _description_
+    lmdb_paths : dict
+        _description_
+
+    Returns
+    -------
+    dict
+        _description_
+    """
     output_dir = config["output_dir"]
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -210,6 +272,31 @@ def load_split_rows(dataset_name: str, split: str, lmdb_path: Path, target_field
     - key `num_examples` stores the split size,
     - keys `0..num_examples-1` store pickled dict items,
     - `primary` is sequence and `target_field` is the benchmark label.
+
+    Parameters
+    ----------
+    dataset_name : str
+        _description_
+    split : str
+        _description_
+    lmdb_path : Path
+        _description_
+    target_field : str
+        _description_
+
+    Returns
+    -------
+    list
+        _description_
+
+    Raises
+    ------
+    FileNotFoundError
+        _description_
+    KeyError
+        _description_
+    KeyError
+        _description_
     """
     if not lmdb_path.exists():
         raise FileNotFoundError(f"Expected LMDB file for {dataset_name} {split} at {lmdb_path}, but it does not exist.")
@@ -269,7 +356,16 @@ def validate_rows(dataset_name: str, split: str, rows: list) -> None:
 
 
 def write_csv(path: Path, rows: list) -> None:
-    """Write normalized rows with a stable, explicit column order."""
+    """Write normalized rows with a stable, explicit column order.
+
+
+    Parameters
+    ----------
+    path : Path
+        _description_
+    rows : list
+        _description_
+    """
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=["idx", "sequence", "label", "split", "dataset"])
         writer.writeheader()
@@ -278,7 +374,16 @@ def write_csv(path: Path, rows: list) -> None:
 
 
 def download_file(url: str, destination: Path) -> None:
-    """Download a remote file with chunked streaming to limit memory usage."""
+    """Download a remote file with chunked streaming to limit memory usage.
+
+
+    Parameters
+    ----------
+    url : str
+        _description_
+    destination : Path
+        _description_
+    """
     destination.parent.mkdir(parents=True, exist_ok=True)
     with urllib.request.urlopen(url) as response, destination.open("wb") as output_handle:
         while True:
@@ -289,7 +394,21 @@ def download_file(url: str, destination: Path) -> None:
 
 
 def verify_md5(path: Path, expected_md5: str) -> None:
-    """Verify the downloaded archive matches the official checksum."""
+    """Verify the downloaded archive matches the official checksum.
+
+
+    Parameters
+    ----------
+    path : Path
+        _description_
+    expected_md5 : str
+        _description_
+
+    Raises
+    ------
+    ValueError
+        _description_
+    """
     actual_md5 = hashlib.md5()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
@@ -304,6 +423,19 @@ def safe_extract_tar(archive_path: Path, destination: Path) -> None:
 
     We validate every member path to avoid path traversal and use the tarfile
     extraction filter when available (Python >=3.12 behavior).
+    
+
+    Parameters
+    ----------
+    archive_path : Path
+        _description_
+    destination : Path
+        _description_
+
+    Raises
+    ------
+    ValueError
+        _description_
     """
     destination.mkdir(parents=True, exist_ok=True)
     with tarfile.open(archive_path, "r:gz") as archive:
@@ -318,7 +450,21 @@ def safe_extract_tar(archive_path: Path, destination: Path) -> None:
 
 
 def is_within_directory(directory: Path, target: Path) -> bool:
-    """Return True if target resolves within directory."""
+    """Return True if target resolves within directory.
+
+
+    Parameters
+    ----------
+    directory : Path
+        _description_
+    target : Path
+        _description_
+
+    Returns
+    -------
+    bool
+        _description_
+    """
     directory = directory.resolve()
     target = target.resolve()
     try:
@@ -329,7 +475,19 @@ def is_within_directory(directory: Path, target: Path) -> bool:
 
 
 def normalize_sequence(value) -> str:
-    """Convert sequence field to a stripped string, preserving empty as ''."""
+    """Convert sequence field to a stripped string, preserving empty as ''.
+
+
+    Parameters
+    ----------
+    value : _type_
+        _description_
+
+    Returns
+    -------
+    str
+        _description_
+    """
     if value is None:
         return ""
     if isinstance(value, bytes):
@@ -338,7 +496,18 @@ def normalize_sequence(value) -> str:
 
 
 def normalize_label(value):
-    """Convert target values to plain Python scalars and map NaN to None."""
+    """Convert target values to plain Python scalars and map NaN to None.
+
+    Parameters
+    ----------
+    value : _type_
+        _description_
+
+    Returns
+    -------
+    _type_
+        _description_
+    """
     if hasattr(value, "item") and callable(value.item):
         try:
             value = value.item()
@@ -355,12 +524,31 @@ def normalize_label(value):
 
 
 def is_missing_label(value) -> bool:
-    """Return True when a label is None or blank text."""
+    """Return True when a label is None or blank text.
+
+
+    Parameters
+    ----------
+    value : _type_
+        _description_
+
+    Returns
+    -------
+    bool
+        _description_
+    """
     return value is None or (isinstance(value, str) and not value.strip())
 
 
 def utc_now() -> str:
-    """Return an ISO-8601 UTC timestamp for metadata snapshots."""
+    """Return an ISO-8601 UTC timestamp for metadata snapshots.
+
+
+    Returns
+    -------
+    str
+        _description_
+    """
     return datetime.now(timezone.utc).isoformat()
 
 
