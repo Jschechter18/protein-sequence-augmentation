@@ -1,13 +1,44 @@
 # Capstone Proposal
+
 ## Protein Sequence Augmentations in Latent Space
+
 ### Proposed by: Joshua Schechter and Ashley Gyapomah
+
 #### Email: j.schechter@gwu.edu, ashleygya03@gwu.edu
+
 #### Advisor: Amir Jafari
-#### The George Washington University, Washington DC  
+
+#### The George Washington University, Washington DC
+
 #### Data Science Program
 
+## Setup:
 
-## 1 Objective:  
+1. Create and activate python virtual environemnt
+   bash```
+   python -m venv .venv
+   source .venv/bin/activate
+
+   ```
+
+   ```
+
+2. Install required packages
+   bash```
+   pip install -r requirements.txt
+
+   ```
+
+   ```
+
+3. Set up data directory through shell script
+   bash```
+   bash scripts/setup_peer_data.sh
+   ```
+
+   ```
+
+## 1 Objective:
 
             This project will test whether adding controlled noise to the latent vector of a trained protein sequence autoencoder,
             then decoding that perturbed vector back into a protein sequence, can generate useful protein sequence augmentations.
@@ -20,18 +51,16 @@
             meaning, as proteins function can be extremely sensitive to mutations. This project will evaluate whether autoencoder-based
             latent-space perturbation can produce augmented sequences that are more useful, more protein-like, and potentially more
             label-preserving than direct input-level mutations.
-            
+
             Models to train include:
             - VAE (for latent-space augmentation)
             - ESM-2 pretrained Classification
             - 1D-CNN Classification
 
-            
-
 ![Figure 1: Example figure](2026_Summer_0.png)
-*Figure 1: Caption*
+_Figure 1: Caption_
 
-## 2 Dataset:  
+## 2 Dataset:
 
             The project will use the PEER benchmark as the primary source of protein sequence classification datasets. The initial focus
             will be on at least one protein classification task, such as protein solubility (binary classification) or protein localization (multiclass),
@@ -41,9 +70,7 @@
             clean test set will be kept fixed across all experimental conditions so that each augmentation strategy is evaluated fairly under
             the same downstream classification setup.
 
-            
-
-## 3 Rationale:  
+## 3 Rationale:
 
             Protein sequence classification often occurs in low-data settings, where labeled biological data can be expensive, time-consuming,
             or difficult to obtain. Data augmentation is useful in these settings because it can increase the amount of training data and
@@ -58,25 +85,23 @@
             Latent-space augmentation may be worth testing because a trained protein sequence autoencoder or variational autoencoder learns a
             compressed numerical representation of protein sequences. Based on previous studies, the latent-space in VAEs were used to generate protein
             variants could sometimes preserve biological functionality, (Hawkins-Hooker, et al. 2021).
-            
+
             Since it has been shown that biological information may be preserved in latent-space, small controlled perturbations in latent space may
             produce decoded sequences that remain closer to the original protein's label-relevant properties than direct input-level mutations. This
             does not guarantee label preservation, but it creates a testable hypothesis: latent-space noise augmentation may produce more useful
             training examples than direct mutation baselines.
 
-            
-
-## 4 Approach:  
+## 4 Approach:
 
             The project will compare latent-space noise augmentation against direct mutation-based augmentation baselines for protein sequence classification.
 
             Experimental plan:
-            
+
             0. Data preparation and preprocessing.
                 - Load the selected PEER benchmark dataset and prepare train, validation, and test splits.
                 - Preprocess protein sequences as needed for the autoencoder and classifier, including tokenization and encoding.
                 - Make sure to have the data fraction and mutation rate set already.
-                - For the train set, add a variable column called "augment_candidate" that will be a boolean value. When training, for each sequence we check to see if 
+                - For the train set, add a variable column called "augment_candidate" that will be a boolean value. When training, for each sequence we check to see if
                 that sequence is an augment candidate. If it is, we apply the given augmentation strategy to that sequence. This allows for consistency across all models.
 
             1. Train a protein sequence autoencoder (likely a Variational Autoencoder (VAE)) as well as possible.
@@ -121,9 +146,7 @@
                - The ideal result would be that latent-space noise augmentation achieves the best clean test-set F1 score and favorable VEP-style or sequence-quality indicators.
                - A negative result would still be informative if latent-space augmentation does not outperform direct mutation baselines or produces low-quality decoded sequences.
 
-            
-
-## 5 Timeline:  
+## 5 Timeline:
 
             Note: subject to change
             Week 1:    Finalize research question and project proposal. Find some papers for literature review and related work for justification.
@@ -170,10 +193,7 @@
             - Analysis of F1 score, VEP-style indicator scores, sequence-quality metrics, and limitations
             - Final written research summary and presentation
 
-            
-
-
-## 6 Expected Number Students:  
+## 6 Expected Number Students:
 
             RECOMMENDED: 2 students
 
@@ -204,9 +224,7 @@
             - Literature review
             - Writing final report and preparing final presentation
 
-            
-
-## 7 Possible Issues:  
+## 7 Possible Issues:
 
             TECHNICAL CHALLENGES AND SOLUTIONS:
 
@@ -247,11 +265,8 @@
             - Weeks 11-12: Use VEP-style scores and sequence-quality metrics as supporting indicators only.
             - Weeks 13-14: Clearly document limitations, negative results, and future improvements.
 
-            
-
-
 ## Contact
+
 - Author: Amir Jafari
 - Email: [ajafari@gwu.edu](mailto:ajafari@gwu.edu)
 - GitHub: [https://github.com/amir-jafari](https://github.com/https://github.com/amir-jafari)
-

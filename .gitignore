@@ -49,5 +49,10 @@ Thumbs.db
 # =========================================================
 # Data Files
 # =========================================================
+data/raw/
+data/processed/
 data/*
 !data/.gitkeep
+external/
+external/*
+external/PEER_Benchmark
