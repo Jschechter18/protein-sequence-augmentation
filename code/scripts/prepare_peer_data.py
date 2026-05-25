@@ -30,6 +30,7 @@ except ImportError:
     lmdb = None
 
 
+# All paths anchored to the repository root
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PEER_REPO = REPO_ROOT / "external" / "PEER_Benchmark"
 RAW_ROOT = REPO_ROOT / "data" / "raw" / "peer"
@@ -74,21 +75,21 @@ def main() -> None:
     """
     
     
+    # Makes sure that the `lmdb` package is available before we start downloading/extracting, if not installed likely didn't run the shell script
     if lmdb is None:
         raise ImportError(
             "The `lmdb` package is required to prepare PEER data. "
-            "Run `python -m pip install lmdb` or use `bash scripts/setup_peer_data.sh`."
+            "Please run `bash code/scripts/setup_peer_data.sh`."
         )
 
-    # Ensure we are anchored to an official PEER checkout before touching data.
+    # Ensure we are anchored to an official PEER checkout before touching data
     validate_peer_checkout()
     RAW_ROOT.mkdir(parents=True, exist_ok=True)
     EXTRACT_ROOT.mkdir(parents=True, exist_ok=True)
 
-    # Top-level metadata captures provenance and per-dataset summaries.
+    # Top-level metadata captures provenance and per-dataset summaries
     metadata = {
         "source_repo_path": str(PEER_REPO),
-        "timestamp": utc_now(),
         "datasets": {},
     }
 
@@ -118,7 +119,7 @@ def validate_peer_checkout() -> None:
     if not PEER_REPO.exists():
         raise FileNotFoundError(
             f"Expected the official PEER repo at {PEER_REPO}, but it was not found. "
-            "Run `bash scripts/setup_peer_data.sh` to clone it first."
+            "Run `bash code/scripts/setup_peer_data.sh` to clone it first."
         )
 
     missing_configs = [
@@ -135,7 +136,7 @@ def validate_peer_checkout() -> None:
 
 
 def ensure_dataset_lmdbs(dataset_name: str, config: dict) -> dict:
-    """Return split->LMDB paths, downloading/extracting official archives as needed.
+    """Return split -> LMDB paths, downloading/extracting official archives as needed.
 
 
     Parameters
@@ -258,7 +259,6 @@ def export_dataset(dataset_name: str, config: dict, lmdb_paths: dict) -> dict:
         "source_repo_path": str(PEER_REPO),
         "source_config": str(config["peer_config"]),
         "source_url": config["url"],
-        "timestamp": utc_now(),
         "split_sizes": split_sizes,
         "label_counts_per_split": label_counts,
         "raw_lmdb_paths": {split: str(path) for split, path in lmdb_paths.items()},
@@ -336,7 +336,27 @@ def load_split_rows(dataset_name: str, split: str, lmdb_path: Path, target_field
 
 
 def validate_rows(dataset_name: str, split: str, rows: list) -> None:
-    """Apply required integrity checks before writing split CSV files."""
+    """Apply required integrity checks before writing split CSV files
+    
+
+    Parameters
+    ----------
+    dataset_name : str
+        _description_
+    split : str
+        _description_
+    rows : list
+        _description_
+
+    Raises
+    ------
+    ValueError
+        _description_
+    ValueError
+        _description_
+    ValueError
+        _description_
+    """
     if not rows:
         raise ValueError(f"Official PEER split {dataset_name}/{split} is empty, which should never happen.")
 
@@ -538,18 +558,6 @@ def is_missing_label(value) -> bool:
         _description_
     """
     return value is None or (isinstance(value, str) and not value.strip())
-
-
-def utc_now() -> str:
-    """Return an ISO-8601 UTC timestamp for metadata snapshots.
-
-
-    Returns
-    -------
-    str
-        _description_
-    """
-    return datetime.now(timezone.utc).isoformat()
 
 
 if __name__ == "__main__":
