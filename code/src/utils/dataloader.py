@@ -5,7 +5,7 @@ Supports multiple tasks (e.g., localization, solubility), encoding modes (char, 
 from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
-from .SequenceDataset import SequenceDataset
+from .sequence_dataset import SequenceDataset
 
 
 
