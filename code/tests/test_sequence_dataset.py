@@ -1,28 +1,16 @@
 from pathlib import Path
 import pickle
 
-import pandas as pd
 import pytest
 import torch
 
 from utils.sequence_dataset import BOS_IDX, EOS_IDX, PAD_IDX, UNK_IDX, SequenceDataset
 
-
-def _write_csv(
-    root: Path,
-    rows: dict[str, list],
-    task: str = "toy",
-    filename: str = "train.csv",
-) -> Path:
-    task_dir = root / task
-    task_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = task_dir / filename
-    pd.DataFrame(rows).to_csv(csv_path, index=False)
-    return csv_path
+from .test_utils.test_helpers import write_csv
 
 
 def test_getitem_returns_classification_char_tensors(tmp_path: Path) -> None:
-    _write_csv(tmp_path, {"sequence": ["acdx"], "label": [1]})
+    write_csv(tmp_path, {"sequence": ["acdx"], "label": [1]})
 
     dataset = SequenceDataset(
         task="toy",
@@ -42,7 +30,7 @@ def test_getitem_returns_classification_char_tensors(tmp_path: Path) -> None:
 
 
 def test_encode_sequence_truncates_pads_and_tracks_effective_length(tmp_path: Path) -> None:
-    _write_csv(tmp_path, {"sequence": ["ACD"], "label": [0]})
+    write_csv(tmp_path, {"sequence": ["ACD"], "label": [0]})
     dataset = SequenceDataset(
         task="toy",
         split="train",
@@ -58,7 +46,7 @@ def test_encode_sequence_truncates_pads_and_tracks_effective_length(tmp_path: Pa
 
 
 def test_default_max_length_preserves_full_sequence(tmp_path: Path) -> None:
-    _write_csv(tmp_path, {"sequence": ["ACDEFG"], "label": [0]})
+    write_csv(tmp_path, {"sequence": ["ACDEFG"], "label": [0]})
     dataset = SequenceDataset(
         task="toy",
         split="train",
@@ -75,7 +63,7 @@ def test_default_max_length_preserves_full_sequence(tmp_path: Path) -> None:
 def test_autoencoder_encoding_adds_special_tokens_and_clones_target(
     tmp_path: Path,
 ) -> None:
-    _write_csv(tmp_path, {"sequence": ["ACDE"], "label": [0]})
+    write_csv(tmp_path, {"sequence": ["ACDE"], "label": [0]})
 
     dataset = SequenceDataset(
         task="toy",
@@ -94,7 +82,7 @@ def test_autoencoder_encoding_adds_special_tokens_and_clones_target(
 
 
 def test_raw_encoding_returns_truncated_sequence_without_token_ids(tmp_path: Path) -> None:
-    _write_csv(tmp_path, {"sequence": ["ACDEFG"], "label": [1]})
+    write_csv(tmp_path, {"sequence": ["ACDEFG"], "label": [1]})
 
     dataset = SequenceDataset(
         task="toy",
@@ -114,7 +102,7 @@ def test_raw_encoding_returns_truncated_sequence_without_token_ids(tmp_path: Pat
 
 
 def test_cache_key_changes_with_preprocessing_options(tmp_path: Path) -> None:
-    _write_csv(tmp_path, {"sequence": ["ACD"], "label": [0]})
+    write_csv(tmp_path, {"sequence": ["ACD"], "label": [0]})
 
     base = SequenceDataset(
         task="toy",
@@ -137,7 +125,7 @@ def test_cache_key_changes_with_preprocessing_options(tmp_path: Path) -> None:
 
 
 def test_cache_file_is_created_and_loaded(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
-    _write_csv(tmp_path, {"sequence": ["ACD"], "label": [1]})
+    write_csv(tmp_path, {"sequence": ["ACD"], "label": [1]})
     cache_dir = tmp_path / "cache"
 
     first = SequenceDataset(
@@ -156,7 +144,7 @@ def test_cache_file_is_created_and_loaded(tmp_path: Path, capsys: pytest.Capture
     assert payload["metadata"]["num_examples"] == 1
     assert payload["examples"] == first.examples
 
-    _write_csv(tmp_path, {"sequence": ["YYYY"], "label": [0]})
+    write_csv(tmp_path, {"sequence": ["YYYY"], "label": [0]})
     second = SequenceDataset(
         task="toy",
         split="train",
@@ -171,7 +159,7 @@ def test_cache_file_is_created_and_loaded(tmp_path: Path, capsys: pytest.Capture
 
 
 def test_combined_csv_is_filtered_by_split(tmp_path: Path) -> None:
-    _write_csv(
+    write_csv(
         tmp_path,
         {
             "sequence": ["AAA", "CCC"],
@@ -194,7 +182,7 @@ def test_combined_csv_is_filtered_by_split(tmp_path: Path) -> None:
 
 
 def test_missing_label_column_raises_value_error(tmp_path: Path) -> None:
-    _write_csv(tmp_path, {"sequence": ["ACD"], "target": [1]})
+    write_csv(tmp_path, {"sequence": ["ACD"], "target": [1]})
 
     with pytest.raises(ValueError, match="missing required columns"):
         SequenceDataset(
@@ -219,7 +207,7 @@ def test_invalid_modes_and_encodings_raise(
     kwargs: dict,
     message: str,
 ) -> None:
-    _write_csv(tmp_path, {"sequence": ["ACD"], "label": [0]})
+    write_csv(tmp_path, {"sequence": ["ACD"], "label": [0]})
 
     with pytest.raises(ValueError, match=message):
         SequenceDataset(
