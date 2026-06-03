@@ -22,36 +22,63 @@ class ProteinSequenceAutoencoder(nn.Module):
         pad_idx: int = 0,
         bos_idx: int = 2,
     ) -> None:
+        """Initialize the protein sequence autoencoder.
+
+        Parameters
+        ----------
+        layer_type : str, optional
+            Type of Encoder/Decoder layer to use, by default "gru"
+        embedding_dim : int, optional
+            _description_, by default 64
+        hidden_dim : int, optional
+            _description_, by default 128
+        latent_dim : int, optional
+            Number of dimensions in compressed latent space, by default 64
+        num_layers : int, optional
+            _description_, by default 1
+        dropout : float, optional
+            _description_, by default 0.0
+        pad_idx : int, optional
+            _description_, by default 0
+        bos_idx : int, optional
+            _description_, by default 2
+
+        Raises
+        ------
+        ValueError
+            _description_
+        """
         super().__init__()
         if num_layers < 1:
             raise ValueError("num_layers must be at least 1")
 
         rnn_dropout = dropout if num_layers > 1 else 0.0
-        self.vocab_size = vocab_size
+        self.vocab_size = 24
         self.hidden_dim = hidden_dim
         self.latent_dim = latent_dim
+        self.embedding_dim = embedding_dim
         self.num_layers = num_layers
         self.pad_idx = pad_idx
         self.bos_idx = bos_idx
 
-        self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=pad_idx)
+        self.embedding = nn.Embedding(self.vocab_size, self.embedding_dim, padding_idx=self.pad_idx)
         self.encoder = nn.GRU(
-            embedding_dim,
-            hidden_dim,
-            num_layers=num_layers,
+            self.embedding_dim,
+            self.hidden_dim,
+            num_layers=self.num_layers,
             batch_first=True,
             dropout=rnn_dropout,
         )
-        self.to_latent = nn.Linear(hidden_dim, latent_dim)
-        self.from_latent = nn.Linear(latent_dim, hidden_dim * num_layers)
+        self.to_latent = nn.Linear(self.hidden_dim, self.latent_dim)
+        self.from_latent = nn.Linear(self.latent_dim, self.hidden_dim * self.num_layers)
         self.decoder = nn.GRU(
-            embedding_dim,
-            hidden_dim,
-            num_layers=num_layers,
+            self.embedding_dim,
+            self.hidden_dim,
+            num_layers=self.num_layers,
             batch_first=True,
             dropout=rnn_dropout,
         )
-        self.output = nn.Linear(hidden_dim, vocab_size)
+        self.output = nn.Linear(self.hidden_dim, self.vocab_size)
 
     def encode(self, input_ids: torch.Tensor) -> torch.Tensor:
         """Encode token IDs into a latent vector."""
@@ -97,10 +124,17 @@ class ProteinSequenceAutoencoder(nn.Module):
 
     @torch.no_grad()
     def reconstruct(self, input_ids: torch.Tensor) -> torch.Tensor:
-        """Return greedy reconstructed token IDs."""
-        logits = self.forward(input_ids)
-        return logits.argmax(dim=-1)
+        """Return greedy reconstructed token IDs. Useful for comparing input to output of model.
 
+        Parameters
+        ----------
+        input_ids : torch.Tensor
+            Original input token IDs to be reconstructed
 
-Autoencoder = ProteinSequenceAutoencoder
-AE = ProteinSequenceAutoencoder
+        Returns
+        -------
+        torch.Tensor
+            Greedy reconstructed token IDs
+        """
+        return self.forward(input_ids).argmax(dim=-1)
+
