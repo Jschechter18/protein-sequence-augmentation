@@ -5,7 +5,6 @@ import pytest
 import torch
 
 from utils.sequence_dataset import BOS_IDX, EOS_IDX, PAD_IDX, UNK_IDX, SequenceDataset
-
 from .test_utils.test_helpers import write_csv
 
 

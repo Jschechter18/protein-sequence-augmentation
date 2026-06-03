@@ -35,6 +35,8 @@ UNK_IDX = VOCAB["<UNK>"]
 BOS_IDX = VOCAB["<BOS>"]
 EOS_IDX = VOCAB["<EOS>"]
 
+VOCAB_SIZE = len(VOCAB)
+
 # ---------------------------------------------------------------------------
 # DataLoader factory
 # ---------------------------------------------------------------------------
@@ -107,7 +109,7 @@ def create_dataloader(
     shuffle: bool = False,
     num_workers: int = 0,
     pin_memory: bool = False,
-) -> DataLoader:
+) -> DataLoader[SequenceDataset]:
     """Create a DataLoader for a protein sequence dataset.
 
     Parameters
