@@ -1,6 +1,5 @@
 from pathlib import Path
 
-import pandas as pd
 import pytest
 import torch
 
@@ -11,32 +10,11 @@ from utils.dataloader import (
     SequenceDataset,
     create_dataloader,
 )
-
-
-def _write_split_csv(root: Path, task: str = "toy", split: str = "train") -> None:
-    """Write a CSV file for a given task and split.
-
-    Parameters
-    ----------
-    root : Path
-        The root directory where the task directory will be created.
-    task : str, optional
-        The name of the task, by default "toy"
-    split : str, optional
-        The name of the split, by default "train"
-    """
-    task_dir = root / task
-    task_dir.mkdir(parents=True)
-    pd.DataFrame(
-        {
-            "sequence": ["ACD", "ACDEFG"],
-            "label": [1, 0],
-        }
-    ).to_csv(task_dir / f"{split}.csv", index=False)
+from .test_utils.test_helpers import write_split_csv
 
 
 def test_sequence_dataset_loads_split_csv(tmp_path: Path) -> None:
-    _write_split_csv(tmp_path)
+    write_split_csv(tmp_path)
 
     dataset = SequenceDataset(
         task="toy",
@@ -54,7 +32,7 @@ def test_sequence_dataset_loads_split_csv(tmp_path: Path) -> None:
 
 
 def test_create_dataloader_batches_examples(tmp_path: Path) -> None:
-    _write_split_csv(tmp_path)
+    write_split_csv(tmp_path)
 
     loader = create_dataloader(
         task="toy",
@@ -72,7 +50,7 @@ def test_create_dataloader_batches_examples(tmp_path: Path) -> None:
 
 
 def test_char_batches_pad_when_max_length_is_none(tmp_path: Path) -> None:
-    _write_split_csv(tmp_path)
+    write_split_csv(tmp_path)
 
     loader = create_dataloader(
         task="toy",
@@ -90,7 +68,7 @@ def test_char_batches_pad_when_max_length_is_none(tmp_path: Path) -> None:
 
 
 def test_create_dataloader_defaults_to_dynamic_batch_padding(tmp_path: Path) -> None:
-    _write_split_csv(tmp_path)
+    write_split_csv(tmp_path)
 
     loader = create_dataloader(
         task="toy",
@@ -107,7 +85,7 @@ def test_create_dataloader_defaults_to_dynamic_batch_padding(tmp_path: Path) -> 
 
 
 def test_autoencoder_adds_special_tokens(tmp_path: Path) -> None:
-    _write_split_csv(tmp_path)
+    write_split_csv(tmp_path)
 
     dataset = SequenceDataset(
         task="toy",
@@ -124,7 +102,7 @@ def test_autoencoder_adds_special_tokens(tmp_path: Path) -> None:
 
 
 def test_raw_encoding_batches_sequences(tmp_path: Path) -> None:
-    _write_split_csv(tmp_path)
+    write_split_csv(tmp_path)
 
     loader = create_dataloader(
         task="toy",
@@ -142,7 +120,7 @@ def test_raw_encoding_batches_sequences(tmp_path: Path) -> None:
 
 
 def test_autoencoder_rejects_too_short_max_length(tmp_path: Path) -> None:
-    _write_split_csv(tmp_path)
+    write_split_csv(tmp_path)
 
     with pytest.raises(ValueError, match="max_length >= 2"):
         SequenceDataset(
@@ -156,7 +134,7 @@ def test_autoencoder_rejects_too_short_max_length(tmp_path: Path) -> None:
 
 
 def test_dataloader_handles_esm2_raw_classification_case(tmp_path: Path) -> None:
-    _write_split_csv(tmp_path)
+    write_split_csv(tmp_path)
 
     loader = create_dataloader(
         task="toy",
@@ -178,7 +156,7 @@ def test_dataloader_handles_esm2_raw_classification_case(tmp_path: Path) -> None
 
 
 def test_dataloader_handles_1d_cnn_classification_case(tmp_path: Path) -> None:
-    _write_split_csv(tmp_path)
+    write_split_csv(tmp_path)
 
     loader = create_dataloader(
         task="toy",
@@ -206,7 +184,7 @@ def test_dataloader_handles_1d_cnn_classification_case(tmp_path: Path) -> None:
 
 
 def test_dataloader_handles_autoencoder_case(tmp_path: Path) -> None:
-    _write_split_csv(tmp_path)
+    write_split_csv(tmp_path)
 
     loader = create_dataloader(
         task="toy",
