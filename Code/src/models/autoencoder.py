@@ -2,6 +2,8 @@
 
 import torch
 from torch import nn
+from torch.nn.utils.rnn import pack_padded_sequence
+from utils.dataloader import VOCAB_SIZE
 
 
 class ProteinSequenceAutoencoder(nn.Module):
@@ -13,10 +15,9 @@ class ProteinSequenceAutoencoder(nn.Module):
     def __init__(
         self,
         layer_type: str = "gru", # placeholder for future layer types
-        vocab_size: int = 24,
-        embedding_dim: int = 64,
-        hidden_dim: int = 128,
-        latent_dim: int = 64,
+        embedding_dim: int = 128,
+        hidden_dim: int = 256,
+        latent_dim: int = 128,
         num_layers: int = 1,
         dropout: float = 0.0,
         pad_idx: int = 0,
@@ -29,11 +30,11 @@ class ProteinSequenceAutoencoder(nn.Module):
         layer_type : str, optional
             Type of Encoder/Decoder layer to use, by default "gru"
         embedding_dim : int, optional
-            _description_, by default 64
+            Dimension of the token embeddings, by default 128
         hidden_dim : int, optional
-            _description_, by default 128
+            Number of hidden units in the GRU layers, by default 256
         latent_dim : int, optional
-            Number of dimensions in compressed latent space, by default 64
+            Number of dimensions in compressed latent space, by default 128
         num_layers : int, optional
             _description_, by default 1
         dropout : float, optional
@@ -49,11 +50,13 @@ class ProteinSequenceAutoencoder(nn.Module):
             _description_
         """
         super().__init__()
+        if layer_type != "gru":
+            raise ValueError("Only layer_type='gru' is currently supported")
         if num_layers < 1:
             raise ValueError("num_layers must be at least 1")
 
         rnn_dropout = dropout if num_layers > 1 else 0.0
-        self.vocab_size = 24
+        self.vocab_size = VOCAB_SIZE
         self.hidden_dim = hidden_dim
         self.latent_dim = latent_dim
         self.embedding_dim = embedding_dim
@@ -80,9 +83,23 @@ class ProteinSequenceAutoencoder(nn.Module):
         )
         self.output = nn.Linear(self.hidden_dim, self.vocab_size)
 
-    def encode(self, input_ids: torch.Tensor) -> torch.Tensor:
+    def encode(
+        self,
+        input_ids: torch.Tensor,
+        lengths: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """Encode token IDs into a latent vector."""
-        _, hidden = self.encoder(self.embedding(input_ids))
+        embedded = self.embedding(input_ids)
+        if lengths is None:
+            _, hidden = self.encoder(embedded)
+        else:
+            packed = pack_padded_sequence(
+                embedded,
+                lengths.detach().cpu().clamp(min=1, max=input_ids.size(1)),
+                batch_first=True,
+                enforce_sorted=False,
+            )
+            _, hidden = self.encoder(packed)
         return self.to_latent(hidden[-1])
 
     def decode(
@@ -115,15 +132,20 @@ class ProteinSequenceAutoencoder(nn.Module):
         self,
         input_ids: torch.Tensor,
         decoder_input_ids: torch.Tensor | None = None,
+        lengths: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Return reconstruction logits for ``input_ids``."""
         if decoder_input_ids is None:
             decoder_input_ids = input_ids
-        latent = self.encode(input_ids)
+        latent = self.encode(input_ids, lengths=lengths)
         return self.decode(latent, decoder_input_ids=decoder_input_ids)
 
     @torch.no_grad()
-    def reconstruct(self, input_ids: torch.Tensor) -> torch.Tensor:
+    def reconstruct(
+        self,
+        input_ids: torch.Tensor,
+        lengths: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """Return greedy reconstructed token IDs. Useful for comparing input to output of model.
 
         Parameters
@@ -136,5 +158,4 @@ class ProteinSequenceAutoencoder(nn.Module):
         torch.Tensor
             Greedy reconstructed token IDs
         """
-        return self.forward(input_ids).argmax(dim=-1)
-
+        return self.forward(input_ids, lengths=lengths).argmax(dim=-1)
