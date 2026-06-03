@@ -36,6 +36,6 @@ fi
 
 echo "[PEER] Preparing official localization and solubility splits"
 cd "$REPO_ROOT"
-"$PYTHON_BIN" code/scripts/prepare_peer_data.py
+"$PYTHON_BIN" Code/scripts/prepare_peer_data.py
 
 echo "[PEER] Setup complete"

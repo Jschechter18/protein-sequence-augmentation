@@ -60,9 +60,3 @@ data/processed/
 external/
 external/*
 external/PEER_Benchmark
-
-# =========================================================
-# Results
-# =========================================================
-code/results/*
-!code/results/.gitkeep
