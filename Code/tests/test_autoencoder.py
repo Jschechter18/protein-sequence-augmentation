@@ -1,21 +1,9 @@
-from pathlib import Path
-import sys
-
-import pytest
-import pandas as pd
 import torch
-import torch.nn as nn
-
 from models.autoencoder import ProteinSequenceAutoencoder as AE
-from utils.dataloader import create_dataloader
-from utils.sequence_dataset import SequenceDataset
-# from .test_utils.test_helpers import write_csv, write_split_csv
-from .test_utils.test_helpers import write_csv, write_split_csv
 
 def test_autoencoder_forward_pass():
     model = AE(
         layer_type="gru",
-        vocab_size=24,
         embedding_dim=64,
         hidden_dim=128,
         latent_dim=64,
@@ -37,11 +25,9 @@ def test_autoencoder_forward_pass():
     # Check the output shape
     assert logits.shape == (batch_size, sequence_length, vocab_size), f"Expected output shape {(batch_size, sequence_length, vocab_size)}, but got {logits.shape}"
     
-# TODO: Test for encoder
 def test_autoencoder_encoder() -> None:
     model = AE(
         layer_type="gru",
-        vocab_size=24,
         embedding_dim=64,
         hidden_dim=128,
         latent_dim=64,
@@ -67,7 +53,6 @@ def test_autoencoder_encoder() -> None:
 def test_autoencoder_decoder() -> None:
     model = AE(
         layer_type="gru",
-        vocab_size=24,
         embedding_dim=64,
         hidden_dim=128,
         latent_dim=64,
@@ -91,7 +76,6 @@ def test_autoencoder_decoder() -> None:
 def test_autoencoder_reconstruct() -> None:
     model = AE(
         layer_type="gru",
-        vocab_size=24,
         embedding_dim=64,
         hidden_dim=128,
         latent_dim=64,
