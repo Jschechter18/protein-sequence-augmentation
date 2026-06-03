@@ -12,6 +12,7 @@ class ProteinSequenceAutoencoder(nn.Module):
 
     def __init__(
         self,
+        layer_type: str = "gru", # placeholder for future layer types
         vocab_size: int = 24,
         embedding_dim: int = 64,
         hidden_dim: int = 128,
