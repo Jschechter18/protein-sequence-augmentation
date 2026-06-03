@@ -79,7 +79,7 @@ def main() -> None:
     if lmdb is None:
         raise ImportError(
             "The `lmdb` package is required to prepare PEER data. "
-            "Please run `bash code/scripts/setup_peer_data.sh`."
+            "Please run `bash Code/scripts/setup_peer_data.sh`."
         )
 
     # Ensure we are anchored to an official PEER checkout before touching data
@@ -119,7 +119,7 @@ def validate_peer_checkout() -> None:
     if not PEER_REPO.exists():
         raise FileNotFoundError(
             f"Expected the official PEER repo at {PEER_REPO}, but it was not found. "
-            "Run `bash code/scripts/setup_peer_data.sh` to clone it first."
+            "Run `bash Code/scripts/setup_peer_data.sh` to clone it first."
         )
 
     missing_configs = [
