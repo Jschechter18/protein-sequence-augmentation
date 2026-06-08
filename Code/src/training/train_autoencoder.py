@@ -73,6 +73,7 @@ def model_definition(model_type: str, hyperparams: AEParams | TAEParams) -> tupl
             latent_dim=hyperparams.latent_dim,
             num_layers=hyperparams.num_layers,
             kernel_size=hyperparams.kernel_size,
+            bidirectional=hyperparams.bidirectional,
             dropout=hyperparams.dropout,
             pad_idx=PAD_IDX,
             bos_idx=BOS_IDX,

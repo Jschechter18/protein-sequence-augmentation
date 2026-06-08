@@ -20,6 +20,7 @@ class AutoencoderHyperparameters(Hyperparameters):
     latent_dim: int = 256
     kernel_size: int = 5
     num_layers: int = 2
+    bidirectional: bool = True
     max_len: int | None = None
 
 @dataclass
