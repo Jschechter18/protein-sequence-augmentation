@@ -2,7 +2,7 @@
 
 import torch
 from torch import nn
-from torch.nn.utils.rnn import pack_padded_sequence
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from utils.dataloader import VOCAB_SIZE
 
 
@@ -78,6 +78,9 @@ class ProteinSequenceAutoencoder(nn.Module):
             kernel_size=kernel_size,
             padding=kernel_size // 2
         )
+        
+        self.attention_score = nn.Linear(self.hidden_dim, 1)
+        
         self.encoder = nn.GRU(
             self.cnn_out_channels, # self.embedding_dim is no longer output
             self.hidden_dim,
@@ -104,17 +107,15 @@ class ProteinSequenceAutoencoder(nn.Module):
         """Encode token IDs into a latent vector."""
         embedded: torch.Tensor = self.embedding(input_ids)
         
-        x = embedded.transpose(1, 2)
-        # x: [batch, embedding_dim, seq_len]
-        x = self.cnn(x)
-        x = torch.relu(x)
-        # x: [batch, cnn_out_channels, seq_len]
-        x = x.transpose(1, 2)
-        # x: [batch, seq_len, cnn_out_channels]
+        x = embedded.transpose(1, 2) # x: [batch, embedding_dim, seq_len]
+        x: torch.Tensor = self.cnn(x)
+        x = torch.relu(x) # x: [batch, cnn_out_channels, seq_len]
+        x = x.transpose(1, 2) # x: [batch, seq_len, cnn_out_channels]
         
         if lengths is None:
             # _, hidden = self.encoder(embedded)
-            _, hidden = self.encoder(x)
+            # _, hidden = self.encoder(x)
+            encoder_outputs, hidden = self.encoder(x)
         else:
             packed = pack_padded_sequence(
                 # embedded,
@@ -123,8 +124,32 @@ class ProteinSequenceAutoencoder(nn.Module):
                 batch_first=True,
                 enforce_sorted=False,
             )
-            _, hidden = self.encoder(packed)
-        return self.to_latent(hidden[-1])
+            # _, hidden = self.encoder(packed)
+            packed_outputs, hidden = self.encoder(packed)
+            encoder_outputs, _ = pad_packed_sequence(
+                packed_outputs,
+                batch_first=True,
+                total_length=input_ids.size(1),
+            )
+            
+        # encoder_outputs: [batch, seq_len, hidden_dim]
+        attention_logits: torch.Tensor = self.attention_score(encoder_outputs).squeeze(-1)
+        # attention_logits: [batch, seq_len]
+        
+        if lengths is not None:
+            max_len = input_ids.size(1)
+            mask = torch.arange(max_len, device=input_ids.device).unsqueeze(0) >= lengths.unsqueeze(1)
+            attention_logits = attention_logits.masked_fill(mask, float("-inf"))
+        
+        attention_weights: torch.Tensor = torch.softmax(attention_logits, dim=1) # attention_weights: [batch, seq_len]
+        
+        context: torch.Tensor = torch.bmm(
+            attention_weights.unsqueeze(1),
+            encoder_outputs
+            ).squeeze(1)
+        
+        # return self.to_latent(hidden[-1])
+        return self.to_latent(context)
 
     def decode(
         self,
