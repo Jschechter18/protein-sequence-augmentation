@@ -20,6 +20,7 @@ class ProteinSequenceAutoencoder(nn.Module):
         latent_dim: int,
         num_layers: int,
         kernel_size: int,
+        bidirectional: bool = True,
         dropout: float = 0.0,
         pad_idx: int = 0,
         bos_idx: int = 2,
@@ -58,6 +59,9 @@ class ProteinSequenceAutoencoder(nn.Module):
             raise ValueError("num_layers must be at least 1")
         if latent_dim >= hidden_dim:
             raise Warning("latent_dim should ideally be smaller than hidden_dim for effective compression")
+        
+        # BIDIRECTIONAL = True # using a bidirectional GRU to capture context from both directions
+        self.bidirectional = bidirectional
 
         rnn_dropout = dropout if num_layers > 1 else 0.0
         self.vocab_size = VOCAB_SIZE
@@ -76,10 +80,9 @@ class ProteinSequenceAutoencoder(nn.Module):
             in_channels=self.embedding_dim,
             out_channels=self.cnn_out_channels,
             kernel_size=kernel_size,
-            padding=kernel_size // 2
-        )
+            padding=kernel_size // 2, # to maintain sequence length
+            )
         
-        self.attention_score = nn.Linear(self.hidden_dim, 1)
         
         self.encoder = nn.GRU(
             self.cnn_out_channels, # self.embedding_dim is no longer output
@@ -87,17 +90,23 @@ class ProteinSequenceAutoencoder(nn.Module):
             num_layers=self.num_layers,
             batch_first=True,
             dropout=rnn_dropout,
+            bidirectional=self.bidirectional, # using a bidirectional GRU to capture context from both directions
         )
-        self.to_latent = nn.Linear(self.hidden_dim, self.latent_dim)
-        self.from_latent = nn.Linear(self.latent_dim, self.hidden_dim * self.num_layers)
+
+        # self.attention_score = nn.Linear(self.hidden_dim, 1)
+        self.attention_score = nn.Linear(self.hidden_dim * (2 if self.bidirectional else 1), 1)
+        
+        self.to_latent = nn.Linear(self.hidden_dim * (2 if self.bidirectional else 1), self.latent_dim)
+        self.from_latent = nn.Linear(self.latent_dim, self.hidden_dim * self.num_layers * (2 if self.bidirectional else 1))
         self.decoder = nn.GRU(
             self.embedding_dim,
             self.hidden_dim,
             num_layers=self.num_layers,
             batch_first=True,
             dropout=rnn_dropout,
+            bidirectional=self.bidirectional, # using a bidirectional GRU to capture context from both directions
         )
-        self.output = nn.Linear(self.hidden_dim, self.vocab_size)
+        self.output = nn.Linear(self.hidden_dim * (2 if self.bidirectional else 1), self.vocab_size)
 
     def encode(
         self,
@@ -172,7 +181,8 @@ class ProteinSequenceAutoencoder(nn.Module):
             )
 
         hidden = self.from_latent(latent)
-        hidden = hidden.view(latent.size(0), self.num_layers, self.hidden_dim)
+        # hidden = hidden.view(latent.size(0), self.num_layers, self.hidden_dim)
+        hidden = hidden.view(latent.size(0), self.num_layers * (2 if self.bidirectional else 1), self.hidden_dim)
         hidden = hidden.transpose(0, 1).contiguous()
         decoded, _ = self.decoder(self.embedding(decoder_input_ids), hidden)
         return self.output(decoded)
