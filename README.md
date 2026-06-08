@@ -36,9 +36,7 @@
    bash
 
    ```
-   bash code/scripts/setup_peer_data.sh
-
-
+   bash Code/scripts/setup_peer_data.sh
    ```
 
 ## 1 Objective:

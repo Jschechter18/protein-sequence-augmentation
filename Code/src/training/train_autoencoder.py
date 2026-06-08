@@ -68,9 +68,11 @@ def model_definition(model_type: str, hyperparams: AEParams | TAEParams) -> tupl
     if model_type == "ae":
         model = AE(
             embedding_dim=hyperparams.embedding_dim,
+            cnn_out_channels=hyperparams.cnn_out_channels,
             hidden_dim=hyperparams.hidden_dim,
             latent_dim=hyperparams.latent_dim,
             num_layers=hyperparams.num_layers,
+            kernel_size=hyperparams.kernel_size,
             dropout=hyperparams.dropout,
             pad_idx=PAD_IDX,
             bos_idx=BOS_IDX,
@@ -139,6 +141,9 @@ def train(
     task: str = "localization",
 ) -> tuple[AE | TAE, dict]:
     model, optimizer, scheduler = model_definition(model_type, hyperparams)
+    if hyperparams.patience < 0:
+        raise ValueError("hyperparams.patience must be >= 0")
+
     loss_fn = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
     best_val_loss = float("inf")
     best_state_dict = None
@@ -246,6 +251,10 @@ def train(
             torch.save(model.state_dict(), checkpoint_path)
         else:
             epochs_without_improvement += 1
+            print(
+                f"No validation loss improvement for "
+                f"{epochs_without_improvement}/{hyperparams.patience} epoch(s)."
+            )
             if epochs_without_improvement >= hyperparams.patience:
                 print(
                     f"Early stopping after {epoch + 1} epochs. "
