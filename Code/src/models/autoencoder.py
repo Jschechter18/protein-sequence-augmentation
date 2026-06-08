@@ -14,14 +14,16 @@ class ProteinSequenceAutoencoder(nn.Module):
 
     def __init__(
         self,
-        layer_type: str = "gru", # placeholder for future layer types
-        embedding_dim: int = 128,
-        hidden_dim: int = 256,
-        latent_dim: int = 128,
-        num_layers: int = 1,
+        embedding_dim: int,
+        cnn_out_channels: int,
+        hidden_dim: int,
+        latent_dim: int,
+        num_layers: int,
+        kernel_size: int,
         dropout: float = 0.0,
         pad_idx: int = 0,
         bos_idx: int = 2,
+        layer_type: str = "gru", # placeholder for future layer types
     ) -> None:
         """Initialize the protein sequence autoencoder.
 
@@ -54,19 +56,30 @@ class ProteinSequenceAutoencoder(nn.Module):
             raise ValueError("Only layer_type='gru' is currently supported")
         if num_layers < 1:
             raise ValueError("num_layers must be at least 1")
+        if latent_dim >= hidden_dim:
+            raise Warning("latent_dim should ideally be smaller than hidden_dim for effective compression")
 
         rnn_dropout = dropout if num_layers > 1 else 0.0
         self.vocab_size = VOCAB_SIZE
+        self.embedding_dim = embedding_dim
+        self.cnn_out_channels = cnn_out_channels
         self.hidden_dim = hidden_dim
         self.latent_dim = latent_dim
-        self.embedding_dim = embedding_dim
         self.num_layers = num_layers
         self.pad_idx = pad_idx
         self.bos_idx = bos_idx
 
         self.embedding = nn.Embedding(self.vocab_size, self.embedding_dim, padding_idx=self.pad_idx)
+        
+        # TODO: experiment with adding a CNN layer before the GRU encoder to capture local patterns in the sequence
+        self.cnn = nn.Conv1d(
+            in_channels=self.embedding_dim,
+            out_channels=self.cnn_out_channels,
+            kernel_size=kernel_size,
+            padding=kernel_size // 2
+        )
         self.encoder = nn.GRU(
-            self.embedding_dim,
+            self.cnn_out_channels, # self.embedding_dim is no longer output
             self.hidden_dim,
             num_layers=self.num_layers,
             batch_first=True,
@@ -89,12 +102,23 @@ class ProteinSequenceAutoencoder(nn.Module):
         lengths: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Encode token IDs into a latent vector."""
-        embedded = self.embedding(input_ids)
+        embedded: torch.Tensor = self.embedding(input_ids)
+        
+        x = embedded.transpose(1, 2)
+        # x: [batch, embedding_dim, seq_len]
+        x = self.cnn(x)
+        x = torch.relu(x)
+        # x: [batch, cnn_out_channels, seq_len]
+        x = x.transpose(1, 2)
+        # x: [batch, seq_len, cnn_out_channels]
+        
         if lengths is None:
-            _, hidden = self.encoder(embedded)
+            # _, hidden = self.encoder(embedded)
+            _, hidden = self.encoder(x)
         else:
             packed = pack_padded_sequence(
-                embedded,
+                # embedded,
+                x,
                 lengths.detach().cpu().clamp(min=1, max=input_ids.size(1)),
                 batch_first=True,
                 enforce_sorted=False,
