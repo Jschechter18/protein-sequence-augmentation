@@ -18,7 +18,7 @@ class ESM2Encoder(nn.Module):
     def __init__(self, model_name: str = "facebook/esm2_t6_8M"):
         super().__init__()
         try:
-            import esm
+            import esm # type: ignore
             self.model, self.alphabet = esm.pretrained.load_model_and_alphabet_local(model_name)
         except ImportError:
             logger.warning("ESM not installed. Using fallback embedding.")
@@ -44,7 +44,7 @@ class ESM2Encoder(nn.Module):
             return torch.randn(len(sequences), max_len, 320)
         
         with torch.no_grad():
-            batch_converter = self.alphabet.get_batch_converter()
+            batch_converter = self.alphabet.get_batch_converter() # type: ignore
             batch_labels, batch_strs, batch_tokens = batch_converter(
                 [(str(i), seq) for i, seq in enumerate(sequences)]
             )
@@ -63,7 +63,7 @@ class CNN1DClassifier(nn.Module):
         self,
         input_dim: int = 320,
         num_classes: int = 2,
-        kernel_sizes: list = None,
+        kernel_sizes: list = None, # type: ignore
         num_filters: int = 64,
         dropout_rate: float = 0.3
     ):
@@ -143,7 +143,7 @@ class ESM2CNNPipeline:
         self,
         num_classes: int = 2,
         learning_rate: float = 1e-3,
-        device: str = None,
+        device: str = None, # type: ignore
         esm_model_name: str = "facebook/esm2_t6_8M"
     ):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
