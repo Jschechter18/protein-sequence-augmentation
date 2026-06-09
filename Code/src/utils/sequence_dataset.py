@@ -59,10 +59,6 @@ class SequenceDataset(Dataset):
         ``"classification"`` or ``"autoencoder"``.
     encoding:
         ``"char"`` for integer-encoded sequences, ``"raw"`` for raw strings.
-    max_length:
-        Optional fixed encoded length. ``None`` preserves full sequences and
-        leaves padding to the DataLoader collate function. Passing an integer
-        explicitly truncates longer sequences and pads shorter ones.
     cache_dir:
         Directory for pickle cache files. Defaults to ``{data_dir}/cache``.
     use_cache:
@@ -80,7 +76,6 @@ class SequenceDataset(Dataset):
         data_dir: str | Path = DATA_DIR,
         mode: str = "classification",
         encoding: str = "char",
-        max_length: int | None = None,
         cache_dir: str | None = None,
         use_cache: bool = True,
         seq_col: str = "sequence",
@@ -94,16 +89,12 @@ class SequenceDataset(Dataset):
             raise ValueError(f"encoding must be 'char' or 'raw', got {encoding!r}")
         if mode == "autoencoder" and encoding != "char":
             raise ValueError("autoencoder mode requires encoding='char'")
-        if mode == "autoencoder" and max_length is not None and max_length < 2:
-            # AE must have start and end tokens
-            raise ValueError("autoencoder mode requires max_length >= 2 for BOS/EOS")
 
         self.task = task
         self.split = split
         self.data_dir = Path(data_dir)
         self.mode = mode
         self.encoding = encoding
-        self.max_length = max_length
         self.seq_col = seq_col
         self.label_col = label_col
         self.use_cache = use_cache
@@ -173,7 +164,6 @@ class SequenceDataset(Dataset):
                 self.split,
                 self.mode,
                 self.encoding,
-                str(self.max_length),
                 self.seq_col,
                 self.label_col,
                 str(self.add_special_tokens),
@@ -199,7 +189,6 @@ class SequenceDataset(Dataset):
             "split": self.split,
             "mode": self.mode,
             "encoding": self.encoding,
-            "max_length": self.max_length,
             "seq_col": self.seq_col,
             "label_col": self.label_col,
             "add_special_tokens": self.add_special_tokens,
@@ -299,24 +288,16 @@ class SequenceDataset(Dataset):
         Returns
         -------
         token_ids:
-            Padded/truncated list of integer IDs of length ``max_length`` (or the natural length when ``max_length`` is ``None``).
+            List of integer IDs for the full sequence.
         effective_length:
-            Number of real (non-padding) tokens, i.e., the sequence length after optional truncation (including BOS/EOS when applicable).
+            Number of real tokens, including BOS/EOS when applicable.
         """
         if self.add_special_tokens:
-            # Reserve 2 positions for BOS and EOS within max_length.
-            content_limit = (self.max_length - 2) if self.max_length is not None else None
-            seq = sequence[:content_limit] if content_limit is not None else sequence
-            tokens = [BOS_IDX] + [self.vocab.get(aa, UNK_IDX) for aa in seq] + [EOS_IDX]
+            tokens = [BOS_IDX] + [self.vocab.get(aa, UNK_IDX) for aa in sequence] + [EOS_IDX]
         else:
-            seq = sequence[:self.max_length] if self.max_length is not None else sequence
-            tokens = [self.vocab.get(aa, UNK_IDX) for aa in seq]
+            tokens = [self.vocab.get(aa, UNK_IDX) for aa in sequence]
 
         effective_length = len(tokens)
-
-        # Pad to max_length with <PAD> tokens
-        if self.max_length is not None and len(tokens) < self.max_length:
-            tokens = tokens + [PAD_IDX] * (self.max_length - len(tokens))
 
         return tokens, effective_length
 
@@ -354,7 +335,7 @@ class SequenceDataset(Dataset):
                     "_sequence": raw_seq,
                 }
             else: # raw — no integer encoding -> this is the case for ESM-based models that take raw strings as input and handle this internally
-                seq = raw_seq[:self.max_length] if self.max_length is not None else raw_seq
+                seq = raw_seq
                 example = {
                     "_sequence": seq,
                     "_length": len(seq),
