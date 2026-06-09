@@ -89,3 +89,4 @@ Code/results/*
 history/
 checkpoints/
 logs/
+outputs/

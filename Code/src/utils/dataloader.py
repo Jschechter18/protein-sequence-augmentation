@@ -100,7 +100,6 @@ def create_dataloader(
     data_dir: str | Path = DATA_DIR,
     mode: str = "classification",
     encoding: str = "char",
-    max_length: int | None = None,
     cache_dir: str | None = None,
     use_cache: bool = True,
     seq_col: str = "sequence",
@@ -124,8 +123,6 @@ def create_dataloader(
         ``"classification"`` or ``"autoencoder"``.
     encoding:
         ``"char"`` for integer-encoded sequences, ``"raw"`` for raw strings.
-    max_length:
-        Optional fixed sequence length. ``None`` preserves full sequences and pads dynamically to the longest sequence in each batch.
     cache_dir:
         Cache directory. Defaults to ``{data_dir}/cache``.
     use_cache:
@@ -167,7 +164,7 @@ def create_dataloader(
 
         loader = create_dataloader(
             data_dir="data/processed/peer", task="localization", split="train",
-            mode="classification", encoding="raw", max_length=None,
+            mode="classification", encoding="raw",
             batch_size=16, shuffle=True, use_cache=False,
         )
     """
@@ -177,7 +174,6 @@ def create_dataloader(
         data_dir=data_dir,
         mode=mode,
         encoding=encoding,
-        max_length=max_length,
         cache_dir=cache_dir,
         use_cache=use_cache,
         seq_col=seq_col,
@@ -190,5 +186,5 @@ def create_dataloader(
         shuffle=shuffle,
         num_workers=num_workers,
         pin_memory=pin_memory,
-        collate_fn=collate_sequence_batch, # The custom collate function keeps raw strings as lists and pads token tensors when max_length=None leaves char-encoded examples variable length.
+        collate_fn=collate_sequence_batch, # The custom collate function keeps raw strings as lists and pads variable-length token tensors.
     )

@@ -3,7 +3,7 @@
 import torch
 from torch import nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-from utils.dataloader import VOCAB_SIZE
+from utils.dataloader import EOS_IDX, VOCAB_SIZE
 import warnings
 
 
@@ -25,6 +25,7 @@ class ProteinSequenceAutoencoder(nn.Module):
         dropout: float = 0.0,
         pad_idx: int = 0,
         bos_idx: int = 2,
+        eos_idx: int = EOS_IDX,
         layer_type: str = "gru", # placeholder for future layer types
     ) -> None:
         """Initialize the protein sequence autoencoder.
@@ -74,6 +75,7 @@ class ProteinSequenceAutoencoder(nn.Module):
         self.num_layers = num_layers
         self.pad_idx = pad_idx
         self.bos_idx = bos_idx
+        self.eos_idx = eos_idx
 
         self.embedding = nn.Embedding(self.vocab_size, self.embedding_dim, padding_idx=self.pad_idx)
         
@@ -179,6 +181,7 @@ class ProteinSequenceAutoencoder(nn.Module):
 
         Passing ``decoder_input_ids`` enables teacher forcing. Without it, the decoder receives repeated BOS tokens for ``sequence_length`` steps.
         """
+        # Optional teacher enforcing
         if decoder_input_ids is None:
             if sequence_length is None:
                 raise ValueError("sequence_length is required without decoder_input_ids")
@@ -188,13 +191,56 @@ class ProteinSequenceAutoencoder(nn.Module):
                 dtype=torch.long,
                 device=latent.device,
             )
+            # decoder_input_ids = torch.full(
+            #     (latent.size(0), sequence_length),
+            #     self.bos_idx,
+            #     dtype=torch.long,
+            #     device=latent.device,
+            # )
 
-        hidden = self.from_latent(latent)
-        # hidden = hidden.view(latent.size(0), self.num_layers, self.hidden_dim)
+        hidden: torch.Tensor = self.from_latent(latent)
         hidden = hidden.view(latent.size(0), self.num_layers, self.hidden_dim)
         hidden = hidden.transpose(0, 1).contiguous()
         decoded, _ = self.decoder(self.embedding(decoder_input_ids), hidden)
         return self.output(decoded)
+
+    def decode_autoregressive(
+        self,
+        latent: torch.Tensor,
+        max_length: int,
+    ) -> torch.Tensor:
+        """Decode from latent vectors by feeding each prediction into the next step."""
+        if max_length <= 0:
+            raise ValueError("max_length must be positive")
+
+        hidden: torch.Tensor = self.from_latent(latent)
+        hidden = hidden.view(latent.size(0), self.num_layers, self.hidden_dim)
+        hidden = hidden.transpose(0, 1).contiguous()
+
+        decoder_input_ids = torch.full(
+            (latent.size(0), 1),
+            self.bos_idx,
+            dtype=torch.long,
+            device=latent.device,
+        )
+        finished = torch.zeros(latent.size(0), dtype=torch.bool, device=latent.device)
+        logits_by_step: list[torch.Tensor] = []
+
+        for _ in range(max_length):
+            decoded, hidden = self.decoder(self.embedding(decoder_input_ids), hidden)
+            step_logits = self.output(decoded[:, -1, :])
+            logits_by_step.append(step_logits)
+
+            next_tokens = step_logits.argmax(dim=-1)
+            finished = finished | (next_tokens == self.eos_idx)
+            next_tokens = torch.where(
+                finished,
+                torch.full_like(next_tokens, self.pad_idx),
+                next_tokens,
+            )
+            decoder_input_ids = next_tokens.unsqueeze(1)
+
+        return torch.stack(logits_by_step, dim=1)
 
     def forward(
         self,

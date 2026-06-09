@@ -6,10 +6,6 @@ To run script:
 python Code/src/training/train_autoencoder.py --model AE --task localization
 python Code/src/training/train_autoencoder.py --model AE --task solubility
 
-# Transformer AE architecture:
-python Code/src/training/train_autoencoder.py --model TAE --task localization
-python Code/src/training/train_autoencoder.py --model TAE --task solubility
-
 """
 import argparse
 import json
@@ -24,6 +20,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.nn.utils import clip_grad_norm_
 from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score, classification_report, cohen_kappa_score
 from tqdm import tqdm
 
@@ -32,7 +29,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from models.autoencoder import ProteinSequenceAutoencoder as AE
-from models.transformer_autoencoder import ProteinSequenceTransformerAutoencoder as TAE
+# from models.transformer_autoencoder import ProteinSequenceTransformerAutoencoder as TAE
 from utils.dataloader import BOS_IDX, PAD_IDX, create_dataloader
 from utils.hyperparameters import (AutoencoderHyperparameters as AEParams, TransformerAutoencoderHyperparameters as TAEParams)
 
@@ -64,7 +61,8 @@ if torch.cuda.is_available():
 TRAIN_SPLIT = "train"
 VALID_SPLIT = "valid"
 
-def model_definition(model_type: str, hyperparams: AEParams | TAEParams) -> tuple[AE | TAE, torch.optim.Adam, ReduceLROnPlateau]:
+# def model_definition(model_type: str, hyperparams: AEParams | TAEParams) -> tuple[AE | TAE, torch.optim.Adam, ReduceLROnPlateau]:
+def model_definition(model_type: str, hyperparams: AEParams) -> tuple[AE, torch.optim.Adam, ReduceLROnPlateau]:
     if model_type == "ae":
         model = AE(
             embedding_dim=hyperparams.embedding_dim,
@@ -78,20 +76,6 @@ def model_definition(model_type: str, hyperparams: AEParams | TAEParams) -> tupl
             pad_idx=PAD_IDX,
             bos_idx=BOS_IDX,
         ).to(device)
-    elif model_type == "tae":
-        model = TAE(
-            embedding_dim=hyperparams.embedding_dim,
-            hidden_dim=hyperparams.hidden_dim,
-            latent_dim=hyperparams.latent_dim,
-            num_layers=hyperparams.num_layers,
-            num_heads=getattr(hyperparams, 'num_heads', 4),
-            dim_feedforward=getattr(hyperparams, 'dim_feedforward', 1024),
-            dropout=hyperparams.dropout,
-            # max_length=hyperparams.max_len,
-            max_length=getattr(hyperparams, "max_len", 512),
-            pad_idx=PAD_IDX,
-            bos_idx=BOS_IDX,
-        ).to(device)
     else:
         raise ValueError(f"Model type {model_type} not supported.")
     
@@ -101,7 +85,8 @@ def model_definition(model_type: str, hyperparams: AEParams | TAEParams) -> tupl
     
     return model, optimizer, scheduler
 # ----------------------------------------------------------------------------------------------------------------
-def validate(model: AE | TAE, dataloader: DataLoader, loss_fn: nn.CrossEntropyLoss) -> dict[str, float]:
+# def validate(model: AE | TAE, dataloader: DataLoader, loss_fn: nn.CrossEntropyLoss) -> dict[str, float]:
+def validate(model: AE, dataloader: DataLoader, loss_fn: nn.CrossEntropyLoss) -> dict[str, float]:
     model.eval()
     total_loss = 0.0
     total_tokens = 0
@@ -114,6 +99,7 @@ def validate(model: AE | TAE, dataloader: DataLoader, loss_fn: nn.CrossEntropyLo
             targets = batch["target_ids"].to(device)
             
             decoder_inputs = inputs[:, :-1]
+            # decoder_inputs = None
             targets = targets[:, 1:]
             
             outputs = model(inputs, decoder_input_ids=decoder_inputs, lengths=lengths)
@@ -133,15 +119,29 @@ def validate(model: AE | TAE, dataloader: DataLoader, loss_fn: nn.CrossEntropyLo
     return {"loss": avg_loss, "accuracy": accuracy}
 # ----------------------------------------------------------------------------------------------------------------
 
+def save_training_history(history: dict, history_path: str | Path) -> None:
+    history_path = Path(history_path)
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = history_path.with_suffix(f"{history_path.suffix}.tmp")
+
+    with tmp_path.open("w", encoding="utf-8") as f:
+        json.dump(history, f, indent=2, default=float)
+
+    tmp_path.replace(history_path)
+
+
 def train(
     model_type: str,
     train_dataloader: DataLoader,
     val_dataloader: DataLoader,
-    hyperparams: AEParams | TAEParams,
+    hyperparams: AEParams,
+    # hyperparams: AEParams | TAEParams,
     is_overfit: bool = False,
     load_path: str | None = None,
     task: str = "localization",
-) -> tuple[AE | TAE, dict]:
+    history_path: str | Path | None = None,
+# ) -> tuple[AE | TAE, dict]:
+) -> tuple[AE, dict]:
 
     model, optimizer, scheduler = model_definition(model_type, hyperparams)
     if load_path is not None:
@@ -169,6 +169,8 @@ def train(
             "accuracy": [],
         },
     }
+    if history_path is not None:
+        save_training_history(history, history_path)
     
     for epoch in range(hyperparams.num_epochs):
         if load_path is not None:
@@ -198,12 +200,15 @@ def train(
             targets = batch["target_ids"].to(device)
             
             decoder_inputs = inputs[:, :-1]
+            # decoder_inputs = None
             targets = targets[:, 1:]
             
             optimizer.zero_grad()
             outputs = model(inputs, decoder_input_ids=decoder_inputs, lengths=lengths)
-            loss = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
+            loss: torch.Tensor = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
             loss.backward()
+            if hyperparams.grad_clip:
+                clip_grad_norm_(model.parameters(), max_norm=1.0) # Testing out gradient clipping to see if it helps with training stability
             optimizer.step()
             
             predictions = outputs.argmax(dim=-1)
@@ -253,6 +258,8 @@ def train(
         history["val_loss"].append(val_loss)
         history["val_scores"]["accuracy"].append(val_metrics["accuracy"])
         history["epochs"].append(epoch_info)
+        if history_path is not None:
+            save_training_history(history, history_path)
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -288,10 +295,10 @@ def train(
     if best_state_dict is not None:
         model.load_state_dict(best_state_dict)
         
-    # return {"model": model, "history": history}
     return model, history
 
-def test(model: AE | TAE, dataloader: DataLoader) -> None:
+# def test(model: AE | TAE, dataloader: DataLoader) -> None:
+def test(model: AE, dataloader: DataLoader) -> None:
     model.eval()
     loss_fn = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
     total_loss = 0.0
@@ -307,6 +314,7 @@ def test(model: AE | TAE, dataloader: DataLoader) -> None:
             targets: torch.Tensor = batch["target_ids"].to(device)
 
             decoder_inputs = inputs[:, :-1]
+            # decoder_inputs = None
             targets = targets[:, 1:]
 
             outputs: torch.Tensor = model(inputs, decoder_input_ids=decoder_inputs, lengths=lengths)
@@ -423,6 +431,18 @@ def main():
         default=None,
         help='Override num_epochs for an overfit/debug run.',
     )
+    args.add_argument(
+        '--overfit_learning_rate',
+        type=float,
+        default=None,
+        help='Debug mode: override learning rate for overfit runs.',
+    )
+    args.add_argument(
+        '--overfit_batch_size',
+        type=int,
+        default=None,
+        help='Debug mode: override batch size before selecting overfit batches.',
+    )
     
     args = args.parse_args()
     # if args.model.upper() != "AE" or args.model.upper() != "TAE":
@@ -432,25 +452,37 @@ def main():
     
     if args.model.upper() == "AE":
         hyperparams = AEParams()
-    elif args.model.upper() == "TAE":
-        hyperparams = TAEParams()
     else:
-        raise ValueError("Only --model AE or --model TAE is currently supported")
-    
-    train_dataloader = create_dataloader(task=args.task, split=TRAIN_SPLIT, mode="autoencoder",
-                                   batch_size=hyperparams.batch_size, shuffle=hyperparams.shuffle,
-                                   num_workers=num_workers, max_length=hyperparams.max_len)
-    val_dataloader = create_dataloader(task=args.task, split=VALID_SPLIT, mode="autoencoder",
-                                       batch_size=hyperparams.batch_size, shuffle=False,
-                                       num_workers=num_workers, max_length=hyperparams.max_len)
-    test_dataloader = create_dataloader(task=args.task, split="test", mode="autoencoder",
-                                       batch_size=hyperparams.batch_size, shuffle=False,
-                                       num_workers=num_workers, max_length=hyperparams.max_len)
+        raise ValueError("Only --model AE is currently supported")
+    # elif args.model.upper() == "TAE":
+    #     hyperparams = TAEParams()
+    # else:
+    #     raise ValueError("Only --model AE or --model TAE is currently supported")
+    if args.overfit_batches is not None:
+        hyperparams.dropout = 0.0
+        if args.overfit_learning_rate is not None:
+            if args.overfit_learning_rate <= 0:
+                raise ValueError("--overfit_learning_rate must be positive")
+            hyperparams.learning_rate = args.overfit_learning_rate
+        if args.overfit_batch_size is not None:
+            if args.overfit_batch_size <= 0:
+                raise ValueError("--overfit_batch_size must be a positive integer")
+            hyperparams.batch_size = args.overfit_batch_size
 
     if args.overfit_epochs is not None:
         if args.overfit_epochs <= 0:
             raise ValueError("--overfit_epochs must be a positive integer")
         hyperparams.num_epochs = args.overfit_epochs
+
+    train_dataloader = create_dataloader(task=args.task, split=TRAIN_SPLIT, mode="autoencoder",
+                                   batch_size=hyperparams.batch_size, shuffle=hyperparams.shuffle,
+                                   num_workers=num_workers)
+    val_dataloader = create_dataloader(task=args.task, split=VALID_SPLIT, mode="autoencoder",
+                                       batch_size=hyperparams.batch_size, shuffle=False,
+                                       num_workers=num_workers)
+    test_dataloader = create_dataloader(task=args.task, split="test", mode="autoencoder",
+                                       batch_size=hyperparams.batch_size, shuffle=False,
+                                       num_workers=num_workers)
 
     if args.overfit_batches is not None:
         train_dataloader, val_dataloader = make_overfit_dataloaders(
@@ -459,20 +491,28 @@ def main():
         )
         print(
             f"Overfit debug mode: training and validating on "
-            f"{len(train_dataloader.dataset)} examples."
+            f"{len(train_dataloader.dataset)} examples "
+            f"(batch_size={hyperparams.batch_size}, dropout={hyperparams.dropout}, "
+            f"learning_rate={hyperparams.learning_rate})."
         )
     
-    print()
-    model, history = train(args.model.lower(), train_dataloader, val_dataloader, hyperparams, is_overfit=(args.overfit_batches is not None), task=args.task, load_path=args.load_path)
-    
     history_dir = Path(__file__).resolve().parents[3] / "history"
-    history_dir.mkdir(parents=True, exist_ok=True)
     if args.overfit_batches is not None:
         history_path = history_dir / f"{args.task}_{args.model.lower()}_overfit_{args.overfit_batches}_history.json"
     else:
         history_path = history_dir / f"{args.task}_{args.model.lower()}_history.json"
-    with history_path.open("w", encoding="utf-8") as f:
-        json.dump(history, f, indent=2, default=float)
+
+    print()
+    model, history = train(
+        args.model.lower(),
+        train_dataloader,
+        val_dataloader,
+        hyperparams,
+        is_overfit=(args.overfit_batches is not None),
+        task=args.task,
+        load_path=args.load_path,
+        history_path=history_path,
+    )
 
     print(f"Saved training history to: {history_path}")
 
