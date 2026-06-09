@@ -101,7 +101,7 @@ class ProteinSequenceAutoencoder(nn.Module):
         self.to_latent = nn.Sequential(
             nn.Linear(self.hidden_dim * self.encoder_num_directions, 512),
             nn.LayerNorm(512),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(512, self.latent_dim)
         )
         self.from_latent = nn.Linear(self.latent_dim, self.hidden_dim * self.num_layers)
