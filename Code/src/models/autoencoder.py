@@ -4,6 +4,7 @@ import torch
 from torch import nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from utils.dataloader import VOCAB_SIZE
+import warnings
 
 
 class ProteinSequenceAutoencoder(nn.Module):
@@ -58,7 +59,8 @@ class ProteinSequenceAutoencoder(nn.Module):
         if num_layers < 1:
             raise ValueError("num_layers must be at least 1")
         if latent_dim >= hidden_dim:
-            raise Warning("latent_dim should ideally be smaller than hidden_dim for effective compression")
+            # raise Warning("latent_dim should ideally be smaller than hidden_dim for effective compression")
+            warnings.warn("latent_dim should ideally be smaller than hidden_dim for effective compression", UserWarning)
         
         self.bidirectional = bidirectional
         self.encoder_num_directions = 2 if self.bidirectional else 1
