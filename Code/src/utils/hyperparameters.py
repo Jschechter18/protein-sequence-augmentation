@@ -23,7 +23,7 @@ class AutoencoderHyperparameters(Hyperparameters):
     kernel_size: int = 5
     num_layers: int = 2
     bidirectional: bool = True
-    max_len: int | None = None
+    grad_clip: bool = True
 
 @dataclass
 class TransformerAutoencoderHyperparameters(Hyperparameters):
@@ -34,7 +34,4 @@ class TransformerAutoencoderHyperparameters(Hyperparameters):
     num_heads: int = 4
     dim_feedforward: int = 1024
     dropout: float = 0.1
-    max_len: int = 128
-    # max_len: int = 512
-    # max_len: int = 1024 # picked a fairly large max_len to avoid truncation, but this can be adjusted based on the dataset
     num_layers: int = 2
