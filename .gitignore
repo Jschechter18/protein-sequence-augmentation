@@ -66,6 +66,12 @@ external/PEER_Benchmark
 # =========================================================
 code/results/*
 !code/results/.gitkeep
+!code/results/README.md
+!code/results/autoencoder
+!code/results/esm2
+!code/results/figures
+!code/results/tables
+
 
 # =========================================================
 # Pytest
