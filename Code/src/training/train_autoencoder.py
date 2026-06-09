@@ -139,12 +139,19 @@ def train(
     val_dataloader: DataLoader,
     hyperparams: AEParams | TAEParams,
     is_overfit: bool = False,
+    load_path: str | None = None,
     task: str = "localization",
 ) -> tuple[AE | TAE, dict]:
-    model, optimizer, scheduler = model_definition(model_type, hyperparams)
-    if hyperparams.patience < 0:
-        raise ValueError("hyperparams.patience must be >= 0")
 
+    model, optimizer, scheduler = model_definition(model_type, hyperparams)
+    if load_path is not None:
+        print(f"Checkpoint path provided: {load_path}")
+        checkpoint = torch.load(load_path, map_location=device) # device could be an issue?
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+        epoch_checkpoint = checkpoint["epoch"]
+        print("Loaded model state, optimizer, scheduler from checkpoint (this will only affect where the best model is saved, not loaded from).")
+        
     loss_fn = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
     best_val_loss = float("inf")
     best_state_dict = None
@@ -164,6 +171,14 @@ def train(
     }
     
     for epoch in range(hyperparams.num_epochs):
+        if load_path is not None:
+            try:
+                epoch_checkpoint = checkpoint["epoch"]
+            except KeyError:
+                epoch_checkpoint = None
+            if epoch_checkpoint is not None and epoch < epoch_checkpoint:
+                epoch = epoch_checkpoint - 1
+        
         model.train()
         total_loss = 0.0
         total_tokens = 0
@@ -249,7 +264,14 @@ def train(
                 checkpoint_path = checkpoint_dir / f"model_{model_type.lower()}_{task}_overfit.pt"
             else:
                 checkpoint_path = checkpoint_dir / f"model_{model_type.lower()}_{task}.pt"
-            torch.save(model.state_dict(), checkpoint_path)
+            torch.save({
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict(),
+                "epoch": epoch + 1,
+                "val_loss": val_loss,
+                "val_accuracy": val_metrics["accuracy"],
+            }, checkpoint_path)
         else:
             epochs_without_improvement += 1
             print(
@@ -388,6 +410,7 @@ def main():
     args = argparse.ArgumentParser(description='Train an autoencoder on protein sequences.')
     args.add_argument('--model', type=str, default='AE', help='Model to train (default: AE)')
     args.add_argument('--task', type=str, default='localization', help='Task to perform (default: localization)')
+    args.add_argument('load_path', type=str, nargs='?', default=None, help='Path to load the best existing model checkpoint (optional)')
     args.add_argument(
         '--overfit_batches',
         type=int,
@@ -440,7 +463,7 @@ def main():
         )
     
     print()
-    model, history = train(args.model.lower(), train_dataloader, val_dataloader, hyperparams, is_overfit=(args.overfit_batches is not None), task=args.task)
+    model, history = train(args.model.lower(), train_dataloader, val_dataloader, hyperparams, is_overfit=(args.overfit_batches is not None), task=args.task, load_path=args.load_path)
     
     history_dir = Path(__file__).resolve().parents[3] / "history"
     history_dir.mkdir(parents=True, exist_ok=True)
