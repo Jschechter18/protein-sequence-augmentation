@@ -9,15 +9,17 @@ class Hyperparameters:
     dropout: float = 0.1
     patience: int = 10
     lr_patience: int = 5
+    # lr_patience: int = 3 # probably a good place for starting point before real tuning
 
 @dataclass
 class AutoencoderHyperparameters(Hyperparameters):
     learning_rate: float = 1e-3 # at 3e-3 it was way off
-    shuffle: bool = True
+    # shuffle: bool = True
     embedding_dim: int = 256
     cnn_out_channels: int = 256
     hidden_dim: int = 512
-    latent_dim: int = 256
+    # latent_dim: int = 256
+    latent_dim: int = 512
     kernel_size: int = 5
     num_layers: int = 2
     bidirectional: bool = True
