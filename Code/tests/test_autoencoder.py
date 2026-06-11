@@ -1,17 +1,24 @@
 import torch
 from models.autoencoder import ProteinSequenceAutoencoder as AE
 
-def test_autoencoder_forward_pass():
-    model = AE(
+
+def _make_model() -> AE:
+    return AE(
         layer_type="gru",
         embedding_dim=64,
+        cnn_out_channels=64,
         hidden_dim=128,
         latent_dim=64,
+        kernel_size=3,
         num_layers=1,
         dropout=0.0,
         pad_idx=0,
         bos_idx=2,
     )
+
+
+def test_autoencoder_forward_pass():
+    model = _make_model()
     batch_size = 4
     sequence_length = 10
     vocab_size = model.vocab_size
@@ -26,16 +33,7 @@ def test_autoencoder_forward_pass():
     assert logits.shape == (batch_size, sequence_length, vocab_size), f"Expected output shape {(batch_size, sequence_length, vocab_size)}, but got {logits.shape}"
     
 def test_autoencoder_encoder() -> None:
-    model = AE(
-        layer_type="gru",
-        embedding_dim=64,
-        hidden_dim=128,
-        latent_dim=64,
-        num_layers=1,
-        dropout=0.0,
-        pad_idx=0,
-        bos_idx=2,
-    )
+    model = _make_model()
     batch_size = 4
     sequence_length = 10
     vocab_size = model.vocab_size
@@ -51,16 +49,7 @@ def test_autoencoder_encoder() -> None:
     
 
 def test_autoencoder_decoder() -> None:
-    model = AE(
-        layer_type="gru",
-        embedding_dim=64,
-        hidden_dim=128,
-        latent_dim=64,
-        num_layers=1,
-        dropout=0.0,
-        pad_idx=0,
-        bos_idx=2,
-    )
+    model = _make_model()
     batch_size = 4
     sequence_length = 10
     
@@ -74,16 +63,7 @@ def test_autoencoder_decoder() -> None:
     assert output_logits.shape == (batch_size, sequence_length, model.vocab_size), f"Expected output shape {(batch_size, sequence_length, model.vocab_size)}, but got {output_logits.shape}"
 
 def test_autoencoder_reconstruct() -> None:
-    model = AE(
-        layer_type="gru",
-        embedding_dim=64,
-        hidden_dim=128,
-        latent_dim=64,
-        num_layers=1,
-        dropout=0.0,
-        pad_idx=0,
-        bos_idx=2,
-    )
+    model = _make_model()
     batch_size = 4
     sequence_length = 10
     vocab_size = model.vocab_size

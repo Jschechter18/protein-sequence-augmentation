@@ -22,6 +22,7 @@ class ProteinSequenceAutoencoder(nn.Module):
         num_layers: int,
         kernel_size: int,
         bidirectional: bool = True,
+        grad_clip: bool = True,
         dropout: float = 0.0,
         pad_idx: int = 0,
         bos_idx: int = 2,
@@ -65,6 +66,7 @@ class ProteinSequenceAutoencoder(nn.Module):
         
         self.bidirectional = bidirectional
         self.encoder_num_directions = 2 if self.bidirectional else 1
+        self.grad_clip = grad_clip
 
         rnn_dropout = dropout if num_layers > 1 else 0.0
         self.vocab_size = VOCAB_SIZE
@@ -95,7 +97,7 @@ class ProteinSequenceAutoencoder(nn.Module):
             batch_first=True,
             dropout=rnn_dropout,
             bidirectional=self.bidirectional,
-        )
+            )
 
         # self.attention_score = nn.Linear(self.hidden_dim, 1)
         self.attention_score = nn.Linear(self.hidden_dim * self.encoder_num_directions, 1)
@@ -179,25 +181,15 @@ class ProteinSequenceAutoencoder(nn.Module):
     ) -> torch.Tensor:
         """Decode a latent vector into token logits.
 
-        Passing ``decoder_input_ids`` enables teacher forcing. Without it, the decoder receives repeated BOS tokens for ``sequence_length`` steps.
+        Passing ``decoder_input_ids`` enables teacher forcing. Without it, decoding is autoregressive for ``sequence_length`` steps.
         """
         # Optional teacher enforcing
         if decoder_input_ids is None:
             if sequence_length is None:
                 raise ValueError("sequence_length is required without decoder_input_ids")
-            decoder_input_ids = torch.full(
-                (latent.size(0), sequence_length),
-                self.bos_idx,
-                dtype=torch.long,
-                device=latent.device,
-            )
-            # decoder_input_ids = torch.full(
-            #     (latent.size(0), sequence_length),
-            #     self.bos_idx,
-            #     dtype=torch.long,
-            #     device=latent.device,
-            # )
-
+            # Call actual autoregressive decoding function which feeds predictions back in at each step
+            return self.decode_autoregressive(latent, sequence_length)
+        
         hidden: torch.Tensor = self.from_latent(latent)
         hidden = hidden.view(latent.size(0), self.num_layers, self.hidden_dim)
         hidden = hidden.transpose(0, 1).contiguous()

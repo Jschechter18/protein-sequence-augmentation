@@ -4,26 +4,22 @@ from dataclasses import dataclass
 class Hyperparameters:
     batch_size: int = 32
     num_epochs: int = 100
-    # num_epochs: int = 15
     shuffle: bool = True
     dropout: float = 0.1
     patience: int = 10
-    lr_patience: int = 5
-    # lr_patience: int = 3 # probably a good place for starting point before real tuning
+    lr_patience: int = 3 # probably a good place for starting point before real tuning
 
 @dataclass
 class AutoencoderHyperparameters(Hyperparameters):
-    learning_rate: float = 1e-3 # at 3e-3 it was way off
-    # shuffle: bool = True
+    learning_rate: float = 1e-3 # do NOT increase this, the highest it should be is 1e-3
     embedding_dim: int = 256
     cnn_out_channels: int = 256
     hidden_dim: int = 512
-    # latent_dim: int = 256
     latent_dim: int = 512
     kernel_size: int = 5
     num_layers: int = 2
     bidirectional: bool = True
-    grad_clip: bool = True
+    grad_clip: bool = True # needed when training with 
 
 @dataclass
 class TransformerAutoencoderHyperparameters(Hyperparameters):
