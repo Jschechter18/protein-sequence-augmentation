@@ -18,10 +18,10 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Dataset, Subset
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.nn.utils import clip_grad_norm_
-from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score, classification_report, cohen_kappa_score
+from sklearn.metrics import f1_score, accuracy_score
 from tqdm import tqdm
 
 SRC_DIR = Path(__file__).resolve().parents[1]
@@ -29,9 +29,10 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from models.autoencoder import ProteinSequenceAutoencoder as AE
-# from models.transformer_autoencoder import ProteinSequenceTransformerAutoencoder as TAE
 from utils.dataloader import BOS_IDX, PAD_IDX, create_dataloader
 from utils.hyperparameters import (AutoencoderHyperparameters as AEParams, TransformerAutoencoderHyperparameters as TAEParams)
+from utils.utils import load_training_checkpoint
+from utils.curriculum import make_length_curriculum_dataloader
 
 # ----------------------------------------------------------------------------------------------------------------
 
@@ -61,7 +62,6 @@ if torch.cuda.is_available():
 TRAIN_SPLIT = "train"
 VALID_SPLIT = "valid"
 
-# def model_definition(model_type: str, hyperparams: AEParams | TAEParams) -> tuple[AE | TAE, torch.optim.Adam, ReduceLROnPlateau]:
 def model_definition(model_type: str, hyperparams: AEParams) -> tuple[AE, torch.optim.Adam, ReduceLROnPlateau]:
     if model_type == "ae":
         model = AE(
@@ -85,7 +85,6 @@ def model_definition(model_type: str, hyperparams: AEParams) -> tuple[AE, torch.
     
     return model, optimizer, scheduler
 # ----------------------------------------------------------------------------------------------------------------
-# def validate(model: AE | TAE, dataloader: DataLoader, loss_fn: nn.CrossEntropyLoss) -> dict[str, float]:
 def validate(model: AE, dataloader: DataLoader, loss_fn: nn.CrossEntropyLoss) -> dict[str, float]:
     model.eval()
     total_loss = 0.0
@@ -98,11 +97,13 @@ def validate(model: AE, dataloader: DataLoader, loss_fn: nn.CrossEntropyLoss) ->
             lengths = batch["length"].to(device)
             targets = batch["target_ids"].to(device)
             
-            decoder_inputs = inputs[:, :-1]
-            # decoder_inputs = None
             targets = targets[:, 1:]
             
-            outputs = model(inputs, decoder_input_ids=decoder_inputs, lengths=lengths)
+            outputs = model(inputs, decoder_input_ids=inputs[:, :-1], lengths=lengths)
+            # outputs = model.decode_autoregressive(
+            #     model.encode(inputs, lengths=lengths),
+            #     max_length=targets.size(1),
+            # )
             loss = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
             
             predictions = outputs.argmax(dim=-1)
@@ -130,34 +131,46 @@ def save_training_history(history: dict, history_path: str | Path) -> None:
     tmp_path.replace(history_path)
 
 
+
+
 def train(
     model_type: str,
     train_dataloader: DataLoader,
     val_dataloader: DataLoader,
     hyperparams: AEParams,
-    # hyperparams: AEParams | TAEParams,
     is_overfit: bool = False,
     load_path: str | None = None,
     task: str = "localization",
     history_path: str | Path | None = None,
-# ) -> tuple[AE | TAE, dict]:
+    curriculum_epochs: int = 0,
+    curriculum_start_fraction: float = 0.3,
 ) -> tuple[AE, dict]:
 
     model, optimizer, scheduler = model_definition(model_type, hyperparams)
-    if load_path is not None:
-        print(f"Checkpoint path provided: {load_path}")
-        checkpoint = torch.load(load_path, map_location=device) # device could be an issue?
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-        scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
-        epoch_checkpoint = checkpoint["epoch"]
-        print("Loaded model state, optimizer, scheduler from checkpoint (this will only affect where the best model is saved, not loaded from).")
-        
-    loss_fn = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
+    start_epoch = 0
     best_val_loss = float("inf")
     best_state_dict = None
+    if load_path is not None:
+        print(f"Checkpoint path provided: {load_path}")
+        start_epoch, best_val_loss = load_training_checkpoint(
+            model,
+            optimizer,
+            scheduler,
+            load_path,
+            device,
+        )
+        best_state_dict = copy.deepcopy(model.state_dict())
+        print(f"Resuming training from epoch {start_epoch + 1}.")
+        
+    loss_fn = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
     epochs_without_improvement = 0
     history = {
         "hyperparameters": asdict(hyperparams),
+        "curriculum": {
+            "type": "length" if curriculum_epochs > 0 else "none",
+            "epochs": curriculum_epochs,
+            "start_fraction": curriculum_start_fraction,
+        },
         "epochs": [],
         "train_loss": [],
         "train_scores": {
@@ -172,14 +185,13 @@ def train(
     if history_path is not None:
         save_training_history(history, history_path)
     
-    for epoch in range(hyperparams.num_epochs):
-        if load_path is not None:
-            try:
-                epoch_checkpoint = checkpoint["epoch"]
-            except KeyError:
-                epoch_checkpoint = None
-            if epoch_checkpoint is not None and epoch < epoch_checkpoint:
-                epoch = epoch_checkpoint - 1
+    if start_epoch >= hyperparams.num_epochs:
+        print(
+            f"Checkpoint already completed {start_epoch} epoch(s); "
+            f"num_epochs is {hyperparams.num_epochs}, so no additional training will run."
+        )
+
+    for epoch in range(start_epoch, hyperparams.num_epochs):
         
         model.train()
         total_loss = 0.0
@@ -188,9 +200,20 @@ def train(
         epoch_targets = []
         epoch_predictions = []
 
-        progress_bar = tqdm(
+        epoch_train_dataloader, curriculum_examples, curriculum_fraction = make_length_curriculum_dataloader(
             train_dataloader,
-            desc=f"Epoch {epoch + 1}/{hyperparams.num_epochs}",
+            epoch,
+            curriculum_epochs,
+            curriculum_start_fraction,
+            num_workers=num_workers,
+        )
+        desc = f"Epoch {epoch + 1}/{hyperparams.num_epochs}"
+        if curriculum_epochs > 0 and curriculum_fraction < 1.0:
+            desc += f" ({curriculum_examples} shortest examples)"
+
+        progress_bar = tqdm(
+            epoch_train_dataloader,
+            desc=desc,
             unit="batch",
         )
 
@@ -199,12 +222,16 @@ def train(
             lengths = batch["length"].to(device)
             targets = batch["target_ids"].to(device)
             
-            decoder_inputs = inputs[:, :-1]
-            # decoder_inputs = None
             targets = targets[:, 1:]
             
             optimizer.zero_grad()
-            outputs = model(inputs, decoder_input_ids=decoder_inputs, lengths=lengths)
+            # No teacher forcing: decode autoregressively for exactly the shifted target length.
+            # outputs = model.(
+            #     model.encode(inputs, lengths=lengths),
+            #     max_length=targets.size(1),
+            # )
+            # Teacher forcing alternative:
+            outputs = model(inputs, decoder_input_ids=inputs[:, :-1], lengths=lengths)
             loss: torch.Tensor = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
             loss.backward()
             if hyperparams.grad_clip:
@@ -240,15 +267,13 @@ def train(
             "train_loss": avg_loss,
             "train_accuracy": accuracy,
             "train_f1": f1,
+            "curriculum_fraction": curriculum_fraction,
+            "curriculum_examples": curriculum_examples,
         }
         history["train_loss"].append(avg_loss)
         history["train_scores"]["accuracy"].append(accuracy)
         history["train_scores"]["f1"].append(f1)
         
-        # if val_dataloader is None:
-        #     scheduler.step(avg_loss)
-        #     history["epochs"].append(epoch_info)
-        #     continue
 
         val_metrics = validate(model, val_dataloader, loss_fn)
         val_loss = val_metrics["loss"]
@@ -313,11 +338,14 @@ def test(model: AE, dataloader: DataLoader) -> None:
             lengths: torch.Tensor = batch["length"].to(device)
             targets: torch.Tensor = batch["target_ids"].to(device)
 
-            decoder_inputs = inputs[:, :-1]
-            # decoder_inputs = None
             targets = targets[:, 1:]
 
-            outputs: torch.Tensor = model(inputs, decoder_input_ids=decoder_inputs, lengths=lengths)
+            # No teacher forcing: decode autoregressively for exactly the shifted target length.
+            # outputs: torch.Tensor = model.decode_autoregressive(
+            #     model.encode(inputs, lengths=lengths),
+            #     max_length=targets.size(1),
+            # )
+            outputs: torch.Tensor = model(inputs, decoder_input_ids=inputs[:, :-1], lengths=lengths)
             loss: torch.Tensor = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
 
             predictions: torch.Tensor = outputs.argmax(dim=-1)
@@ -334,28 +362,9 @@ def test(model: AE, dataloader: DataLoader) -> None:
     avg_loss = total_loss / total_tokens if total_tokens > 0 else 0.0
     accuracy = total_correct / total_tokens if total_tokens > 0 else 0.0
 
-    if total_tokens > 0:
-        y_true = torch.cat(all_targets).numpy()
-        y_pred = torch.cat(all_predictions).numpy()
-        precision = precision_score(y_true, y_pred, average="weighted", zero_division=0)
-        recall = recall_score(y_true, y_pred, average="weighted", zero_division=0)
-        # f1 = f1_score(y_true, y_pred, average="weighted", zero_division=0)
-        kappa = cohen_kappa_score(y_true, y_pred)
-        report = classification_report(y_true, y_pred, zero_division=0)
-    else:
-        precision = 0.0
-        recall = 0.0
-        f1 = 0.0
-        kappa = 0.0
-        report = "No non-padding tokens found in test set."
-
     print(
         f"Test Loss: {avg_loss:.4f}, Test Accuracy: {accuracy:.4f}, "
-        # f"Precision: {precision:.4f}, Recall: {recall:.4f}, "
-        # f"F1: {f1:.4f}, Cohen's Kappa: {kappa:.4f}"
     )
-    # print("Classification Report:")
-    # print(report)
 
 def make_overfit_dataloaders(
     train_dataloader: DataLoader,
@@ -418,7 +427,7 @@ def main():
     args = argparse.ArgumentParser(description='Train an autoencoder on protein sequences.')
     args.add_argument('--model', type=str, default='AE', help='Model to train (default: AE)')
     args.add_argument('--task', type=str, default='localization', help='Task to perform (default: localization)')
-    args.add_argument('load_path', type=str, nargs='?', default=None, help='Path to load the best existing model checkpoint (optional)')
+    args.add_argument('--load_path', type=str, nargs='?', default=None, help='Path to load the best existing model checkpoint (optional)')
     args.add_argument(
         '--overfit_batches',
         type=int,
@@ -443,10 +452,20 @@ def main():
         default=None,
         help='Debug mode: override batch size before selecting overfit batches.',
     )
+    args.add_argument(
+        '--curriculum_epochs',
+        type=int,
+        default=0,
+        help='Use length curriculum for this many initial epochs. 0 disables curriculum.',
+    )
+    args.add_argument(
+        '--curriculum_start_fraction',
+        type=float,
+        default=0.4, # did 30% before but might need a bit more data even if it means longer sequences in the early epochs
+        help='Fraction of shortest training examples to use in the first curriculum epoch.',
+    )
     
     args = args.parse_args()
-    # if args.model.upper() != "AE" or args.model.upper() != "TAE":
-    #     raise ValueError("Only --model AE or --model TAE is currently supported")
     if args.task != "localization" and args.task != "solubility":
         raise ValueError("Task only accepts 'localization' or 'solubility'")
     
@@ -454,10 +473,12 @@ def main():
         hyperparams = AEParams()
     else:
         raise ValueError("Only --model AE is currently supported")
-    # elif args.model.upper() == "TAE":
-    #     hyperparams = TAEParams()
-    # else:
-    #     raise ValueError("Only --model AE or --model TAE is currently supported")
+
+    if args.curriculum_epochs < 0:
+        raise ValueError("--curriculum_epochs must be non-negative")
+    if not 0.0 < args.curriculum_start_fraction <= 1.0:
+        raise ValueError("--curriculum_start_fraction must be in the range (0, 1]")
+
     if args.overfit_batches is not None:
         hyperparams.dropout = 0.0
         if args.overfit_learning_rate is not None:
@@ -483,7 +504,7 @@ def main():
     test_dataloader = create_dataloader(task=args.task, split="test", mode="autoencoder",
                                        batch_size=hyperparams.batch_size, shuffle=False,
                                        num_workers=num_workers)
-
+    
     if args.overfit_batches is not None:
         train_dataloader, val_dataloader = make_overfit_dataloaders(
             train_dataloader,
@@ -494,6 +515,13 @@ def main():
             f"{len(train_dataloader.dataset)} examples "
             f"(batch_size={hyperparams.batch_size}, dropout={hyperparams.dropout}, "
             f"learning_rate={hyperparams.learning_rate})."
+        )
+
+    if args.curriculum_epochs > 0:
+        print(
+            f"Length curriculum enabled: starting with "
+            f"{args.curriculum_start_fraction:.0%} of the shortest training examples "
+            f"and reaching the full training set over {args.curriculum_epochs} epoch(s)."
         )
     
     history_dir = Path(__file__).resolve().parents[3] / "history"
@@ -512,6 +540,8 @@ def main():
         task=args.task,
         load_path=args.load_path,
         history_path=history_path,
+        curriculum_epochs=args.curriculum_epochs,
+        curriculum_start_fraction=args.curriculum_start_fraction,
     )
 
     print(f"Saved training history to: {history_path}")
@@ -521,8 +551,6 @@ def main():
     else:
         print("Skipping full test set evaluation in overfit debug mode.")
     
-    
-    # TODO: output results to correct location once that is ready
 
 
 if __name__ == "__main__":
@@ -530,5 +558,5 @@ if __name__ == "__main__":
 
 
 # TODO:
-# - Output results to a file in addition to printing to console
-# - Note, currently reporting on token accuracy, which is good, but may also want to report on sequence-level accuracy (i.e. % of sequences where all tokens are correct)
+# - revert to whatever was on feature branch (unless it was just the lr change that broke it)
+# - need to add dropout just to the teacher forcing dropout separate from other dropouts -> this way we train with some teacher forcing help but not completely rely on it
