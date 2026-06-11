@@ -455,13 +455,13 @@ def main():
     args.add_argument(
         '--curriculum_epochs',
         type=int,
-        default=0,
+        default=0, # starting with 5
         help='Use length curriculum for this many initial epochs. 0 disables curriculum.',
     )
     args.add_argument(
         '--curriculum_start_fraction',
         type=float,
-        default=0.4, # did 30% before but might need a bit more data even if it means longer sequences in the early epochs
+        default=0.25,
         help='Fraction of shortest training examples to use in the first curriculum epoch.',
     )
     
@@ -478,6 +478,8 @@ def main():
         raise ValueError("--curriculum_epochs must be non-negative")
     if not 0.0 < args.curriculum_start_fraction <= 1.0:
         raise ValueError("--curriculum_start_fraction must be in the range (0, 1]")
+    if args.curriculum_start_fraction is not None and args.curriculum_epochs == 0:
+        raise ValueError("--curriculum_fraction has no effect when --curriculum_epochs is 0")
 
     if args.overfit_batches is not None:
         hyperparams.dropout = 0.0
@@ -494,6 +496,7 @@ def main():
         if args.overfit_epochs <= 0:
             raise ValueError("--overfit_epochs must be a positive integer")
         hyperparams.num_epochs = args.overfit_epochs
+    
 
     train_dataloader = create_dataloader(task=args.task, split=TRAIN_SPLIT, mode="autoencoder",
                                    batch_size=hyperparams.batch_size, shuffle=hyperparams.shuffle,
