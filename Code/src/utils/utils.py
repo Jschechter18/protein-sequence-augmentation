@@ -39,3 +39,19 @@ def load_training_checkpoint(
 
     raise TypeError("Checkpoint must be a state_dict or contain 'model_state_dict'.")
 
+from utils.dataloader import VOCAB, PAD_IDX, VOCAB_SIZE
+
+def make_token_weights(device):
+    weights = torch.ones(VOCAB_SIZE, dtype=torch.float32)
+
+    aa_weights = {
+        "A": 0.79, "C": 1.97, "D": 0.93, "E": 0.84, "F": 1.14,
+        "G": 0.86, "H": 1.24, "I": 0.93, "K": 0.92, "L": 0.73,
+        "M": 1.43, "N": 1.11, "P": 1.05, "Q": 1.14, "R": 0.95,
+        "S": 0.89, "T": 0.99, "V": 0.87, "W": 2.00, "Y": 1.24,
+    }
+
+    for aa, weight in aa_weights.items():
+        weights[VOCAB[aa]] = weight
+
+    return weights.to(device)
