@@ -6,6 +6,10 @@ To run script:
 python Code/src/training/train_autoencoder.py --model AE --task localization
 python Code/src/training/train_autoencoder.py --model AE --task solubility
 
+
+
+python Code/src/training/train_autoencoder.py --model AE --task solubility --curriculum_epochs 10 --curriculum_start_fraction 0.1
+
 """
 import argparse
 import json
@@ -31,7 +35,7 @@ if str(SRC_DIR) not in sys.path:
 from models.autoencoder import ProteinSequenceAutoencoder as AE
 from utils.dataloader import BOS_IDX, PAD_IDX, create_dataloader
 from utils.hyperparameters import (AutoencoderHyperparameters as AEParams, TransformerAutoencoderHyperparameters as TAEParams)
-from utils.utils import load_training_checkpoint
+from utils.utils import load_training_checkpoint, make_token_weights
 from utils.curriculum import make_length_curriculum_dataloader
 
 # ----------------------------------------------------------------------------------------------------------------
@@ -162,7 +166,7 @@ def train(
         best_state_dict = copy.deepcopy(model.state_dict())
         print(f"Resuming training from epoch {start_epoch + 1}.")
         
-    loss_fn = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
+    loss_fn = nn.CrossEntropyLoss(weight=make_token_weights(device), ignore_index=PAD_IDX)
     epochs_without_improvement = 0
     history = {
         "hyperparameters": asdict(hyperparams),
