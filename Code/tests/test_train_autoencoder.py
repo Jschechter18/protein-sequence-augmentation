@@ -122,6 +122,7 @@ def test_model_definition_builds_autoencoder_optimizer_and_scheduler(monkeypatch
         "dropout": 0.2,
         "pad_idx": train_autoencoder.PAD_IDX,
         "bos_idx": train_autoencoder.BOS_IDX,
+        "condition_decoder_on_latent": True,
     }
     assert created["device"] == torch.device("cpu")
     assert isinstance(optimizer, torch.optim.Adam)

@@ -8,7 +8,7 @@ python Code/src/training/train_autoencoder.py --model AE --task solubility
 
 
 
-python Code/src/training/train_autoencoder.py --model AE --task solubility --curriculum_epochs 10 --curriculum_start_fraction 0.1
+python Code/src/training/train_autoencoder.py --model AE --task solubility --curriculum_epochs 5 --curriculum_start_fraction 0.2
 
 """
 import argparse
@@ -37,6 +37,8 @@ from utils.dataloader import BOS_IDX, PAD_IDX, create_dataloader
 from utils.hyperparameters import (AutoencoderHyperparameters as AEParams, TransformerAutoencoderHyperparameters as TAEParams)
 from utils.utils import load_training_checkpoint, make_token_weights
 from utils.curriculum import make_length_curriculum_dataloader
+
+import warnings
 
 # ----------------------------------------------------------------------------------------------------------------
 
@@ -79,6 +81,8 @@ def model_definition(model_type: str, hyperparams: AEParams) -> tuple[AE, torch.
             dropout=hyperparams.dropout,
             pad_idx=PAD_IDX,
             bos_idx=BOS_IDX,
+            condition_decoder_on_latent=hyperparams.condition_decoder_on_latent,
+            teacher_forcing_dropout_rate=hyperparams.teacher_forcing_dropout_rate,
         ).to(device)
     else:
         raise ValueError(f"Model type {model_type} not supported.")
@@ -133,8 +137,6 @@ def save_training_history(history: dict, history_path: str | Path) -> None:
         json.dump(history, f, indent=2, default=float)
 
     tmp_path.replace(history_path)
-
-
 
 
 def train(
@@ -229,12 +231,6 @@ def train(
             targets = targets[:, 1:]
             
             optimizer.zero_grad()
-            # No teacher forcing: decode autoregressively for exactly the shifted target length.
-            # outputs = model.(
-            #     model.encode(inputs, lengths=lengths),
-            #     max_length=targets.size(1),
-            # )
-            # Teacher forcing alternative:
             outputs = model(inputs, decoder_input_ids=inputs[:, :-1], lengths=lengths)
             loss: torch.Tensor = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
             loss.backward()
@@ -326,7 +322,6 @@ def train(
         
     return model, history
 
-# def test(model: AE | TAE, dataloader: DataLoader) -> None:
 def test(model: AE, dataloader: DataLoader) -> None:
     model.eval()
     loss_fn = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
@@ -459,13 +454,13 @@ def main():
     args.add_argument(
         '--curriculum_epochs',
         type=int,
-        default=0, # starting with 5
+        default=0, # for length curriculum start with 5
         help='Use length curriculum for this many initial epochs. 0 disables curriculum.',
     )
     args.add_argument(
         '--curriculum_start_fraction',
         type=float,
-        default=0.25,
+        default=0.2,
         help='Fraction of shortest training examples to use in the first curriculum epoch.',
     )
     
@@ -483,7 +478,7 @@ def main():
     if not 0.0 < args.curriculum_start_fraction <= 1.0:
         raise ValueError("--curriculum_start_fraction must be in the range (0, 1]")
     if args.curriculum_start_fraction is not None and args.curriculum_epochs == 0:
-        raise ValueError("--curriculum_fraction has no effect when --curriculum_epochs is 0")
+        warnings.warn("--curriculum_fraction has no effect when --curriculum_epochs is 0")
 
     if args.overfit_batches is not None:
         hyperparams.dropout = 0.0
@@ -565,5 +560,12 @@ if __name__ == "__main__":
 
 
 # TODO:
-# - revert to whatever was on feature branch (unless it was just the lr change that broke it)
-# - need to add dropout just to the teacher forcing dropout separate from other dropouts -> this way we train with some teacher forcing help but not completely rely on it
+# - Important next steps:
+# 1. Per the protein vae paper, we should consider using a **KL divergence loss** (in addition to our cross entropy) to regularize the latent space -> this would require some changes to the architecture to output a mean and variance vector for the latent space, and then sampling from that distribution during training. This could help encourage the model to learn a more structured latent space, which could improve generalization and interpolation between sequences.
+# 2. When we do this, we should also implement dropout for the teacher forcing during training. We can start small at like 0.1, but then set it as a hyperparameter that can be tuned -> the paper set it up to 45% dropout for that dropout
+
+# Other goals:
+# 1. Better curriculum where we gradually add longer sequences for training -> idea is a smoother rampup has a better effect rather than slowly increasing which improves short faster but not long
+
+# Once we are done with these improvements, we will call what we have our baselines:
+# - Start hyperparameter tuning with the baselines we have

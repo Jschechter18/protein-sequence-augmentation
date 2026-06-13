@@ -20,6 +20,9 @@ class AutoencoderHyperparameters(Hyperparameters):
     num_layers: int = 2
     bidirectional: bool = True
     grad_clip: bool = True # needed when training with 
+    condition_decoder_on_latent: bool = True
+    teacher_forcing_dropout_rate: float = 0.3 # makes sure we don't totally rely on teacher forcing during training
+    # teacher_forcing_dropout_rate: float = 0.0 # makes sure we don't totally rely on teacher forcing during training
 
 @dataclass
 class TransformerAutoencoderHyperparameters(Hyperparameters):
