@@ -27,7 +27,10 @@ class ProteinSequenceAutoencoder(nn.Module):
         pad_idx: int = 0,
         bos_idx: int = 2,
         eos_idx: int = EOS_IDX,
+        condition_decoder_on_latent: bool = True,
         layer_type: str = "gru", # placeholder for future layer types
+        teacher_forcing_dropout_rate: float = 0.0,
+        # is_autoregressive: bool = False, # really should only be when training -> optional for validation and testing
     ) -> None:
         """Initialize the protein sequence autoencoder.
 
@@ -49,6 +52,10 @@ class ProteinSequenceAutoencoder(nn.Module):
             _description_, by default 0
         bos_idx : int, optional
             _description_, by default 2
+        condition_decoder_on_latent : bool, optional
+            If True, concatenate the latent vector to every decoder input timestep.
+        techer_forcing_dropout_rate : float, optional
+            The probability of dropping decoder inputs during training to encourage the model not to rely too heavily on teacher forcing.
 
         Raises
         ------
@@ -78,6 +85,7 @@ class ProteinSequenceAutoencoder(nn.Module):
         self.pad_idx = pad_idx
         self.bos_idx = bos_idx
         self.eos_idx = eos_idx
+        self.condition_decoder_on_latent = condition_decoder_on_latent
 
         self.embedding = nn.Embedding(self.vocab_size, self.embedding_dim, padding_idx=self.pad_idx)
         
@@ -111,8 +119,13 @@ class ProteinSequenceAutoencoder(nn.Module):
         #     nn.Linear(512, self.latent_dim)
         # )
         self.from_latent = nn.Linear(self.latent_dim, self.hidden_dim * self.num_layers)
+        decoder_input_dim = self.embedding_dim
+        self.decoder_dropout = nn.Dropout(teacher_forcing_dropout_rate)
+        if self.condition_decoder_on_latent:
+            decoder_input_dim += self.latent_dim
+
         self.decoder = nn.GRU(
-            self.embedding_dim,
+            decoder_input_dim,
             self.hidden_dim,
             num_layers=self.num_layers,
             batch_first=True,
@@ -173,6 +186,54 @@ class ProteinSequenceAutoencoder(nn.Module):
         # return self.to_latent(hidden[-1])
         return self.to_latent(context)
 
+    def _initial_decoder_hidden(self, latent: torch.Tensor) -> torch.Tensor:
+        """Initialize the hidden state of the decoder from the latent vector.
+
+        Parameters
+        ----------
+        latent : torch.Tensor
+            The latent vector from the encoder.
+
+        Returns
+        -------
+        torch.Tensor
+            The initial hidden state for the decoder.
+        """
+        hidden: torch.Tensor = self.from_latent(latent)
+        hidden = hidden.view(latent.size(0), self.num_layers, self.hidden_dim)
+        return hidden.transpose(0, 1).contiguous()
+
+    def _decoder_inputs(
+        self,
+        decoder_input_ids: torch.Tensor,
+        latent: torch.Tensor,
+    ) -> torch.Tensor:
+        """Prepare decoder inputs by optionally conditioning on the latent vector.
+
+        Parameters
+        ----------
+        decoder_input_ids : torch.Tensor
+            The input token IDs for the decoder.
+        latent : torch.Tensor
+            The latent vector from the encoder.
+
+        Returns
+        -------
+        torch.Tensor
+            The prepared decoder inputs.
+        """
+        token_embeddings = self.embedding(decoder_input_ids)
+        token_embeddings = self.decoder_dropout(token_embeddings) # apply teacher forcing dropout to decoder inputs
+        if not self.condition_decoder_on_latent:
+            return token_embeddings
+
+        latent_repeated = latent.unsqueeze(1).expand(
+            -1,
+            token_embeddings.size(1),
+            -1,
+        )
+        return torch.cat([token_embeddings, latent_repeated], dim=-1)
+
     def decode(
         self,
         latent: torch.Tensor,
@@ -190,10 +251,9 @@ class ProteinSequenceAutoencoder(nn.Module):
             # Call actual autoregressive decoding function which feeds predictions back in at each step
             return self.decode_autoregressive(latent, sequence_length)
         
-        hidden: torch.Tensor = self.from_latent(latent)
-        hidden = hidden.view(latent.size(0), self.num_layers, self.hidden_dim)
-        hidden = hidden.transpose(0, 1).contiguous()
-        decoded, _ = self.decoder(self.embedding(decoder_input_ids), hidden)
+        hidden = self._initial_decoder_hidden(latent)
+        decoder_inputs = self._decoder_inputs(decoder_input_ids, latent)
+        decoded, _ = self.decoder(decoder_inputs, hidden)
         return self.output(decoded)
 
     def decode_autoregressive(
@@ -219,7 +279,8 @@ class ProteinSequenceAutoencoder(nn.Module):
         logits_by_step: list[torch.Tensor] = []
 
         for _ in range(max_length):
-            decoded, hidden = self.decoder(self.embedding(decoder_input_ids), hidden)
+            decoder_inputs = self._decoder_inputs(decoder_input_ids, latent)
+            decoded, hidden = self.decoder(decoder_inputs, hidden)
             step_logits = self.output(decoded[:, -1, :])
             logits_by_step.append(step_logits)
 

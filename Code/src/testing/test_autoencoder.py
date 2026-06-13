@@ -100,6 +100,10 @@ def ae_params_from_state_dict(
             "num_layers": rnn_num_layers(state_dict, "encoder"),
             "kernel_size": state_dict["cnn.weight"].shape[2],
             "bidirectional": "encoder.weight_ih_l0_reverse" in state_dict,
+            "condition_decoder_on_latent": (
+                state_dict["decoder.weight_ih_l0"].shape[1]
+                == state_dict["embedding.weight"].shape[1] + state_dict["to_latent.weight"].shape[0]
+            ),
             "pad_idx": PAD_IDX,
             "bos_idx": BOS_IDX,
         }

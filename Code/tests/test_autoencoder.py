@@ -62,6 +62,25 @@ def test_autoencoder_decoder() -> None:
     # Check the output shape
     assert output_logits.shape == (batch_size, sequence_length, model.vocab_size), f"Expected output shape {(batch_size, sequence_length, model.vocab_size)}, but got {output_logits.shape}"
 
+def test_autoencoder_decoder_can_disable_latent_conditioning() -> None:
+    model = _make_model()
+    legacy_model = AE(
+        layer_type="gru",
+        embedding_dim=64,
+        cnn_out_channels=64,
+        hidden_dim=128,
+        latent_dim=64,
+        kernel_size=3,
+        num_layers=1,
+        dropout=0.0,
+        pad_idx=0,
+        bos_idx=2,
+        condition_decoder_on_latent=False,
+    )
+
+    assert model.decoder.input_size == model.embedding_dim + model.latent_dim
+    assert legacy_model.decoder.input_size == legacy_model.embedding_dim
+
 def test_autoencoder_reconstruct() -> None:
     model = _make_model()
     batch_size = 4
