@@ -66,3 +66,11 @@ def make_length_curriculum_dataloader(
         subset_size,
         fraction,
     )
+    
+    
+    
+def make_gradual_length_curriculum_dataloader():
+    # TODO:
+    # - implement a curriculum that gradually adds longer sequences for training -> idea is a smoother rampup has a better effect
+    # reasoning is that the curriculum training seems to have shown that we have more effectively trained shorter sequences but longer sequences have not improved
+    pass

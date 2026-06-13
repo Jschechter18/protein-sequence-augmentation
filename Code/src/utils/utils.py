@@ -3,6 +3,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from pathlib import Path
 from models.autoencoder import ProteinSequenceAutoencoder as AE
 from torch.utils.data import Dataset, DataLoader, Subset
+from utils.dataloader import VOCAB, VOCAB_SIZE
 
 
 def load_training_checkpoint(
@@ -39,9 +40,20 @@ def load_training_checkpoint(
 
     raise TypeError("Checkpoint must be a state_dict or contain 'model_state_dict'.")
 
-from utils.dataloader import VOCAB, PAD_IDX, VOCAB_SIZE
 
 def make_token_weights(device):
+    """Create a tensor of token weights for amino acids.
+
+    Parameters
+    ----------
+    device : torch.device
+        The device to which the tensor will be moved.
+
+    Returns
+    -------
+    torch.Tensor
+        A tensor of token weights.
+    """
     weights = torch.ones(VOCAB_SIZE, dtype=torch.float32)
 
     aa_weights = {
