@@ -64,14 +64,20 @@ external/PEER_Benchmark
 # =========================================================
 # Results
 # =========================================================
-code/results/*
-!code/results/.gitkeep
-!code/results/README.md
-!code/results/autoencoder
-!code/results/esm2
-!code/results/figures
-!code/results/tables
+Code/results/*
+!Code/results/.gitkeep
+!Code/results/README.md
+!Code/results/autoencoder
+!Code/results/esm2
+!Code/results/figures
+!Code/results/tables
 
+# =========================================================
+# Models
+# =========================================================
+Code/models/*
+!Code/models/.gitkeep
+!Code/models/README.md
 
 # =========================================================
 # Pytest
