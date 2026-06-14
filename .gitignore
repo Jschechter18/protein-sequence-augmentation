@@ -75,9 +75,9 @@ Code/results/*
 # =========================================================
 # Models
 # =========================================================
-Code/models/*
-!Code/models/.gitkeep
-!Code/models/README.md
+Code/src/models/*
+!Code/src/models/.gitkeep
+!Code/src/models/README.md
 
 # =========================================================
 # Pytest
