@@ -60,3 +60,26 @@ data/processed/
 external/
 external/*
 external/PEER_Benchmark
+
+# =========================================================
+# Results
+# =========================================================
+Code/results/*
+!Code/results/.gitkeep
+!Code/results/README.md
+!Code/results/autoencoder
+!Code/results/esm2
+!Code/results/figures
+!Code/results/tables
+
+# =========================================================
+# Models
+# =========================================================
+Code/src/models/*
+!Code/src/models/.gitkeep
+!Code/src/models/README.md
+
+# =========================================================
+# Pytest
+# =========================================================
+.pytest_cache/

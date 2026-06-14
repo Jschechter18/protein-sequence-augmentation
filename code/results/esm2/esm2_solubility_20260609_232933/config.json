@@ -1,0 +1,7 @@
+{
+    "model": "ESM2 + CNN",
+    "esm_model": "facebook/esm2_t6_8M",
+    "learning_rate": 0.001,
+    "num_classes": 2,
+    "device": "cpu"
+}
