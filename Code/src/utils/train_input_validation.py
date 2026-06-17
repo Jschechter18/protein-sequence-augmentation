@@ -1,7 +1,30 @@
 import argparse
 import warnings
 from pathlib import Path
+from typing import Optional
 from utils.hyperparameters import (AutoencoderHyperparameters as AEParams)
+
+LENGTH_QUARTILE_FILE_LABELS = {
+    "s": "short",
+    "ms": "medium_short",
+    "ml": "medium_long",
+    "l": "long",
+}
+
+
+def autoencoder_artifact_stem(
+    model: str,
+    task: str,
+    length_quartile: Optional[str] = None,
+    is_overfit: bool = False,
+) -> str:
+    parts = ["model", model.lower()]
+    if length_quartile is not None:
+        parts.append(LENGTH_QUARTILE_FILE_LABELS[length_quartile])
+    parts.append(task)
+    if is_overfit:
+        parts.append("overfit")
+    return "_".join(parts)
 
 
 def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
@@ -45,6 +68,12 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
         default=0.2,
         help='Fraction of shortest training examples to use in the first curriculum epoch.',
     )
+    args.add_argument(
+        '--length_quartile',
+        type=str,
+        default=None,
+        choices=["s", "ms", "ml", "l"],
+    )
     
     return args.parse_args()
 
@@ -59,23 +88,27 @@ def add_and_validate_train_inputs():
     else:
         raise ValueError("Only --model AE is currently supported")
     
-    # Make sure the version is unique for the task to avoid overwriting previous checkpoints and history
+    # Make sure this checkpoint filename is unique to avoid overwriting previous runs.
     model_dir = "autoencoder" if args.model.upper() == "AE" else args.model.lower()
     version_dir = Path("checkpoints") / model_dir / args.task / f"v{args.version}"
+    artifact_stem = autoencoder_artifact_stem(
+        args.model,
+        args.task,
+        args.length_quartile,
+        is_overfit=(args.overfit_batches is not None),
+    )
+    checkpoint_path = version_dir / f"{artifact_stem}.pt"
 
-    if version_dir.exists():
+    if checkpoint_path.exists():
         raise ValueError(
-            f"Version v{args.version} has already been run for {args.task}: "
-            f"{version_dir}"
+            f"Checkpoint already exists for this run: {checkpoint_path}"
             )
         
-    history_dir = Path("Code/results") / model_dir / args.task / f"v{args.version}"
+    history_path = Path("history") / f"v{args.version}_{artifact_stem}_history.json"
 
-    # if version_dir.exists() or history_dir.exists():
-    if history_dir.exists():
+    if history_path.exists():
         raise ValueError(
-            f"Version v{args.version} has already been run for {args.task}. "
-            f"Found existing output at {version_dir if version_dir.exists() else history_dir}"
+            f"Training history already exists for this run: {history_path}"
             )
 
     if args.curriculum_epochs < 0:

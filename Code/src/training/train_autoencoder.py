@@ -11,7 +11,6 @@ python Code/src/training/train_autoencoder.py --model AE --task solubility
 python Code/src/training/train_autoencoder.py --model AE --task solubility --curriculum_epochs 5 --curriculum_start_fraction 0.2 --version <version>
 
 """
-import argparse
 import json
 import copy
 import random
@@ -33,11 +32,11 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from models.autoencoder import ProteinSequenceAutoencoder as AE
-from utils.dataloader import BOS_IDX, PAD_IDX, create_dataloader
+from utils.dataloader import BOS_IDX, PAD_IDX, create_dataloader, compute_train_length_boundaries, make_quartile_loader
 from utils.hyperparameters import (AutoencoderHyperparameters as AEParams)
 from utils.utils import load_training_checkpoint, make_token_weights
 from utils.curriculum import make_length_curriculum_dataloader
-from utils.train_input_validation import add_and_validate_train_inputs
+from utils.train_input_validation import add_and_validate_train_inputs, autoencoder_artifact_stem
 
 import warnings
 
@@ -152,6 +151,7 @@ def train(
     history_path: str | Path | None = None,
     curriculum_epochs: int = 0,
     curriculum_start_fraction: float = 0.3,
+    length_quartile: str | None = None,
 ) -> tuple[AE, dict]:
 
     model, optimizer, scheduler = model_definition(model_type, hyperparams)
@@ -294,10 +294,13 @@ def train(
             epochs_without_improvement = 0
             checkpoint_dir = Path(__file__).resolve().parents[3] / f"checkpoints/autoencoder/{task}/v{version}"
             checkpoint_dir.mkdir(parents=True, exist_ok=True)
-            if is_overfit:
-                checkpoint_path = checkpoint_dir / f"model_{model_type.lower()}_{task}_overfit.pt"
-            else:
-                checkpoint_path = checkpoint_dir / f"model_{model_type.lower()}_{task}.pt"
+            checkpoint_stem = autoencoder_artifact_stem(
+                model_type,
+                task,
+                length_quartile,
+                is_overfit=is_overfit,
+            )
+            checkpoint_path = checkpoint_dir / f"{checkpoint_stem}.pt"
             torch.save({
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
@@ -428,15 +431,30 @@ def make_overfit_dataloaders(
 def main():
     args, hyperparams = add_and_validate_train_inputs()
 
+    
     train_dataloader = create_dataloader(task=args.task, split=TRAIN_SPLIT, mode="autoencoder",
-                                   batch_size=hyperparams.batch_size, shuffle=hyperparams.shuffle,
-                                   num_workers=num_workers)
+                                batch_size=hyperparams.batch_size, shuffle=hyperparams.shuffle,
+                                num_workers=num_workers)
     val_dataloader = create_dataloader(task=args.task, split=VALID_SPLIT, mode="autoencoder",
-                                       batch_size=hyperparams.batch_size, shuffle=False,
-                                       num_workers=num_workers)
+                                    batch_size=hyperparams.batch_size, shuffle=False,
+                                    num_workers=num_workers)
     test_dataloader = create_dataloader(task=args.task, split="test", mode="autoencoder",
-                                       batch_size=hyperparams.batch_size, shuffle=False,
-                                       num_workers=num_workers)
+                                    batch_size=hyperparams.batch_size, shuffle=False,
+                                    num_workers=num_workers)
+    
+    if args.length_quartile is not None:
+        # Call the utility functions for length boundaries
+        boundaries = compute_train_length_boundaries(train_dataloader.dataset)
+
+        train_dataloader = make_quartile_loader(
+            train_dataloader, boundaries, args.length_quartile, shuffle=True
+        )
+        val_dataloader = make_quartile_loader(
+            val_dataloader, boundaries, args.length_quartile, shuffle=False
+        )
+        test_dataloader = make_quartile_loader(
+            test_dataloader, boundaries, args.length_quartile, shuffle=False
+        )
     
     if args.overfit_batches is not None:
         train_dataloader, val_dataloader = make_overfit_dataloaders(
@@ -458,10 +476,13 @@ def main():
         )
     
     history_dir = Path(__file__).resolve().parents[3] / "history"
-    if args.overfit_batches is not None:
-        history_path = history_dir / f"{args.task}_{args.model.lower()}_overfit_{args.overfit_batches}_history.json"
-    else:
-        history_path = history_dir / f"{args.task}_{args.model.lower()}_history.json"
+    history_stem = autoencoder_artifact_stem(
+        args.model,
+        args.task,
+        args.length_quartile,
+        is_overfit=(args.overfit_batches is not None),
+    )
+    history_path = history_dir / f"v{args.version}_{history_stem}_history.json"
 
     print()
     model, history = train(
@@ -476,6 +497,7 @@ def main():
         history_path=history_path,
         curriculum_epochs=args.curriculum_epochs,
         curriculum_start_fraction=args.curriculum_start_fraction,
+        length_quartile=args.length_quartile,
     )
 
     print(f"Saved training history to: {history_path}")

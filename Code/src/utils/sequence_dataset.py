@@ -74,6 +74,7 @@ class SequenceDataset(Dataset):
         task: str,
         split: str,
         data_dir: str | Path = DATA_DIR,
+        seq_len: int | None = None,
         mode: str = "classification",
         encoding: str = "char",
         cache_dir: str | None = None,

@@ -4,7 +4,8 @@ Supports multiple tasks (e.g., localization, solubility), encoding modes (char, 
 """
 from pathlib import Path
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
+import numpy as np
 from .sequence_dataset import SequenceDataset
 
 
@@ -94,6 +95,61 @@ def collate_sequence_batch(batch: list[dict]) -> dict:
     return collated
 
 
+# ---------------------------------------------------------------------------
+# Sequence length quartile curriculum utilities
+# ---------------------------------------------------------------------------
+
+
+QUARTILES = ["s", "ms", "ml", "l"]
+
+def get_length(dataset, idx):
+    # Your SequenceDataset stores preprocessed examples with "_length"
+    if hasattr(dataset, "examples"):
+        return int(dataset.examples[idx]["_length"])
+
+    item = dataset[idx]
+    length = item["length"]
+    return int(length.item() if hasattr(length, "item") else length)
+
+
+def compute_train_length_boundaries(train_dataset):
+    lengths = np.array([get_length(train_dataset, i) for i in range(len(train_dataset))])
+    return np.quantile(lengths, [0.0, 0.25, 0.50, 0.75, 1.0])
+
+
+def quartile_indices(dataset, boundaries, quartile_name):
+    q = QUARTILES.index(quartile_name)
+    lower = boundaries[q]
+    upper = boundaries[q + 1]
+
+    indices = []
+    for i in range(len(dataset)):
+        length = get_length(dataset, i)
+
+        if q == 0:
+            keep = lower <= length <= upper
+        else:
+            keep = lower < length <= upper
+
+        if keep:
+            indices.append(i)
+
+    return indices
+
+
+def make_quartile_loader(base_loader, boundaries, quartile_name, shuffle):
+    indices = quartile_indices(base_loader.dataset, boundaries, quartile_name)
+    subset = Subset(base_loader.dataset, indices)
+
+    return DataLoader(
+        subset,
+        batch_size=base_loader.batch_size,
+        shuffle=shuffle,
+        num_workers=base_loader.num_workers,
+        pin_memory=base_loader.pin_memory,
+        collate_fn=base_loader.collate_fn,
+    )
+
 def create_dataloader(
     task: str = "solubility",
     split: str = "train",
@@ -179,7 +235,7 @@ def create_dataloader(
         seq_col=seq_col,
         label_col=label_col,
     )
-    
+
     return DataLoader(
         dataset,
         batch_size=batch_size,
