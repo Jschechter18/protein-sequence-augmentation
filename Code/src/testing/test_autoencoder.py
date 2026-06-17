@@ -2,7 +2,7 @@
 Test script for evaluating a trained autoencoder checkpoint.
 
 Usage:
-    python Code/src/testing/test_autoencoder.py --model AE --task solubility --checkpoint checkpoints/v2/model_ae_solubility.pt  --teacher_forcing True
+    python Code/src/testing/test_autoencoder.py --model AE --task solubility --checkpoint checkpoints/autoencoder/solubility/<version>/model_ae_solubility.pt  --teacher_forcing True
 """
 
 import argparse
