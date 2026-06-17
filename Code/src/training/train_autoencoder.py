@@ -144,9 +144,10 @@ def train(
     train_dataloader: DataLoader,
     val_dataloader: DataLoader,
     hyperparams: AEParams,
+    version: int,
     is_overfit: bool = False,
     load_path: str | None = None,
-    task: str = "localization",
+    task: str = "solubility",
     history_path: str | Path | None = None,
     curriculum_epochs: int = 0,
     curriculum_start_fraction: float = 0.3,
@@ -290,7 +291,7 @@ def train(
             best_val_loss = val_loss
             best_state_dict = copy.deepcopy(model.state_dict())
             epochs_without_improvement = 0
-            checkpoint_dir = Path(__file__).resolve().parents[3] / "checkpoints"
+            checkpoint_dir = Path(__file__).resolve().parents[3] / f"checkpoints/autoencoder/{task}/v{version}"
             checkpoint_dir.mkdir(parents=True, exist_ok=True)
             if is_overfit:
                 checkpoint_path = checkpoint_dir / f"model_{model_type.lower()}_{task}_overfit.pt"
@@ -427,6 +428,7 @@ def main():
     args.add_argument('--model', type=str, default='AE', help='Model to train (default: AE)')
     args.add_argument('--task', type=str, default='localization', help='Task to perform (default: localization)')
     args.add_argument('--load_path', type=str, nargs='?', default=None, help='Path to load the best existing model checkpoint (optional)')
+    args.add_argument('--version', type=int, default=0, help='Version identifier for this training run (used for checkpoint and history naming)') # should always be unique
     args.add_argument(
         '--overfit_batches',
         type=int,
@@ -465,6 +467,7 @@ def main():
     )
     
     args = args.parse_args()
+    
     if args.task != "localization" and args.task != "solubility":
         raise ValueError("Task only accepts 'localization' or 'solubility'")
     
@@ -472,6 +475,25 @@ def main():
         hyperparams = AEParams()
     else:
         raise ValueError("Only --model AE is currently supported")
+    
+    # Make sure the version is unique for the task to avoid overwriting previous checkpoints and history
+    model_dir = "autoencoder" if args.model.upper() == "AE" else args.model.lower()
+    version_dir = Path("checkpoints") / model_dir / args.task / f"v{args.version}"
+
+    if version_dir.exists():
+        raise ValueError(
+            f"Version v{args.version} has already been run for {args.task}: "
+            f"{version_dir}"
+            )
+        
+    history_dir = Path("Code/results") / model_dir / args.task / f"v{args.version}"
+
+    # if version_dir.exists() or history_dir.exists():
+    if history_dir.exists():
+        raise ValueError(
+            f"Version v{args.version} has already been run for {args.task}. "
+            f"Found existing output at {version_dir if version_dir.exists() else history_dir}"
+            )
 
     if args.curriculum_epochs < 0:
         raise ValueError("--curriculum_epochs must be non-negative")
@@ -538,6 +560,7 @@ def main():
         train_dataloader,
         val_dataloader,
         hyperparams,
+        version=args.version,
         is_overfit=(args.overfit_batches is not None),
         task=args.task,
         load_path=args.load_path,
