@@ -33,7 +33,9 @@ v4:
 - Autoregressive:
   - Test Loss: 3.4033, Test Accuracy: 0.1439
 
-v5:
+v5: (official benchmark)
+
+- history json: protein-sequence-augmentation/Code/results/autoencoder/solubility/v5/solubility_ae_history.json
 
 - Teacher forcing:
   - Test Loss: 1.1311, Test Accuracy: 0.5819
