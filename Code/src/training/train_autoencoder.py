@@ -10,6 +10,11 @@ python Code/src/training/train_autoencoder.py --model AE --task solubility
 
 python Code/src/training/train_autoencoder.py --model AE --task solubility --curriculum_epochs 5 --curriculum_start_fraction 0.2 --version <version>
 
+
+
+# Length quartile training:
+python Code/src/training/train_autoencoder.py --model AE --task solubility --version <version> --length_quartile l
+
 """
 import json
 import copy
@@ -344,11 +349,6 @@ def test(model: AE, dataloader: DataLoader) -> None:
 
             targets = targets[:, 1:]
 
-            # No teacher forcing: decode autoregressively for exactly the shifted target length.
-            # outputs: torch.Tensor = model.decode_autoregressive(
-            #     model.encode(inputs, lengths=lengths),
-            #     max_length=targets.size(1),
-            # )
             outputs: torch.Tensor = model(inputs, decoder_input_ids=inputs[:, :-1], lengths=lengths)
             loss: torch.Tensor = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
 
