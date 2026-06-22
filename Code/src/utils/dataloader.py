@@ -117,7 +117,7 @@ def compute_train_length_boundaries(train_dataset):
     return np.quantile(lengths, [0.0, 0.25, 0.50, 0.75, 1.0])
 
 
-def quartile_indices(dataset, boundaries, quartile_name):
+def quartile_indices(dataset, boundaries, quartile_name, cumulative=False):
     q = QUARTILES.index(quartile_name)
     lower = boundaries[q]
     upper = boundaries[q + 1]
@@ -125,8 +125,9 @@ def quartile_indices(dataset, boundaries, quartile_name):
     indices = []
     for i in range(len(dataset)):
         length = get_length(dataset, i)
-
-        if q == 0:
+        if cumulative:
+            keep = length <= upper
+        elif q == 0:
             keep = lower <= length <= upper
         else:
             keep = lower < length <= upper
@@ -137,8 +138,8 @@ def quartile_indices(dataset, boundaries, quartile_name):
     return indices
 
 
-def make_quartile_loader(base_loader, boundaries, quartile_name, shuffle):
-    indices = quartile_indices(base_loader.dataset, boundaries, quartile_name)
+def make_quartile_loader(base_loader, boundaries, quartile_name, shuffle, cumulative=False):
+    indices = quartile_indices(base_loader.dataset, boundaries, quartile_name, cumulative)
     subset = Subset(base_loader.dataset, indices)
 
     return DataLoader(

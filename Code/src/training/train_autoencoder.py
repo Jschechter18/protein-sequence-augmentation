@@ -113,10 +113,6 @@ def validate(model: AE, dataloader: DataLoader, loss_fn: nn.CrossEntropyLoss) ->
             targets = targets[:, 1:]
             
             outputs = model(inputs, decoder_input_ids=inputs[:, :-1], lengths=lengths)
-            # outputs = model.decode_autoregressive(
-            #     model.encode(inputs, lengths=lengths),
-            #     max_length=targets.size(1),
-            # )
             loss = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
             
             predictions = outputs.argmax(dim=-1)

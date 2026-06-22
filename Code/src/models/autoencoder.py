@@ -148,19 +148,15 @@ class ProteinSequenceAutoencoder(nn.Module):
         x = x.transpose(1, 2) # x: [batch, seq_len, cnn_out_channels]
         
         if lengths is None:
-            # _, hidden = self.encoder(embedded)
-            # _, hidden = self.encoder(x)
-            encoder_outputs, hidden = self.encoder(x)
+            encoder_outputs, _ = self.encoder(x)
         else:
             packed = pack_padded_sequence(
-                # embedded,
                 x,
                 lengths.detach().cpu().clamp(min=1, max=input_ids.size(1)),
                 batch_first=True,
                 enforce_sorted=False,
             )
-            # _, hidden = self.encoder(packed)
-            packed_outputs, hidden = self.encoder(packed)
+            packed_outputs, _ = self.encoder(packed)
             encoder_outputs, _ = pad_packed_sequence(
                 packed_outputs,
                 batch_first=True,
@@ -183,7 +179,6 @@ class ProteinSequenceAutoencoder(nn.Module):
             encoder_outputs
             ).squeeze(1)
         
-        # return self.to_latent(hidden[-1])
         return self.to_latent(context)
 
     def _initial_decoder_hidden(self, latent: torch.Tensor) -> torch.Tensor:
