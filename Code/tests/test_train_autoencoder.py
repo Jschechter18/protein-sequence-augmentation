@@ -123,6 +123,7 @@ def test_model_definition_builds_autoencoder_optimizer_and_scheduler(monkeypatch
         "pad_idx": train_autoencoder.PAD_IDX,
         "bos_idx": train_autoencoder.BOS_IDX,
         "condition_decoder_on_latent": True,
+        "teacher_forcing_dropout_rate": 0.3,
     }
     assert created["device"] == torch.device("cpu")
     assert isinstance(optimizer, torch.optim.Adam)
@@ -153,6 +154,7 @@ def test_train_uses_shifted_decoder_inputs_and_validation_loss(monkeypatch):
         [train_batch],
         [valid_batch],
         Params(num_epochs=1),
+        version=0,
     )
 
     assert returned_model is model
@@ -177,6 +179,7 @@ def test_length_curriculum_uses_shortest_examples_first():
         epoch=0,
         curriculum_epochs=3,
         start_fraction=0.5,
+        num_workers=0,
     )
     batch = next(iter(curriculum_loader))
 
@@ -215,6 +218,8 @@ def test_main_validates_args_and_starts_autoencoder_training(monkeypatch):
             "train_autoencoder.py",
             "--task",
             "solubility",
+            "--version",
+            "999999",
             "--curriculum_epochs",
             "3",
             "--curriculum_start_fraction",
@@ -250,7 +255,7 @@ def test_main_validates_args_and_starts_autoencoder_training(monkeypatch):
     monkeypatch.setattr(
         sys,
         "argv",
-        ["train_autoencoder.py", "--curriculum_start_fraction", "0"],
+        ["train_autoencoder.py", "--version", "999999", "--curriculum_start_fraction", "0"],
     )
     with pytest.raises(ValueError, match="curriculum_start_fraction"):
         train_autoencoder.main()

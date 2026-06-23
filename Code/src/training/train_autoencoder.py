@@ -6,14 +6,13 @@ To run script:
 python Code/src/training/train_autoencoder.py --model AE --task localization
 python Code/src/training/train_autoencoder.py --model AE --task solubility
 
-
-
 python Code/src/training/train_autoencoder.py --model AE --task solubility --curriculum_epochs 5 --curriculum_start_fraction 0.2 --version <version>
-
-
 
 # Length quartile training:
 python Code/src/training/train_autoencoder.py --model AE --task solubility --version <version> --length_quartile l
+
+# Cummulative length quartile training:
+python Code/src/training/train_autoencoder.py --model AE --task solubility --version <version> --length_quartile ml --cumulative_quartiles True
 
 """
 import json
@@ -37,7 +36,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from models.autoencoder import ProteinSequenceAutoencoder as AE
-from utils.dataloader import BOS_IDX, PAD_IDX, create_dataloader, compute_train_length_boundaries, make_quartile_loader
+from utils.dataloader import BOS_IDX, PAD_IDX, create_dataloader, compute_train_length_boundaries
 from utils.hyperparameters import (AutoencoderHyperparameters as AEParams)
 from utils.utils import load_training_checkpoint, make_token_weights
 from utils.curriculum import make_length_curriculum_dataloader
@@ -153,6 +152,7 @@ def train(
     curriculum_epochs: int = 0,
     curriculum_start_fraction: float = 0.3,
     length_quartile: str | None = None,
+    cumulative_quartiles: bool = False,
 ) -> tuple[AE, dict]:
 
     model, optimizer, scheduler = model_definition(model_type, hyperparams)
@@ -426,31 +426,41 @@ def make_overfit_dataloaders(
 
 def main():
     args, hyperparams = add_and_validate_train_inputs()
+    
+    if args.length_quartile is not None:
+        loader_type = "quartile"
+    elif args.max_length is not None:
+        loader_type = "max_length"
+    else:
+        loader_type = None
 
+    length_boundaries = None
+    if loader_type == "quartile":
+        full_train_dataloader = create_dataloader(
+            task=args.task,
+            split=TRAIN_SPLIT,
+            mode="autoencoder",
+            batch_size=hyperparams.batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+        )
+        length_boundaries = compute_train_length_boundaries(full_train_dataloader.dataset)
     
     train_dataloader = create_dataloader(task=args.task, split=TRAIN_SPLIT, mode="autoencoder",
                                 batch_size=hyperparams.batch_size, shuffle=hyperparams.shuffle,
-                                num_workers=num_workers)
+                                num_workers=num_workers, loader_type=loader_type, max_length=args.max_length,
+                                quartile_name=args.length_quartile, cumulative=args.cumulative_quartiles,
+                                length_boundaries=length_boundaries)
     val_dataloader = create_dataloader(task=args.task, split=VALID_SPLIT, mode="autoencoder",
                                     batch_size=hyperparams.batch_size, shuffle=False,
-                                    num_workers=num_workers)
+                                    num_workers=num_workers, loader_type=loader_type, max_length=args.max_length,
+                                    quartile_name=args.length_quartile, cumulative=args.cumulative_quartiles,
+                                    length_boundaries=length_boundaries)
     test_dataloader = create_dataloader(task=args.task, split="test", mode="autoencoder",
                                     batch_size=hyperparams.batch_size, shuffle=False,
-                                    num_workers=num_workers)
-    
-    if args.length_quartile is not None:
-        # Call the utility functions for length boundaries
-        boundaries = compute_train_length_boundaries(train_dataloader.dataset)
-
-        train_dataloader = make_quartile_loader(
-            train_dataloader, boundaries, args.length_quartile, shuffle=True
-        )
-        val_dataloader = make_quartile_loader(
-            val_dataloader, boundaries, args.length_quartile, shuffle=False
-        )
-        test_dataloader = make_quartile_loader(
-            test_dataloader, boundaries, args.length_quartile, shuffle=False
-        )
+                                    num_workers=num_workers, loader_type=loader_type, max_length=args.max_length,
+                                    quartile_name=args.length_quartile, cumulative=args.cumulative_quartiles,
+                                    length_boundaries=length_boundaries)
     
     if args.overfit_batches is not None:
         train_dataloader, val_dataloader = make_overfit_dataloaders(
@@ -481,7 +491,7 @@ def main():
     history_path = history_dir / f"v{args.version}_{history_stem}_history.json"
 
     print()
-    model, history = train(
+    model, _ = train(
         args.model.lower(),
         train_dataloader,
         val_dataloader,
@@ -494,6 +504,7 @@ def main():
         curriculum_epochs=args.curriculum_epochs,
         curriculum_start_fraction=args.curriculum_start_fraction,
         length_quartile=args.length_quartile,
+        cumulative_quartiles=args.cumulative_quartiles,
     )
 
     print(f"Saved training history to: {history_path}")

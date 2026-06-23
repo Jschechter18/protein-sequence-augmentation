@@ -9,7 +9,7 @@ from utils.dataloader import (
     SequenceDataset,
     create_dataloader,
 )
-from .test_utils.test_helpers import write_split_csv
+from .test_utils.test_helpers import write_csv, write_split_csv
 
 
 def test_sequence_dataset_loads_split_csv(tmp_path: Path) -> None:
@@ -188,3 +188,97 @@ def test_dataloader_handles_autoencoder_case(tmp_path: Path) -> None:
     assert batch["target_ids"].data_ptr() != batch["input_ids"].data_ptr()
     assert batch["length"].tolist() == [5, 8]
     assert batch["sequence"] == ["ACD", "ACDEFG"]
+
+
+def _collect_lengths(loader) -> list[int]:
+    lengths = []
+    for batch in loader:
+        lengths.extend(batch["length"].tolist())
+    return lengths
+
+
+def test_create_dataloader_can_filter_by_max_length(tmp_path: Path) -> None:
+    write_csv(
+        tmp_path,
+        {
+            "sequence": ["A", "AC", "ACD", "ACDE"],
+            "label": [0, 1, 0, 1],
+        },
+    )
+
+    loader = create_dataloader(
+        task="toy",
+        split="train",
+        data_dir=tmp_path,
+        batch_size=4,
+        shuffle=False,
+        use_cache=False,
+        loader_type="max_length",
+        max_length=2,
+    )
+
+    assert _collect_lengths(loader) == [1, 2]
+
+
+def test_create_dataloader_requires_max_length_for_max_length_loader(tmp_path: Path) -> None:
+    write_split_csv(tmp_path)
+
+    try:
+        create_dataloader(
+            task="toy",
+            split="train",
+            data_dir=tmp_path,
+            use_cache=False,
+            loader_type="max_length",
+        )
+    except ValueError as exc:
+        assert "max_length must be specified" in str(exc)
+    else:
+        raise AssertionError("Expected max_length loader to require max_length")
+
+
+def test_create_dataloader_can_filter_by_single_quartile(tmp_path: Path) -> None:
+    write_csv(
+        tmp_path,
+        {
+            "sequence": ["A", "AC", "ACD", "ACDE"],
+            "label": [0, 1, 0, 1],
+        },
+    )
+
+    loader = create_dataloader(
+        task="toy",
+        split="train",
+        data_dir=tmp_path,
+        batch_size=4,
+        shuffle=False,
+        use_cache=False,
+        loader_type="quartile",
+        quartile_name="ms",
+    )
+
+    assert _collect_lengths(loader) == [2]
+
+
+def test_create_dataloader_can_filter_by_cumulative_quartile(tmp_path: Path) -> None:
+    write_csv(
+        tmp_path,
+        {
+            "sequence": ["A", "AC", "ACD", "ACDE"],
+            "label": [0, 1, 0, 1],
+        },
+    )
+
+    loader = create_dataloader(
+        task="toy",
+        split="train",
+        data_dir=tmp_path,
+        batch_size=4,
+        shuffle=False,
+        use_cache=False,
+        loader_type="quartile",
+        quartile_name="ml",
+        cumulative=True,
+    )
+
+    assert _collect_lengths(loader) == [1, 2, 3]

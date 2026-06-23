@@ -12,6 +12,17 @@ LENGTH_QUARTILE_FILE_LABELS = {
 }
 
 
+def _str_to_bool(value: str | bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    lowered = value.lower()
+    if lowered in {"true", "1", "yes", "y"}:
+        return True
+    if lowered in {"false", "0", "no", "n"}:
+        return False
+    raise argparse.ArgumentTypeError("Expected a boolean value")
+
+
 def autoencoder_artifact_stem(
     model: str,
     task: str,
@@ -74,6 +85,20 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
         default=None,
         choices=["s", "ms", "ml", "l"],
     )
+    args.add_argument(
+        '--cumulative_quartiles',
+        type=_str_to_bool,
+        nargs='?',
+        const=True,
+        default=False,
+        help='If set, each length quartile includes all shorter quartiles (e.g., "ml" includes "s", "ms", and "ml"). Ignored if --length_quartile is not set.',
+    )
+    args.add_argument(
+        '--max_length',
+        type=int,
+        default=None,
+        help='If set, only sequences with length <= max_length will be used for training and validation. Ignored if --length_quartile is set.',
+    )
     
     return args.parse_args()
 
@@ -133,5 +158,5 @@ def add_and_validate_train_inputs():
         if args.overfit_epochs <= 0:
             raise ValueError("--overfit_epochs must be a positive integer")
         hyperparams.num_epochs = args.overfit_epochs
-        
+    
     return args, hyperparams
