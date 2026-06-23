@@ -518,15 +518,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# TODO:
-# - Important next steps:
-# 1. Per the protein vae paper, we should consider using a **KL divergence loss** (in addition to our cross entropy) to regularize the latent space -> this would require some changes to the architecture to output a mean and variance vector for the latent space, and then sampling from that distribution during training. This could help encourage the model to learn a more structured latent space, which could improve generalization and interpolation between sequences.
-# 2. When we do this, we should also implement dropout for the teacher forcing during training. We can start small at like 0.1, but then set it as a hyperparameter that can be tuned -> the paper set it up to 45% dropout for that dropout
-
-# Other goals:
-# 1. Better curriculum where we gradually add longer sequences for training -> idea is a smoother rampup has a better effect rather than slowly increasing which improves short faster but not long
-
-# Once we are done with these improvements, we will call what we have our baselines:
-# - Start hyperparameter tuning with the baselines we have
