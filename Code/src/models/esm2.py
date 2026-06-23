@@ -1,11 +1,11 @@
 import argparse
 import json
 import logging
+
 from pathlib import Path
 from datetime import datetime
 from typing import Tuple, Dict
 
-import esm
 import numpy as np
 import pandas as pd
 import torch
@@ -13,6 +13,7 @@ import torch.nn as nn
 import torch.optim as optim
 
 from torch.utils.data import DataLoader
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from tqdm import tqdm
 
 from Code.src.utils.dataloader import create_dataloader
@@ -27,7 +28,12 @@ def parse_args():
     parser.add_argument("--dataset", type=str, default="solubility",
                         choices=["solubility", "localization"])
     parser.add_argument("--data_dir", type=str, default="data/processed/peer")
-    parser.add_argument("--results_dir", type=str, default="code/results/esm2")
+    parser.add_argument("--results_dir", type=str, default="Code/results/esm2")
+    parser.add_argument("--checkpoint_dir", type=str, default="checkpoints")
+    parser.add_argument("--unfreeze_esm", action="store_true")
+    parser.add_argument("--unfreeze_layers", type=int, default=1)
+    parser.add_argument("--esm_learning_rate", type=float, default=1e-5)
+    parser.add_argument("--cnn_checkpoint", type=str, default= None)
 
     parser.add_argument("--esm_model_name", type=str, default="esm2_t6_8M_UR50D")
     parser.add_argument("--num_classes", type=int, default=2)
@@ -50,7 +56,24 @@ def save_json(obj, path):
         json.dump(obj, f, indent=4)
 
 class ESM2Encoder(nn.Module):
-    """ESM-2 protein sequence encoder"""
+    """ESM-2 protein sequence encoder
+    Input:
+        List[str]
+
+        Example:
+        [
+            "MKTLLILAV",
+            "AAAGGGVVV"
+        ]
+
+    Output:
+        Tensor of shape:
+            (batch_size, sequence_length, 320)
+    Notes:
+        Uses pretrained ESM-2 model.
+        Model weights are frozen during training.
+    
+    """
     
     def __init__(self, model_name: str = "esm2_t6_8M_UR50D"):
         super().__init__()
@@ -67,7 +90,47 @@ class ESM2Encoder(nn.Module):
             logger.warning("ESM is not installed. Using random fallback embeddings.")
             self.model = None
             self.alphabet = None
+    def freeze(self):
+        """Freeze all ESM-2 parameters."""
+        if self.model is not None:
+            for param in self.model.parameters():
+                param.requires_grad = False        
 
+    def unfreeze_last_layers(self, num_layers: int = 1):
+        """
+        Unfreeze only the last transformer layers of ESM-2.
+        For esm2_t6_8M_UR50D, there are 6 transformer layers.
+        """
+        if self.model is None:
+            return
+
+        # Freeze everything first
+        for param in self.model.parameters():
+            param.requires_grad = False
+
+        # Try to locate transformer layers in several possible attributes
+        layers = None
+        if hasattr(self.model, "layers"):
+            layers = getattr(self.model, "layers")
+        elif hasattr(self.model, "encoder") and hasattr(self.model.encoder, "layers"):
+            layers = getattr(self.model.encoder, "layers")
+
+        if layers is None:
+            logger.warning("Could not locate transformer layers on ESM model; leaving encoder frozen except layer norms if present.")
+        else:
+            try:
+                total_layers = len(layers)
+                # Unfreeze last N transformer layers
+                for layer in list(layers)[max(0, total_layers - num_layers):]:
+                    for param in layer.parameters():
+                        param.requires_grad = True
+            except Exception:
+                logger.warning("Failed to unfreeze specific layers; skipping.")
+
+        # Also unfreeze final layer norm if available
+        #if hasattr(self.model, "emb_layer_norm_after"):
+            #for param in self.model.emb_layer_norm_after.parameters():
+                #param.requires_grad = True
     
     def forward(self, sequences: list) -> torch.Tensor:
         """
@@ -80,20 +143,24 @@ class ESM2Encoder(nn.Module):
         if self.model is None:
             # Fallback: return random embeddings
             max_len = max(len(seq) for seq in sequences)
-            return torch.randn(len(sequences), max_len, 320)
+            return torch.randn(len(sequences), max_len, 320, device=next(self.parameters()).device)
         
-        with torch.no_grad():
-            batch_converter = self.alphabet.get_batch_converter() # type: ignore
-            batch_labels, batch_strs, batch_tokens = batch_converter(
+        batch_converter = self.alphabet.get_batch_converter() # type: ignore
+
+        batch_labels, batch_strs, batch_tokens = batch_converter(
                 [(str(i), seq) for i, seq in enumerate(sequences)]
             )
 
-            batch_tokens = batch_tokens.to(next(self.model.parameters()).device)
-            results = self.model(batch_tokens, repr_layers=[6])
-            embeddings = results["representations"][6]
+        batch_tokens = batch_tokens.to(next(self.model.parameters()).device)
+            # Run pretrained ESM-2 model
+            #
+            # Output shape:
+            #     [batch_size, seq_len, 320]
+        results = self.model(batch_tokens, repr_layers=[6])
+        embeddings = results["representations"][6]
         
         return embeddings
-
+        
 
 class CNN1DClassifier(nn.Module):
     """1D-CNN classifier for protein sequences"""
@@ -183,16 +250,21 @@ class ESM2CNNPipeline:
     def __init__(
         self,
         num_classes: int = 2,
-        learning_rate: float = 1e-3,
+        learning_rate: float = 1e-5,
         device: str | None = None,
         esm_model_name: str = "facebook/esm2_t6_8M",
         run_dir: str | Path | None = None,
+        checkpoint_dir: str | Path = "checkpoint",
+        unfreeze_esm: bool = False,
+        unfreeze_layers: int = 1,
+        esm_learning_rate: float = 1e-5,
+        cnn_checkpoint: str | None = None,
     ):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.num_classes = num_classes
         self.learning_rate = learning_rate
         self.run_dir = Path(run_dir) if run_dir is not None else Path(".")
-        self.run_dir.mkdir( parents=True, exist_ok=True)
+        self.run_dir.mkdir(parents=True, exist_ok=True)
 
         
         # Initialize encoder and classifier
@@ -201,12 +273,44 @@ class ESM2CNNPipeline:
             input_dim=320,
             num_classes=num_classes
         ).to(self.device)
+
+        self.checkpoint_dir = Path(checkpoint_dir)
+
+        run_name = self.run_dir.name
+
+        self.cnn_checkpoint_dir = (self.checkpoint_dir / "cnn" / run_name)
+        self.esm_checkpoint_dir = (self.checkpoint_dir / "esm2" / run_name)
+
+        self.cnn_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        self.esm_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+        if unfreeze_esm:
+            self.encoder.unfreeze_last_layers(num_layers=unfreeze_layers)
+        else:
+            self.encoder.freeze()
+
+        if cnn_checkpoint:
+            checkpoint_path = Path(cnn_checkpoint)
+
+            if checkpoint_path.exists():
+                self.classifier.load_state_dict(
+                    torch.load(checkpoint_path, map_location=self.device))
+                logger.info(f"Loaded CNN checkpoint from {checkpoint_path}")
+
+            else: 
+                logger.warning(f"CNN checkpoint not found: {checkpoint_path}. Starting from scratch.")
         
         # Optimizer (only for classifier since encoder is frozen)
-        self.optimizer = optim.Adam(
-            self.classifier.parameters(),
-            lr=learning_rate
-        )
+        self.optimizer = optim.Adam([
+            {
+                "params": self.classifier.parameters(),
+                "lr": learning_rate
+            },
+            {
+                "params": filter(lambda p: p.requires_grad, self.encoder.parameters()),
+                "lr": esm_learning_rate
+            }
+        ])
         
         self.criterion = nn.CrossEntropyLoss()
         self.best_val_loss = float('inf')
@@ -231,9 +335,17 @@ class ESM2CNNPipeline:
     def train_epoch(self, train_loader: DataLoader) -> Dict[str, float]:
         """Train for one epoch"""
         self.classifier.train()
+
+        if any(p.requires_grad for p in self.encoder.parameters()):
+            self.encoder.train()
+        else:
+            self.encoder.eval()
+
         total_loss = 0.0
         correct = 0
         total = 0
+        all_preds = []
+        all_labels = []
         
         progress_bar = tqdm(train_loader, desc="Training")
 
@@ -243,8 +355,8 @@ class ESM2CNNPipeline:
             labels = batch["label"].to(self.device).long()
             
             # Encode sequences
-            with torch.no_grad():
-                embeddings = self.encoder(sequences)
+            
+            embeddings = self.encoder(sequences)
             embeddings = embeddings.to(self.device)
             
             # Forward pass
@@ -262,15 +374,19 @@ class ESM2CNNPipeline:
             _, predicted = torch.max(logits, 1)
             correct += (predicted == labels).sum().item()
             total += labels.size(0)
-            
+            all_preds.extend(predicted.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
             progress_bar.set_postfix({
                 'loss': total_loss / (total / labels.size(0)),
                 'acc': correct / total
             })
         
         return {
-            'loss': total_loss / len(train_loader),
-            'accuracy': correct / total    
+            "loss": float(total_loss / len(train_loader)),
+            "accuracy": float(accuracy_score(all_labels, all_preds)), 
+            "f1": float(f1_score(all_labels, all_preds, average="macro")),
+            "precision": float(precision_score(all_labels, all_preds, average="macro", zero_division=0)),
+            "recall": float(recall_score(all_labels, all_preds, average="macro", zero_division=0)),   
         }
     
     def validate(self, val_loader: DataLoader) -> Dict[str, float]:
@@ -279,6 +395,8 @@ class ESM2CNNPipeline:
         total_loss = 0.0
         correct = 0
         total = 0
+        all_preds = []
+        all_labels = []
         
         with torch.no_grad():
             for batch in tqdm(val_loader, desc="Validation"):
@@ -299,11 +417,17 @@ class ESM2CNNPipeline:
                 _, predicted = torch.max(logits, 1)
                 correct += (predicted == labels).sum().item()
                 total += labels.size(0)
+
+                all_preds.extend(predicted.cpu().numpy())
+                all_labels.extend(labels.cpu().numpy())
         
         return {
-            'loss': total_loss / len(val_loader),
-            'accuracy': correct / total
-        }
+                "loss": float(total_loss / len(val_loader)),
+                "accuracy": float(accuracy_score(all_labels, all_preds)),
+                "f1": float(f1_score(all_labels, all_preds, average="macro")),
+                "precision": float(precision_score(all_labels, all_preds, average="macro", zero_division=0)),
+                "recall": float(recall_score(all_labels, all_preds, average="macro", zero_division=0)),
+            }
     
     def fit(
         self,
@@ -328,8 +452,14 @@ class ESM2CNNPipeline:
             "epoch": [],
             "train_loss": [],
             "train_accuracy": [],
+            "train_f1": [],
+            "train_precision": [],
+            "train_recall": [],
             "val_loss": [],
-            "val_accuracy": []
+            "val_accuracy": [],
+            "val_f1": [],
+            "val_precision": [],
+            "val_recall": [],
         }
         
         for epoch in range(epochs):
@@ -338,13 +468,21 @@ class ESM2CNNPipeline:
 
             # Train
             train_metrics = self.train_epoch(train_loader)
-            history['train_loss'].append(train_metrics['loss'])
-            history['train_accuracy'].append(train_metrics['accuracy'])
-            
+            history["train_loss"].append(train_metrics["loss"])
+            history["train_accuracy"].append(train_metrics["accuracy"])
+            history["train_f1"].append(train_metrics["f1"])
+            history["train_precision"].append(train_metrics["precision"])
+            history["train_recall"].append(train_metrics["recall"])
+    
+
             # Validate
             val_metrics = self.validate(val_loader)
-            history['val_loss'].append(val_metrics['loss'])
-            history['val_accuracy'].append(val_metrics['accuracy'])
+            history["val_loss"].append(val_metrics["loss"])
+            history["val_accuracy"].append(val_metrics["accuracy"])
+            history["val_f1"].append(val_metrics["f1"])
+            history["val_precision"].append(val_metrics["precision"])
+            history["val_recall"].append(val_metrics["recall"])
+            
             
             logger.info(
                 f"Train Loss: {train_metrics['loss']:.4f}, "
@@ -372,10 +510,19 @@ class ESM2CNNPipeline:
         metrics = {
             "best_val_loss": float(min(history["val_loss"])),
             "best_val_accuracy": float(max(history["val_accuracy"])),
+            "best_val_f1": float(max(history["val_f1"])),
+            "best_val_precision": float(max(history["val_precision"])),
+            "best_val_recall": float(max(history["val_recall"])),
             "final_train_loss": float(history["train_loss"][-1]),
             "final_train_accuracy": float(history["train_accuracy"][-1]),
+            "final_train_f1": float(history["train_f1"][-1]),
+            "final_train_precision": float(history["train_precision"][-1]),
+            "final_train_recall": float(history["train_recall"][-1]),
             "final_val_loss": float(history["val_loss"][-1]),
             "final_val_accuracy": float(history["val_accuracy"][-1]),
+            "final_val_f1": float(history["val_f1"][-1]),
+            "final_val_precision": float(history["val_precision"][-1]),
+            "final_val_recall": float(history["val_recall"][-1]),
             "epochs_completed": len(history["epoch"]),
         }
 
@@ -383,23 +530,21 @@ class ESM2CNNPipeline:
 
         return history
     
-    def save_checkpoint(self, filepath = None):
-        """Save model checkpoint"""
-        if filepath is None:
-            filepath = self.run_dir / "best_model.pt"
+    def save_checkpoint(self):
+        """Save CNN and ESM-2 checkpoints separately."""
 
-        torch.save(self.classifier.state_dict(), filepath)
-        logger.info(f"Model saved to {filepath}")
-    
-    def load_checkpoint(self, filepath=None):
+        cnn_path = self.cnn_checkpoint_dir / "best_cnn.pt"
+        esm_path = self.esm_checkpoint_dir / "best_esm.pt"
 
-        """Load model checkpoint"""
-        if filepath is None:
-            filepath = self.run_dir / "best_model.pt"
+        torch.save(self.classifier.state_dict(), cnn_path)
 
-        self.classifier.load_state_dict(torch.load(filepath, map_location=self.device))
-        logger.info(f"Model loaded from {filepath}")
-    
+        if self.encoder.model is not None:
+            torch.save(self.encoder.model.state_dict(), esm_path)
+
+        logger.info(f"CNN checkpoint saved to {cnn_path}")
+        logger.info(f"ESM checkpoint saved to {esm_path}")
+
+       
     def predict(self, sequences: list) -> Tuple[np.ndarray, np.ndarray]:
         """
         Predict on new sequences
@@ -420,6 +565,7 @@ class ESM2CNNPipeline:
         
         predictions = torch.argmax(logits, dim=1).cpu().numpy()
         probabilities = probs.cpu().numpy()
+    
         
         return predictions, probabilities
 
@@ -431,7 +577,12 @@ def main():
 
     run_dir = create_run_dir(args.results_dir, args.dataset)
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif torch.backends.mps.is_available():
+        device = "mps"
+    else:
+        device = "cpu"
 
     config = vars(args)
     config["run_dir"] = str(run_dir)
@@ -474,6 +625,11 @@ def main():
         device=device,
         esm_model_name=args.esm_model_name,
         run_dir=run_dir,
+        checkpoint_dir=args.checkpoint_dir,
+        unfreeze_esm=args.unfreeze_esm,
+        unfreeze_layers=args.unfreeze_layers,
+        esm_learning_rate=args.esm_learning_rate,
+        cnn_checkpoint=args.cnn_checkpoint,
     )
 
     pipeline.fit(
