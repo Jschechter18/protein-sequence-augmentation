@@ -91,15 +91,33 @@ class ESM2Encoder(nn.Module):
             self.model = None
             self.alphabet = None
     def freeze(self):
-        """Freeze all ESM-2 parameters."""
+        """
+        Freeze all ESM-2 parameters.
+
+        Used in Stage 1:
+            ESM-2 acts as a fixed feature extractor.
+            Only the CNN classifier is updated during training.
+        """
         if self.model is not None:
             for param in self.model.parameters():
                 param.requires_grad = False        
 
     def unfreeze_last_layers(self, num_layers: int = 1):
         """
-        Unfreeze only the last transformer layers of ESM-2.
+        Unfreeze only the final transformer layer(s) of ESM-2.
         For esm2_t6_8M_UR50D, there are 6 transformer layers.
+
+        Used in Stage 2:
+            Earlier ESM-2 layers remain frozen to preserve general protein
+            representations, while the final layer adapts to the specific
+            classification task.
+
+        Input:
+            num_layers: number of final transformer layers to make trainable.
+
+        Example:
+            num_layers=1 means only the 6th/final layer is trainable for
+            esm2_t6_8M_UR50D.
         """
         if self.model is None:
             return
@@ -163,8 +181,27 @@ class ESM2Encoder(nn.Module):
         
 
 class CNN1DClassifier(nn.Module):
-    """1D-CNN classifier for protein sequences"""
-    
+    """
+    Multi-kernel 1D-CNN classifier applied to ESM-2 embeddings.
+
+    Input to forward():
+        x shape [B, L, 320]
+        B = batch size
+        L = sequence length
+        320 = ESM embedding dimension
+
+    Output from forward():
+        logits shape [B, C]
+        C = number of classes
+
+    Architecture:
+        ESM embeddings
+            -> parallel Conv1D branches with kernel sizes 3, 5, 7
+            -> batch norm + ReLU
+            -> global max pooling
+            -> concatenate branch outputs
+            -> fully connected classifier
+    """
     def __init__(
         self,
         input_dim: int = 320,
@@ -175,7 +212,13 @@ class CNN1DClassifier(nn.Module):
     ):
         super().__init__()
         
-        if kernel_sizes is None:
+        if kernel_sizes is None: 
+            # Multiple kernel sizes let the CNN detect local residue patterns
+            # at different scales:
+            #   k=3: short motifs
+            #   k=5: medium motifs
+            #   k=7: longer local motifs
+
             kernel_sizes = [3, 5, 7]
         
         self.input_dim = input_dim
@@ -221,16 +264,38 @@ class CNN1DClassifier(nn.Module):
             Logits of shape (batch_size, num_classes)
         """
         # Transpose to (batch_size, input_dim, seq_len) for Conv1d
+        # Input from ESM-2:
+        #     x shape [B, L, 320]
+        #
+        # PyTorch Conv1d expects:
+        #     [B, channels, sequence_length]
+        #
+        # After transpose:
+        #     x shape [B, 320, L]
         x = x.transpose(1, 2)
         
         # Apply convolutions with different kernel sizes
         conv_outputs = []
 
         for conv, bn in zip(self.conv_layers, self.bns):
+            # Apply one convolution branch.
+            # Input shape:  [B, 320, L]
+            # Output shape: [B, 64, L] because out_channels=num_filters.
             out = conv(x)
+
+            # Normalize each convolution branch to stabilize training.
             out = bn(out)
+
+            # Nonlinear activation so the CNN can learn complex patterns.
             out = torch.relu(out)
+
+            # Global max pooling to reduce sequence dimension.
+            # Input shape:  [B, 64, L]
+            # Output shape: [B, 64, 1]  
             out = self.global_pool(out)
+
+            # Remove final singleton dimension.
+            # Shape: [B, 64, 1] -> [B, 64]
             out = out.squeeze(-1)
             conv_outputs.append(out)
 
@@ -245,8 +310,24 @@ class CNN1DClassifier(nn.Module):
 
 
 class ESM2CNNPipeline:
-    """Training pipeline combining ESM-2 encoder with 1D-CNN classifier"""
-    
+    """
+    End-to-end training pipeline combining:
+        1. ESM-2 encoder
+        2. 1D-CNN classifier
+        3. optimizer/loss
+        4. training loop
+        5. validation loop
+        6. checkpoint and metrics saving
+
+    Stage 1:
+        unfreeze_esm=False
+        ESM-2 frozen, CNN trainable.
+
+    Stage 2:
+        unfreeze_esm=True
+        final ESM-2 layer(s) trainable with low learning rate,
+        CNN trainable with classifier learning rate.
+    """
     def __init__(
         self,
         num_classes: int = 2,
@@ -267,8 +348,14 @@ class ESM2CNNPipeline:
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
         
-        # Initialize encoder and classifier
+        # Initialize pretrained ESM-2 encoder.
+        # Input: raw sequence strings.
+        # Output: embeddings [B, L, 320].
         self.encoder = ESM2Encoder(model_name=esm_model_name).to(self.device)
+
+        # Initialize CNN classifier.
+        # Input: ESM embeddings [B, L, 320].
+        # Output: class logits [B, num_classes].
         self.classifier = CNN1DClassifier(
             input_dim=320,
             num_classes=num_classes
