@@ -254,7 +254,7 @@ class ESM2CNNPipeline:
         device: str | None = None,
         esm_model_name: str = "facebook/esm2_t6_8M",
         run_dir: str | Path | None = None,
-        checkpoint_dir: str | Path = "checkpoint",
+        checkpoint_dir: str | Path = "checkpoints",
         unfreeze_esm: bool = False,
         unfreeze_layers: int = 1,
         esm_learning_rate: float = 1e-5,
@@ -502,6 +502,9 @@ class ESM2CNNPipeline:
                 if self.patience_counter >= early_stopping_patience:
                     logger.info(f"Early stopping at epoch {epoch + 1}")
                     break
+            
+        self.save_final_checkpoint()
+    
         pd.DataFrame(history).to_csv(
             self.run_dir / "training_history.csv",
             index=False
@@ -544,7 +547,20 @@ class ESM2CNNPipeline:
         logger.info(f"CNN checkpoint saved to {cnn_path}")
         logger.info(f"ESM checkpoint saved to {esm_path}")
 
-       
+    def save_final_checkpoint(self):
+        """Save final model state at end of training."""
+
+        cnn_path = self.cnn_checkpoint_dir / "final_cnn.pt"
+        esm_path = self.esm_checkpoint_dir / "final_esm.pt"
+
+        torch.save(self.classifier.state_dict(), cnn_path)
+
+        if self.encoder.model is not None:
+            torch.save(self.encoder.model.state_dict(), esm_path)
+
+        logger.info(f"Final CNN checkpoint saved to {cnn_path}")
+        logger.info(f"Final ESM checkpoint saved to {esm_path}")   
+
     def predict(self, sequences: list) -> Tuple[np.ndarray, np.ndarray]:
         """
         Predict on new sequences
