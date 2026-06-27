@@ -70,20 +70,33 @@ def _version_dir_name(version: str | int | None) -> str | None:
     return version_name if version_name.startswith("v") else f"v{version_name}"
 
 
-def default_checkpoint_path(
+def version_checkpoint_path(
     model_type: str,
     task: str,
     version: str | int | None,
     length_quartile: str | None = None,
 ) -> Path:
-    checkpoint_name = f"{autoencoder_artifact_stem(model_type, task, length_quartile)}.pt"
     checkpoint_dir = PROJECT_ROOT / "checkpoints" / "autoencoder" / task
     version_dir = _version_dir_name(version)
 
     if version_dir:
-        return checkpoint_dir / version_dir / checkpoint_name
+        checkpoint_dir = checkpoint_dir / version_dir
 
-    return checkpoint_dir / checkpoint_name
+    checkpoint_name = f"{autoencoder_artifact_stem(model_type, task, length_quartile)}.pt"
+    checkpoint_path = checkpoint_dir / checkpoint_name
+    if checkpoint_path.is_file() or length_quartile is None:
+        return checkpoint_path
+
+    fallback_name = f"{autoencoder_artifact_stem(model_type, task)}.pt"
+    fallback_path = checkpoint_dir / fallback_name
+    if fallback_path.is_file():
+        print(
+            f"Quartile-specific checkpoint not found: {checkpoint_path}\n"
+            f"Falling back to base checkpoint: {fallback_path}"
+        )
+        return fallback_path
+
+    return checkpoint_path
 
 
 def checkpoint_state_dict(checkpoint: object) -> dict[str, torch.Tensor]:
@@ -221,14 +234,12 @@ def test(
 
             decoder_inputs = inputs[:, :-1] if teacher_forcing else None
             targets = targets[:, 1:]
+            
+            outputs: torch.Tensor = model(inputs, decoder_input_ids=decoder_inputs, lengths=lengths) if teacher_forcing else model.decode_autoregressive(
+                model.encode(inputs, lengths=lengths),
+                max_length=targets.size(1),
+            )
 
-            if teacher_forcing:
-                outputs: torch.Tensor = model(inputs, decoder_input_ids=decoder_inputs, lengths=lengths)
-            else:
-                outputs = model.decode_autoregressive(
-                    model.encode(inputs, lengths=lengths),
-                    max_length=targets.size(1),
-                )
             loss: torch.Tensor = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
 
             predictions: torch.Tensor = outputs.argmax(dim=-1)
@@ -266,9 +277,7 @@ def test(
     avg_loss = total_loss / total_tokens if total_tokens > 0 else 0.0
     accuracy = total_correct / total_tokens if total_tokens > 0 else 0.0
 
-    print(
-        f"Test Loss: {avg_loss:.4f}, Test Accuracy: {accuracy:.4f}, "
-    )
+    print(f"Test Loss: {avg_loss:.4f}, Test Accuracy: {accuracy:.4f}, ")
     print(f"Saved decoder outputs to: {output_path}")
 
 
@@ -277,7 +286,13 @@ def main():
 
     model_type = args.model.lower()
     hyperparams = AEParams()
-    checkpoint_path = args.checkpoint or default_checkpoint_path(
+    # checkpoint_path = args.checkpoint or default_checkpoint_path(
+    #     model_type,
+    #     args.task,
+    #     args.version,
+    #     args.length_quartile,
+    # )
+    checkpoint_path = version_checkpoint_path(
         model_type,
         args.task,
         args.version,

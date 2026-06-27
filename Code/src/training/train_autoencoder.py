@@ -42,7 +42,6 @@ from utils.utils import load_training_checkpoint, make_token_weights
 from utils.curriculum import make_length_curriculum_dataloader
 from utils.train_input_validation import add_and_validate_train_inputs, autoencoder_artifact_stem
 
-import warnings
 
 # ----------------------------------------------------------------------------------------------------------------
 
@@ -238,7 +237,7 @@ def train(
             loss: torch.Tensor = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
             loss.backward()
             if hyperparams.grad_clip:
-                clip_grad_norm_(model.parameters(), max_norm=1.0) # Testing out gradient clipping to see if it helps with training stability
+                clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             
             predictions = outputs.argmax(dim=-1)
@@ -277,7 +276,6 @@ def train(
         history["train_scores"]["accuracy"].append(accuracy)
         history["train_scores"]["f1"].append(f1)
         
-
         val_metrics = validate(model, val_dataloader, loss_fn)
         val_loss = val_metrics["loss"]
         scheduler.step(val_loss)

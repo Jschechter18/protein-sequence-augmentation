@@ -1,7 +1,6 @@
 import argparse
 import warnings
 from pathlib import Path
-from typing import Optional
 from utils.hyperparameters import (AutoencoderHyperparameters as AEParams)
 
 LENGTH_QUARTILE_FILE_LABELS = {
@@ -24,31 +23,17 @@ def _str_to_bool(value: str | bool) -> bool:
     raise argparse.ArgumentTypeError("Expected a boolean value")
 
 
-# def _autoencoder_artifact_stem(
-#     model: str,
-#     task: str,
-#     length_quartile: Optional[str] = None,
-#     is_overfit: bool = False,
-# ) -> str:
-#     parts = ["model", model.lower()]
-#     if length_quartile is not None:
-#         parts.append(LENGTH_QUARTILE_FILE_LABELS[length_quartile])
-#     parts.append(task)
-#     if is_overfit:
-#         parts.append("overfit")
-#     return "_".join(parts)
 
 def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
-    # parser = argparse.ArgumentParser(description="Test an autoencoder checkpoint on protein sequences.")
     args.add_argument("--model", type=str, default="AE", choices=["AE", "ae"], help="Model to test.")
     args.add_argument("--task", type=str, default="solubility", choices=["localization", "solubility"], help="Task to test.")
-    args.add_argument(
-        "--checkpoint",
-        type=str,
-        default=None,
-        help="Path to the checkpoint to test. Defaults to checkpoints/<version>/model_<model>_<task>.pt when --version is set.",
-    )
-    args.add_argument("--version", type=str, default="v1", help="Checkpoint version directory to test.")
+    # args.add_argument(
+    #     "--checkpoint",
+    #     type=str,
+    #     default="Code/results/autoencoder/solubility/v5/solubility_ae_history.json",
+    #     help="Path to the checkpoint to test. Defaults to checkpoints/<version>/model_<model>_<task>.pt when --version is set.",
+    # )
+    args.add_argument("--version", type=str, default="v5", help="Checkpoint version directory to test.")
     args.add_argument(
         "--teacher_forcing",
         type=_str_to_bool,
@@ -86,7 +71,7 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
 
 def add_and_validate_test_inputs():
     # pass
-    args = _add_args(argparse.ArgumentParser())
+    args = _add_args(argparse.ArgumentParser(description="Test an autoencoder checkpoint on protein sequences."))
     
     if args.model.upper() != "AE":
         raise ValueError("Only --model AE is currently supported")
