@@ -618,7 +618,27 @@ class ESM2CNNPipeline:
                 "device": self.device,
                 "unfreeze_layers": self.unfreeze_layers,
             },
-            "summary": metrics,
+            "summary": {
+                "best_val_loss": self.best_val_loss,
+                "best_val_accuracy": max(history["val_accuracy"]),
+                "best_val_f1": max(history["val_f1"]),
+                "best_val_precision": max(history["val_precision"]),
+                "best_val_recall": max(history["val_recall"]),
+                
+                "final_train_loss": history["train_loss"][-1],
+                "final_train_accuracy": history["train_accuracy"][-1],
+                "final_train_f1": history["train_f1"][-1],
+                "final_train_precision": history["train_precision"][-1],
+                "final_train_recall": history["train_recall"][-1],
+                "final_val_loss": history["val_loss"][-1],
+                "final_val_accuracy": history["val_accuracy"][-1],
+                "final_val_f1": history["val_f1"][-1],
+                "final_val_precision": history["val_precision"][-1],
+                "final_val_recall": history["val_recall"][-1],
+                
+                "epochs_trained": len(history["epoch"]),
+                },
+                
             "epochs": [
                 {
                     "epoch": int(history["epoch"][i]),
