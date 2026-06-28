@@ -636,9 +636,10 @@ class ESM2CNNPipeline:
                 "final_val_precision": history["val_precision"][-1],
                 "final_val_recall": history["val_recall"][-1],
                 
+                "best_epoch": history["val_loss"].index(self.best_val_loss) + 1,
                 "epochs_trained": len(history["epoch"]),
                 },
-                
+
             "epochs": [
                 {
                     "epoch": int(history["epoch"][i]),
