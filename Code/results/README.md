@@ -2,9 +2,6 @@
 
 ### autoencoder/
 
-<<<<<<< HEAD
-Contains autoencoder training results
-=======
 Contains autoencoder training results (Token accuracy)
 
 Solubility:
@@ -46,7 +43,6 @@ full dataset:
   - Test Loss: 1.1311, Test Accuracy: 0.5819
 - Autoregressive:
   - Test Loss: 3.3443, Test Accuracy: 0.2538
->>>>>>> origin/main
 
 No long sequence dataset:
 
@@ -91,18 +87,8 @@ s:
 
 Contains ESM-2 and 1DCNN results
 
-<<<<<<< HEAD
-
-### figures/ 
-
-
-### tables/
-
-Final benchmark tables 
-=======
 ### figures/
 
 ### tables/
 
 Final benchmark tables
->>>>>>> origin/main
