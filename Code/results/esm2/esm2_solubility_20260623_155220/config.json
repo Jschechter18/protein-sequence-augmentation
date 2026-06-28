@@ -1,7 +1,7 @@
 {
     "model": "ESM2 + CNN",
-    "esm_model": "facebook/esm2_t6_8M",
+    "esm_model": "esm2_t6_8M_UR50D",
     "learning_rate": 0.001,
     "num_classes": 2,
-    "device": "cpu"
+    "device": "mps"
 }
