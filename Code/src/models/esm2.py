@@ -468,7 +468,9 @@ class ESM2CNNPipeline:
     
     def validate(self, val_loader: DataLoader) -> Dict[str, float]:
         """Validate model"""
+        self.encoder.eval()
         self.classifier.eval()
+
         total_loss = 0.0
         correct = 0
         total = 0
