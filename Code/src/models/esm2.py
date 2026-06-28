@@ -47,7 +47,7 @@ def parse_args():
 
 def create_run_dir(results_dir, dataset):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = Path(results_dir) / f"esm2_{dataset}_{timestamp}"
+    run_dir = Path(results_dir) / dataset / f"esm2_{dataset}_{timestamp}"
     run_dir.mkdir(parents=True, exist_ok=True)
     return run_dir
 
