@@ -28,8 +28,8 @@
         ],
         "cnn_num_filters": 64,
         "cnn_dropout": 0.3,
-        "unfreeze_esm": false,
-        "unfreeze_layers": 0,
+        "unfreeze_esm": true,
+        "unfreeze_layers": 1,
         "fine_tuning_strategy": "frozen_backbone"
     },
     "summary": {

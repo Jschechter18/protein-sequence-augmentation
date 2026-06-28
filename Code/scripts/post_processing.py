@@ -7,10 +7,6 @@ Expected old run structure:
         metrics.json
         training_history.csv
 
-Optional new structure:
-    Code/results/esm2/solubility/stage0_frozen/<run_name>/
-    Code/results/esm2/solubility/stage1_unfreeze_last1/<run_name>/
-
 Usage:
     python -m Code.scripts.post_processing
 
