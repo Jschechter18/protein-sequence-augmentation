@@ -408,21 +408,6 @@ class ESM2CNNPipeline:
         self.best_val_loss = float('inf')
         self.patience_counter = 0
 
-    # ==========
-        config = {
-            "model": "ESM2 + CNN",
-            "esm_model": esm_model_name,
-            "learning_rate": learning_rate,
-            "num_classes": num_classes,
-            "device": self.device
-        }
-
-        with open(
-            self.run_dir / "config.json",
-            "w"
-        ) as f:
-            json.dump(config, f, indent=4)
-    # ==========
 
     def train_epoch(self, train_loader: DataLoader) -> Dict[str, float]:
         """Train for one epoch"""
@@ -604,6 +589,9 @@ class ESM2CNNPipeline:
         
         history_json = {
             "hyperparameters": {
+                "model": "ESM2 + CNN",
+                "esm_model": "esm2_t6_8M_UR50D",
+                "device": self.device,
                 "dataset": self.run_dir.name,
                 "num_classes": self.num_classes,
                 "learning_rate": self.learning_rate,
@@ -611,11 +599,9 @@ class ESM2CNNPipeline:
                 "epochs": epochs,
                 "early_stopping_patience": early_stopping_patience,
                 "model": "ESM2 + 1D CNN",
-                "esm_model": "esm2_t6_8M_UR50D",
                 "embedding_dim": 320,
                 "cnn_num_filters": 64,
                 "cnn_kernel_sizes": [3, 5, 7],
-                "device": self.device,
                 "unfreeze_layers": self.unfreeze_layers,
             },
             "summary": {
