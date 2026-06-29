@@ -32,6 +32,13 @@
 
    ```
 
+   If PEER setup later needs to build `lmdb` from source on Ubuntu, install system build tools first:
+
+   ```
+   sudo apt-get update
+   sudo apt-get install -y build-essential python3-dev
+   ```
+
 3. Set up data directory through shell script
    bash
 

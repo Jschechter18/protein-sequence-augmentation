@@ -6,6 +6,29 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PEER_REPO_DIR="$REPO_ROOT/external/PEER_Benchmark"
 PYTHON_BIN="${PYTHON:-python}"
 
+install_lmdb() {
+  echo "[PEER] Installing lmdb"
+
+  if "$PYTHON_BIN" -m pip install --only-binary=:all: lmdb; then
+    return 0
+  fi
+
+  if ! command -v gcc >/dev/null 2>&1; then
+    cat <<'EOF'
+[PEER] Unable to install lmdb from a prebuilt wheel, and gcc is not available.
+[PEER] On Ubuntu, install the build tools and rerun this script:
+
+  sudo apt-get update
+  sudo apt-get install -y build-essential python3-dev
+
+EOF
+    return 1
+  fi
+
+  echo "[PEER] No compatible prebuilt lmdb wheel found. Building from source with local compiler"
+  "$PYTHON_BIN" -m pip install lmdb
+}
+
 echo "[PEER] Starting PEER data setup"
 echo "[PEER] Repository root: $REPO_ROOT"
 
@@ -28,8 +51,7 @@ fi
 
 echo "[PEER] Ensuring minimal Python dependency is available"
 if ! "$PYTHON_BIN" -c "import lmdb" >/dev/null 2>&1; then
-  echo "[PEER] Installing lmdb"
-  "$PYTHON_BIN" -m pip install lmdb
+  install_lmdb
 else
   echo "[PEER] lmdb already available"
 fi
