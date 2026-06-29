@@ -8,6 +8,8 @@ from typing import Tuple, Dict
 
 import numpy as np
 import pandas as pd
+from sklearn import metrics
+from sklearn import metrics
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -47,7 +49,7 @@ def parse_args():
 
 def create_run_dir(results_dir, dataset):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = Path(results_dir) / f"esm2_{dataset}_{timestamp}"
+    run_dir = Path(results_dir) / dataset / f"esm2_{dataset}_{timestamp}"
     run_dir.mkdir(parents=True, exist_ok=True)
     return run_dir
 
@@ -344,6 +346,9 @@ class ESM2CNNPipeline:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.num_classes = num_classes
         self.learning_rate = learning_rate
+        self.esm_learning_rate = esm_learning_rate
+        self.unfreeze_layers = unfreeze_layers
+        self.unfreeze_esm = unfreeze_esm
         self.run_dir = Path(run_dir) if run_dir is not None else Path(".")
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -403,21 +408,6 @@ class ESM2CNNPipeline:
         self.best_val_loss = float('inf')
         self.patience_counter = 0
 
-    # ==========
-        config = {
-            "model": "ESM2 + CNN",
-            "esm_model": esm_model_name,
-            "learning_rate": learning_rate,
-            "num_classes": num_classes,
-            "device": self.device
-        }
-
-        with open(
-            self.run_dir / "config.json",
-            "w"
-        ) as f:
-            json.dump(config, f, indent=4)
-    # ==========
 
     def train_epoch(self, train_loader: DataLoader) -> Dict[str, float]:
         """Train for one epoch"""
@@ -478,7 +468,9 @@ class ESM2CNNPipeline:
     
     def validate(self, val_loader: DataLoader) -> Dict[str, float]:
         """Validate model"""
+        self.encoder.eval()
         self.classifier.eval()
+
         total_loss = 0.0
         correct = 0
         total = 0
@@ -597,26 +589,79 @@ class ESM2CNNPipeline:
             index=False
         )
         
-        metrics = {
-            "best_val_loss": float(min(history["val_loss"])),
-            "best_val_accuracy": float(max(history["val_accuracy"])),
-            "best_val_f1": float(max(history["val_f1"])),
-            "best_val_precision": float(max(history["val_precision"])),
-            "best_val_recall": float(max(history["val_recall"])),
-            "final_train_loss": float(history["train_loss"][-1]),
-            "final_train_accuracy": float(history["train_accuracy"][-1]),
-            "final_train_f1": float(history["train_f1"][-1]),
-            "final_train_precision": float(history["train_precision"][-1]),
-            "final_train_recall": float(history["train_recall"][-1]),
-            "final_val_loss": float(history["val_loss"][-1]),
-            "final_val_accuracy": float(history["val_accuracy"][-1]),
-            "final_val_f1": float(history["val_f1"][-1]),
-            "final_val_precision": float(history["val_precision"][-1]),
-            "final_val_recall": float(history["val_recall"][-1]),
-            "epochs_completed": len(history["epoch"]),
-        }
+        history_json = {
+            "hyperparameters": {
+                "model": "ESM2 + CNN",
+                "esm_model": "esm2_t6_8M_UR50D",
+                "device": self.device,
+                "dataset": self.run_dir.name,
+                "num_classes": self.num_classes,
+                "learning_rate": self.learning_rate,
+                "esm_learning_rate": self.esm_learning_rate,
+                "epochs": epochs,
+                "early_stopping_patience": early_stopping_patience,
+                "model": "ESM2 + 1D CNN",
+                "embedding_dim": 320,
+                "cnn_num_filters": 64,
+                "cnn_kernel_sizes": [3, 5, 7],
+                "unfreeze_layers": self.unfreeze_layers,
+            },
+            "summary": {
+                "best_val_loss": self.best_val_loss,
+                "best_val_accuracy": max(history["val_accuracy"]),
+                "best_val_f1": max(history["val_f1"]),
+                "best_val_precision": max(history["val_precision"]),
+                "best_val_recall": max(history["val_recall"]),
+                
+                "final_train_loss": history["train_loss"][-1],
+                "final_train_accuracy": history["train_accuracy"][-1],
+                "final_train_f1": history["train_f1"][-1],
+                "final_train_precision": history["train_precision"][-1],
+                "final_train_recall": history["train_recall"][-1],
+                "final_val_loss": history["val_loss"][-1],
+                "final_val_accuracy": history["val_accuracy"][-1],
+                "final_val_f1": history["val_f1"][-1],
+                "final_val_precision": history["val_precision"][-1],
+                "final_val_recall": history["val_recall"][-1],
+                
+                "best_epoch": history["val_loss"].index(self.best_val_loss) + 1,
+                "epochs_trained": len(history["epoch"]),
+                },
 
-        save_json(metrics, self.run_dir / "metrics.json")
+            "epochs": [
+                {
+                    "epoch": int(history["epoch"][i]),
+                    "train_loss": history["train_loss"][i],
+                    "train_accuracy": history["train_accuracy"][i],
+                    "train_f1": history["train_f1"][i],
+                    "train_precision": history["train_precision"][i],
+                    "train_recall": history["train_recall"][i],
+                    "val_loss": history["val_loss"][i],
+                    "val_accuracy": history["val_accuracy"][i],
+                    "val_f1": history["val_f1"][i],
+                    "val_precision": history["val_precision"][i],
+                    "val_recall": history["val_recall"][i]
+                }
+                for i in range(len(history["epoch"])) 
+            ], 
+            "train_loss": history["train_loss"],
+            "train_scores": {
+                "train_accuracy": history["train_accuracy"],
+                "train_f1": history["train_f1"],
+                "train_precision": history["train_precision"],
+                "train_recall": history["train_recall"],
+            },
+            "val_loss": history["val_loss"],
+            "val_scores": {
+                "val_accuracy": history["val_accuracy"],
+                "val_f1": history["val_f1"],
+                "val_precision": history["val_precision"],
+                "val_recall": history["val_recall"]
+            }
+
+        }
+            
+        save_json(history_json, self.run_dir / "history.json")
 
         return history
     
