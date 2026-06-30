@@ -2,6 +2,8 @@
 
 Supports multiple tasks (e.g., localization, solubility), encoding modes (char, raw), and model types (classification, autoencoder)
 """
+from __future__ import annotations
+
 from pathlib import Path
 import torch
 from torch.utils.data import DataLoader, Subset
@@ -96,11 +98,16 @@ def collate_sequence_batch(batch: list[dict]) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Sequence length quartile curriculum utilities
+# Sequence length bin utilities
 # ---------------------------------------------------------------------------
 
 
 QUARTILES = ["s", "ms", "ml", "l"]
+LENGTH_SPLIT_COUNTS = {
+    "halves": 2,
+    "thirds": 3,
+    "quarters": 4,
+}
 
 def get_length(dataset, idx):
     # Your SequenceDataset stores preprocessed examples with "_length"
@@ -112,9 +119,48 @@ def get_length(dataset, idx):
     return int(length.item() if hasattr(length, "item") else length)
 
 
-def compute_train_length_boundaries(train_dataset):
+def compute_train_length_boundaries(train_dataset, num_bins: int = 4):
+    if num_bins <= 0:
+        raise ValueError("num_bins must be positive")
     lengths = np.array([get_length(train_dataset, i) for i in range(len(train_dataset))])
-    return np.quantile(lengths, [0.0, 0.25, 0.50, 0.75, 1.0])
+    return np.quantile(lengths, np.linspace(0.0, 1.0, num_bins + 1))
+
+
+def length_bin_indices(dataset, boundaries, bin_index: int, cumulative=False):
+    if bin_index < 1 or bin_index >= len(boundaries):
+        raise ValueError(f"bin_index must be between 1 and {len(boundaries) - 1}")
+
+    lower = boundaries[bin_index - 1]
+    upper = boundaries[bin_index]
+
+    indices = []
+    for i in range(len(dataset)):
+        length = get_length(dataset, i)
+        if cumulative:
+            keep = length <= upper
+        elif bin_index == 1:
+            keep = lower <= length <= upper
+        else:
+            keep = lower < length <= upper
+
+        if keep:
+            indices.append(i)
+
+    return indices
+
+
+def make_length_bin_loader(base_loader, boundaries, bin_index: int, shuffle, cumulative=False):
+    indices = length_bin_indices(base_loader.dataset, boundaries, bin_index, cumulative)
+    subset = Subset(base_loader.dataset, indices)
+
+    return DataLoader(
+        subset,
+        batch_size=base_loader.batch_size,
+        shuffle=shuffle,
+        num_workers=base_loader.num_workers,
+        pin_memory=base_loader.pin_memory,
+        collate_fn=base_loader.collate_fn,
+    )
 
 
 def quartile_indices(dataset, boundaries, quartile_name, cumulative=False):
@@ -181,6 +227,8 @@ def create_dataloader(
     loader_type: str | None = None,
     max_length: int | None = None,
     quartile_name: str | None = None,
+    length_options: str | None = None,
+    length_bin: int | None = None,
     cumulative: bool = False,
     length_boundaries: np.ndarray | None = None,
 ) -> DataLoader[SequenceDataset]:
@@ -222,11 +270,15 @@ def create_dataloader(
     quartile_name:
         Length quartile to keep when ``loader_type="quartile"``. One of
         ``"s"``, ``"ms"``, ``"ml"``, or ``"l"``.
+    length_options:
+        Length split scheme to use when ``loader_type="length_bin"``. One of
+        ``"halves"``, ``"thirds"``, or ``"quarters"``.
+    length_bin:
+        1-indexed length bin to keep when ``loader_type="length_bin"``.
     cumulative:
-        If true, quartile filtering keeps the selected quartile and all shorter
-        quartiles.
+        If true, length filtering keeps the selected bin and all shorter bins.
     length_boundaries:
-        Optional precomputed length boundaries to use for quartile filtering.
+        Optional precomputed length boundaries to use for length-bin filtering.
         Pass train-set boundaries when filtering validation or test splits.
 
     Returns
@@ -293,7 +345,21 @@ def create_dataloader(
         if boundaries is None:
             boundaries = compute_train_length_boundaries(dataset)
         dataloader = make_quartile_loader(dataloader, boundaries, quartile_name, shuffle, cumulative=cumulative)
+    elif loader_type == "length_bin":
+        if length_options is None:
+            raise ValueError("length_options must be specified when loader_type is 'length_bin'")
+        if length_options not in LENGTH_SPLIT_COUNTS:
+            raise ValueError(f"length_options must be one of {list(LENGTH_SPLIT_COUNTS)}")
+        if length_bin is None:
+            raise ValueError("length_bin must be specified when loader_type is 'length_bin'")
+        num_bins = LENGTH_SPLIT_COUNTS[length_options]
+        if not 1 <= length_bin <= num_bins:
+            raise ValueError(f"length_bin must be between 1 and {num_bins} for {length_options}")
+        boundaries = length_boundaries
+        if boundaries is None:
+            boundaries = compute_train_length_boundaries(dataset, num_bins=num_bins)
+        dataloader = make_length_bin_loader(dataloader, boundaries, length_bin, shuffle, cumulative=cumulative)
     elif loader_type is not None:
-        raise ValueError("loader_type must be one of None, 'max_length', or 'quartile'")
+        raise ValueError("loader_type must be one of None, 'max_length', 'quartile', or 'length_bin'")
     
     return dataloader

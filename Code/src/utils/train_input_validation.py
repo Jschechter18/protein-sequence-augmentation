@@ -1,14 +1,22 @@
+from __future__ import annotations
+
 import argparse
 import warnings
 from pathlib import Path
 from typing import Optional
 from utils.hyperparameters import AutoencoderHyperparameters as AEParams
 
-LENGTH_QUARTILE_FILE_LABELS = {
-    "s": "short",
-    "ms": "medium_short",
-    "ml": "medium_long",
-    "l": "long",
+# LENGTH_QUARTILE_FILE_LABELS = {
+#     "s": "short",
+#     "ms": "medium_short",
+#     "ml": "medium_long",
+#     "l": "long",
+# }
+
+LENGTH_SPLIT_COUNTS = {
+    "halves": 2,
+    "thirds": 3,
+    "quarters": 4,
 }
 
 
@@ -26,13 +34,17 @@ def _str_to_bool(value: str | bool) -> bool:
 def autoencoder_artifact_stem(
     model: str,
     task: str,
-    length_quartile: Optional[str] = None,
+    length_options: Optional[str] = None,
+    length_bin: int | None = None,
     is_overfit: bool = False,
     artifact_suffix: str | None = None,
 ) -> str:
     parts = ["model", model.lower()]
-    if length_quartile is not None:
-        parts.append(LENGTH_QUARTILE_FILE_LABELS[length_quartile])
+    if length_options is not None:
+        if length_bin is None:
+            raise ValueError("length_bin must be provided when length_options is set")
+        split_count = LENGTH_SPLIT_COUNTS[length_options]
+        parts.append(f"length_{length_bin}_of_{split_count}")
     parts.append(task)
     if is_overfit:
         parts.append("overfit")
@@ -82,31 +94,33 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
         default=0.2,
         help='Fraction of shortest training examples to use in the first curriculum epoch.',
     )
+    # args.add_argument(
+    #     '--length_quartile',
+    #     type=str,
+    #     default=None,
+    #     choices=["s", "ms", "ml", "l"],
+    # )
     args.add_argument(
-        '--length_quartile',
+        '--length_options',
         type=str,
         default=None,
-        choices=["s", "ms", "ml", "l"],
+        choices=["quarters", "thirds", "halves"],
+        help='Split training data by sequence length into this many bins. If not set, train on all lengths.',
     )
     args.add_argument(
-        '--cumulative_quartiles',
+        '--length_bin',
+        type=int,
+        default=None,
+        help='1-indexed length bin to train on. Requires --length_options. For --length_options thirds, use 1, 2, or 3.',
+    )
+    args.add_argument(
+        '--cumulative',
         type=_str_to_bool,
         nargs='?',
         const=True,
         default=False,
-        help='If set, each length quartile includes all shorter quartiles (e.g., "ml" includes "s", "ms", and "ml"). Ignored if --length_quartile is not set.',
+        help='If set, train on all sequences up to the specified length. Otherwise, train on sequences only in the specified length range.',
     )
-    args.add_argument(
-        '--max_length',
-        type=int,
-        default=None,
-        help='If set, only sequences with length <= max_length will be used for training and validation. Ignored if --length_quartile is set.',
-    )
-    # args.add_argument(
-    #     '--tuning',
-    #     type=bool,
-    #     default=False,
-    # )
     args.add_argument(
         '--sweep',
         type=_str_to_bool,
@@ -114,6 +128,12 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
         const=True,
         default=False,
         help='Run the autoencoder latent_dim/teacher_forcing_dropout_rate sweep.',
+    )
+    args.add_argument(
+        '--max_length',
+        type=int,
+        default=None,
+        help='If set, only sequences with length <= max_length will be used. Ignored if --length_options is set.',
     )
     
     return args.parse_args()
@@ -133,6 +153,17 @@ def add_and_validate_train_inputs():
     if args.sweep and args.load_path is not None:
         raise ValueError("--load_path is not supported with --sweep because swept latent dimensions may not match the checkpoint.")
 
+    if args.length_options is None and args.length_bin is not None:
+        raise ValueError("--length_bin requires --length_options")
+    if args.length_options is not None:
+        if args.length_bin is None:
+            raise ValueError("--length_bin is required when --length_options is set")
+        split_count = LENGTH_SPLIT_COUNTS[args.length_options]
+        if not 1 <= args.length_bin <= split_count:
+            raise ValueError(f"--length_bin must be between 1 and {split_count} for --length_options {args.length_options}")
+    if args.max_length is not None and args.max_length <= 0:
+        raise ValueError("--max_length must be positive")
+    
     if not args.sweep:
         # Make sure this checkpoint filename is unique to avoid overwriting previous runs.
         model_dir = "autoencoder" if args.model.upper() == "AE" else args.model.lower()
@@ -140,7 +171,8 @@ def add_and_validate_train_inputs():
         artifact_stem = autoencoder_artifact_stem(
             args.model,
             args.task,
-            args.length_quartile,
+            args.length_options,
+            length_bin=args.length_bin,
             is_overfit=(args.overfit_batches is not None),
         )
         checkpoint_path = version_dir / f"{artifact_stem}.pt"

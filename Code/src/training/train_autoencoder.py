@@ -8,13 +8,25 @@ python Code/src/training/train_autoencoder.py --model AE --task solubility
 
 python Code/src/training/train_autoencoder.py --model AE --task solubility --curriculum_epochs 5 --curriculum_start_fraction 0.2 --version <version>
 
-# Length quartile training:
-python Code/src/training/train_autoencoder.py --model AE --task solubility --version <version> --length_quartile l
+# Length-bin training:
+python Code/src/training/train_autoencoder.py --model AE --task solubility --version <version> --length_options thirds --length_bin 2
 
-# Cummulative length quartile training:
-python Code/src/training/train_autoencoder.py --model AE --task solubility --version <version> --length_quartile ml --cumulative_quartiles True
+# Cumulative length-bin training:
+python Code/src/training/train_autoencoder.py --model AE --task solubility --version <version> --length_options thirds --length_bin 2 --cumulative
+
+# Sweep:
+python Code/src/training/train_autoencoder.py \
+  --model AE \
+  --task solubility \
+  --length_options thirds \
+  --length_bin <bin> \
+  --cumulative \
+  --sweep \
+  --version <version>
 
 """
+from __future__ import annotations
+
 import json
 import copy
 import random
@@ -25,7 +37,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader, Subset
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.nn.utils import clip_grad_norm_
 from sklearn.metrics import f1_score, accuracy_score
@@ -36,7 +48,13 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from models.autoencoder import ProteinSequenceAutoencoder as AE
-from utils.dataloader import BOS_IDX, PAD_IDX, create_dataloader, compute_train_length_boundaries
+from utils.dataloader import (
+    BOS_IDX,
+    LENGTH_SPLIT_COUNTS,
+    PAD_IDX,
+    create_dataloader,
+    compute_train_length_boundaries,
+)
 from utils.hyperparameters import (AutoencoderHyperparameters as AEParams, AutoencoderSweepConfig as AESweepConfig)
 from utils.utils import load_training_checkpoint, make_token_weights
 from utils.curriculum import make_length_curriculum_dataloader
@@ -160,8 +178,9 @@ def train(
     history_path: str | Path | None = None,
     curriculum_epochs: int = 0,
     curriculum_start_fraction: float = 0.3,
-    length_quartile: str | None = None,
-    cumulative_quartiles: bool = False,
+    length_options: str | None = None,
+    length_bin: int | None = None,
+    cumulative: bool = False,
     artifact_suffix: str | None = None,
 ) -> tuple[AE, dict]:
 
@@ -308,7 +327,8 @@ def train(
             checkpoint_stem = autoencoder_artifact_stem(
                 model_type,
                 task,
-                length_quartile,
+                length_options,
+                length_bin=length_bin,
                 is_overfit=is_overfit,
                 artifact_suffix=artifact_suffix,
             )
@@ -344,14 +364,16 @@ def autoencoder_artifact_paths(
     model_type: str,
     task: str,
     version: int,
-    length_quartile: str | None,
+    length_options: str | None,
+    length_bin: int | None,
     is_overfit: bool,
     artifact_suffix: str | None = None,
 ) -> tuple[Path, Path]:
     artifact_stem = autoencoder_artifact_stem(
         model_type,
         task,
-        length_quartile,
+        length_options,
+        length_bin=length_bin,
         is_overfit=is_overfit,
         artifact_suffix=artifact_suffix,
     )
@@ -478,15 +500,15 @@ def make_overfit_dataloaders(
 def main():
     args, hyperparams = add_and_validate_train_inputs()
     
-    if args.length_quartile is not None:
-        loader_type = "quartile"
+    if args.length_options is not None:
+        loader_type = "length_bin"
     elif args.max_length is not None:
         loader_type = "max_length"
     else:
         loader_type = None
 
     length_boundaries = None
-    if loader_type == "quartile":
+    if loader_type == "length_bin":
         full_train_dataloader = create_dataloader(
             task=args.task,
             split=TRAIN_SPLIT,
@@ -495,22 +517,28 @@ def main():
             shuffle=False,
             num_workers=num_workers,
         )
-        length_boundaries = compute_train_length_boundaries(full_train_dataloader.dataset)
+        length_boundaries = compute_train_length_boundaries(
+            full_train_dataloader.dataset,
+            num_bins=LENGTH_SPLIT_COUNTS[args.length_options],
+        )
     
     train_dataloader = create_dataloader(task=args.task, split=TRAIN_SPLIT, mode="autoencoder",
                                 batch_size=hyperparams.batch_size, shuffle=hyperparams.shuffle,
                                 num_workers=num_workers, loader_type=loader_type, max_length=args.max_length,
-                                quartile_name=args.length_quartile, cumulative=args.cumulative_quartiles,
+                                length_options=args.length_options, length_bin=args.length_bin,
+                                cumulative=args.cumulative,
                                 length_boundaries=length_boundaries)
     val_dataloader = create_dataloader(task=args.task, split=VALID_SPLIT, mode="autoencoder",
                                     batch_size=hyperparams.batch_size, shuffle=False,
                                     num_workers=num_workers, loader_type=loader_type, max_length=args.max_length,
-                                    quartile_name=args.length_quartile, cumulative=args.cumulative_quartiles,
+                                    length_options=args.length_options, length_bin=args.length_bin,
+                                    cumulative=args.cumulative,
                                     length_boundaries=length_boundaries)
     test_dataloader = create_dataloader(task=args.task, split="test", mode="autoencoder",
                                     batch_size=hyperparams.batch_size, shuffle=False,
                                     num_workers=num_workers, loader_type=loader_type, max_length=args.max_length,
-                                    quartile_name=args.length_quartile, cumulative=args.cumulative_quartiles,
+                                    length_options=args.length_options, length_bin=args.length_bin,
+                                    cumulative=args.cumulative,
                                     length_boundaries=length_boundaries)
     
     if args.overfit_batches is not None:
@@ -542,7 +570,8 @@ def main():
             args.model,
             args.task,
             args.version,
-            args.length_quartile,
+            args.length_options,
+            args.length_bin,
             is_overfit=(args.overfit_batches is not None),
             artifact_suffix=artifact_suffix,
         )
@@ -583,8 +612,9 @@ def main():
             history_path=history_path,
             curriculum_epochs=args.curriculum_epochs,
             curriculum_start_fraction=args.curriculum_start_fraction,
-            length_quartile=args.length_quartile,
-            cumulative_quartiles=args.cumulative_quartiles,
+            length_options=args.length_options,
+            length_bin=args.length_bin,
+            cumulative=args.cumulative,
             artifact_suffix=artifact_suffix,
         )
 
