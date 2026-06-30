@@ -33,9 +33,23 @@
    ```
 
 3. Set up data directory through shell script
+   - If mac:
+
    bash
 
    ```
+   bash Code/scripts/setup_peer_data.sh
+   ```
+
+   - If ubuntu:
+
+   bash
+
+   ```
+   python -m pip install --upgrade pip setuptools wheel
+   python -m pip uninstall -y lmdb
+   python -m pip install --no-cache-dir --force-reinstall lmdb
+
    bash Code/scripts/setup_peer_data.sh
    ```
 

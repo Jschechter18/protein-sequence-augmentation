@@ -6,10 +6,16 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PEER_REPO_DIR="$REPO_ROOT/external/PEER_Benchmark"
 PYTHON_BIN="${PYTHON:-python}"
 
+check_lmdb_import() {
+  "$PYTHON_BIN" -c "import lmdb" >/dev/null 2>&1
+}
+
 install_lmdb() {
   echo "[PEER] Installing lmdb"
 
-  if "$PYTHON_BIN" -m pip install --only-binary=:all: lmdb; then
+  "$PYTHON_BIN" -m pip install cffi
+
+  if "$PYTHON_BIN" -m pip install --no-cache-dir --force-reinstall --only-binary=:all: lmdb && check_lmdb_import; then
     return 0
   fi
 
@@ -19,14 +25,40 @@ install_lmdb() {
 [PEER] On Ubuntu, install the build tools and rerun this script:
 
   sudo apt-get update
-  sudo apt-get install -y build-essential python3-dev
+  sudo apt-get install -y build-essential python3-dev liblmdb-dev
 
 EOF
     return 1
   fi
 
-  echo "[PEER] No compatible prebuilt lmdb wheel found. Building from source with local compiler"
-  "$PYTHON_BIN" -m pip install lmdb
+  echo "[PEER] Binary lmdb install did not import cleanly. Building from source with local compiler"
+  if "$PYTHON_BIN" -m pip install --no-cache-dir --force-reinstall --no-binary=lmdb lmdb && check_lmdb_import; then
+    return 0
+  fi
+
+  OS_NAME="$(uname -s)"
+  if [ "$OS_NAME" = "Darwin" ]; then
+    cat <<'EOF'
+[PEER] lmdb is still not importable after reinstalling from source.
+[PEER] On macOS, install the compiler tools and LMDB headers, then rerun this script:
+
+  xcode-select --install
+  brew install lmdb
+
+EOF
+    return 1
+  fi
+
+  cat <<'EOF'
+[PEER] lmdb is still not importable after reinstalling from source.
+[PEER] On Ubuntu, this usually means the LMDB development headers are missing.
+[PEER] Install them and rerun this script:
+
+  sudo apt-get update
+  sudo apt-get install -y build-essential python3-dev liblmdb-dev
+
+EOF
+  return 1
 }
 
 echo "[PEER] Starting PEER data setup"
@@ -50,7 +82,7 @@ else
 fi
 
 echo "[PEER] Ensuring minimal Python dependency is available"
-if ! "$PYTHON_BIN" -c "import lmdb" >/dev/null 2>&1; then
+if ! check_lmdb_import; then
   install_lmdb
 else
   echo "[PEER] lmdb already available"
