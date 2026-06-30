@@ -5,18 +5,59 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PEER_REPO_DIR="$REPO_ROOT/external/PEER_Benchmark"
 PYTHON_BIN="${PYTHON:-python}"
+LMDB_PACKAGE="$("$PYTHON_BIN" - <<'PY'
+import sys
+
+if sys.version_info < (3, 9):
+    print("lmdb<1.5")
+else:
+    print("lmdb")
+PY
+)"
 
 check_lmdb_import() {
   "$PYTHON_BIN" -c "import lmdb" >/dev/null 2>&1
+}
+
+purge_lmdb_install() {
+  "$PYTHON_BIN" - <<'PY'
+import shutil
+import site
+import sys
+from pathlib import Path
+
+roots = set()
+for getter in (site.getsitepackages,):
+    try:
+        roots.update(Path(path) for path in getter())
+    except Exception:
+        pass
+
+try:
+    roots.add(Path(site.getusersitepackages()))
+except Exception:
+    pass
+
+for root in roots:
+    if not root.exists():
+        continue
+    for pattern in ("lmdb", "lmdb-*.dist-info", "lmdb-*.egg-info"):
+        for path in root.glob(pattern):
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+PY
 }
 
 install_lmdb() {
   echo "[PEER] Installing lmdb"
 
   "$PYTHON_BIN" -m pip uninstall -y lmdb >/dev/null 2>&1 || true
+  purge_lmdb_install
   "$PYTHON_BIN" -m pip install cffi
 
-  if "$PYTHON_BIN" -m pip install --no-cache-dir --force-reinstall --only-binary=:all: lmdb && check_lmdb_import; then
+  if "$PYTHON_BIN" -m pip install --no-cache-dir --force-reinstall --only-binary=:all: "$LMDB_PACKAGE" && check_lmdb_import; then
     return 0
   fi
 
@@ -33,7 +74,8 @@ EOF
   fi
 
   echo "[PEER] Binary lmdb install did not import cleanly. Building from source with local compiler"
-  if "$PYTHON_BIN" -m pip install --no-cache-dir --force-reinstall --no-binary=lmdb lmdb && check_lmdb_import; then
+  purge_lmdb_install
+  if "$PYTHON_BIN" -m pip install --no-cache-dir --force-reinstall --no-binary=lmdb "$LMDB_PACKAGE" && check_lmdb_import; then
     return 0
   fi
 
