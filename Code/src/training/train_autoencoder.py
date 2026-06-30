@@ -401,14 +401,21 @@ def validate_artifact_paths(paths: list[tuple[Path, Path]]) -> None:
         formatted_paths = "\n".join(str(path) for path in existing_paths)
         raise ValueError(f"Training artifacts already exist:\n{formatted_paths}")
 
-def test(model: AE, dataloader: DataLoader) -> None:
+def test(model: AE, dataloader: DataLoader) -> dict[str, dict[str, float]]:
     model.eval()
     loss_fn = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
-    total_loss = 0.0
-    total_tokens = 0
-    total_correct = 0
-    all_targets: list[torch.Tensor] = []
-    all_predictions: list[torch.Tensor] = []
+    metrics = {
+        "autoregressive": {
+            "total_loss": 0.0,
+            "total_tokens": 0,
+            "total_correct": 0,
+        },
+        "teacher_forced": {
+            "total_loss": 0.0,
+            "total_tokens": 0,
+            "total_correct": 0,
+        },
+    }
 
     with torch.no_grad():
         for batch in dataloader:
@@ -417,27 +424,52 @@ def test(model: AE, dataloader: DataLoader) -> None:
             targets: torch.Tensor = batch["target_ids"].to(device)
 
             targets = targets[:, 1:]
-
-            outputs: torch.Tensor = model(inputs, decoder_input_ids=inputs[:, :-1], lengths=lengths)
-            loss: torch.Tensor = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
-
-            predictions: torch.Tensor = outputs.argmax(dim=-1)
+            latent = model.encode(inputs, lengths=lengths)
             non_pad_tokens: torch.Tensor = targets != PAD_IDX
             batch_tokens = non_pad_tokens.sum().item()
 
-            total_loss += loss.item() * batch_tokens
-            total_correct += (predictions[non_pad_tokens] == targets[non_pad_tokens]).sum().item()
-            total_tokens += batch_tokens
+            outputs_by_mode = {
+                "autoregressive": model.decode_autoregressive(
+                    latent,
+                    max_length=targets.size(1),
+                ),
+                "teacher_forced": model.decode(
+                    latent,
+                    decoder_input_ids=inputs[:, :-1],
+                ),
+            }
 
-            all_targets.append(targets[non_pad_tokens].detach().cpu())
-            all_predictions.append(predictions[non_pad_tokens].detach().cpu())
+            for mode, outputs in outputs_by_mode.items():
+                loss: torch.Tensor = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
+                predictions: torch.Tensor = outputs.argmax(dim=-1)
+                metrics[mode]["total_loss"] += loss.item() * batch_tokens
+                metrics[mode]["total_correct"] += (
+                    predictions[non_pad_tokens] == targets[non_pad_tokens]
+                ).sum().item()
+                metrics[mode]["total_tokens"] += batch_tokens
 
-    avg_loss = total_loss / total_tokens if total_tokens > 0 else 0.0
-    accuracy = total_correct / total_tokens if total_tokens > 0 else 0.0
+    results = {}
+    for mode, mode_metrics in metrics.items():
+        total_tokens = mode_metrics["total_tokens"]
+        avg_loss = mode_metrics["total_loss"] / total_tokens if total_tokens > 0 else 0.0
+        accuracy = mode_metrics["total_correct"] / total_tokens if total_tokens > 0 else 0.0
+        results[mode] = {
+            "loss": avg_loss,
+            "accuracy": accuracy,
+        }
 
     print(
-        f"Test Loss: {avg_loss:.4f}, Test Accuracy: {accuracy:.4f}, "
+        "Autoregressive Test Loss: "
+        f"{results['autoregressive']['loss']:.4f}, "
+        f"Test Accuracy: {results['autoregressive']['accuracy']:.4f}"
     )
+    print(
+        "Teacher-forced Test Loss: "
+        f"{results['teacher_forced']['loss']:.4f}, "
+        f"Test Accuracy: {results['teacher_forced']['accuracy']:.4f}"
+    )
+    
+    return results
 
 def make_overfit_dataloaders(
     train_dataloader: DataLoader,
@@ -600,7 +632,7 @@ def main():
         else:
             print()
 
-        model, _ = train(
+        model, history = train(
             args.model.lower(),
             train_dataloader,
             val_dataloader,
@@ -621,7 +653,15 @@ def main():
         print(f"Saved training history to: {history_path}")
 
         if args.overfit_batches is None:
-            test(model, test_dataloader)
+            test_results = test(model, test_dataloader)
+            history["test"] = test_results
+            history["test_loss"] = test_results["autoregressive"]["loss"]
+            history["test_accuracy"] = test_results["autoregressive"]["accuracy"]
+            history["test_scores"] = {
+                "accuracy": test_results["autoregressive"]["accuracy"],
+            }
+            save_training_history(history, history_path)
+            print(f"Saved test results to training history: {history_path}")
         else:
             print("Skipping full test set evaluation in overfit debug mode.")
     

@@ -16,13 +16,14 @@
 
 1. Create and activate python virtual environemnt
    bash
+   - if using mac:
 
    ```
    python -m venv .venv
    source .venv/bin/activate
-
-
    ```
+
+   - if using ubuntu: conda env necessary to ensurre python version of 3.10 +
 
 2. Install required packages
    bash
