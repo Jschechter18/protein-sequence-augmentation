@@ -1,4 +1,14 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from itertools import product
+
+
+def autoencoder_sweep_suffix(
+    latent_dim: int,
+    teacher_forcing_dropout_rate: float,
+) -> str:
+    teacher_forcing_label = str(teacher_forcing_dropout_rate).replace(".", "p")
+    return f"latent{latent_dim}_tfd{teacher_forcing_label}"
+
 
 @dataclass
 class Hyperparameters:
@@ -22,7 +32,6 @@ class AutoencoderHyperparameters(Hyperparameters):
     grad_clip: bool = True # needed when training with 
     condition_decoder_on_latent: bool = True
     teacher_forcing_dropout_rate: float = 0.3 # makes sure we don't totally rely on teacher forcing during training
-    # teacher_forcing_dropout_rate: float = 0.0 # makes sure we don't totally rely on teacher forcing during training
 
 @dataclass
 class TransformerAutoencoderHyperparameters(Hyperparameters):
@@ -34,3 +43,33 @@ class TransformerAutoencoderHyperparameters(Hyperparameters):
     dim_feedforward: int = 1024
     dropout: float = 0.1
     num_layers: int = 2
+
+@dataclass
+class AutoencoderSweepConfig:
+    latent_dims: tuple[int, ...] = (128, 256, 512)
+    teacher_forcing_dropout_rates: tuple[float, ...] = (0.3, 0.45)
+
+    def iter_hyperparameters(
+        self,
+        base: AutoencoderHyperparameters,
+    ) -> list[tuple[AutoencoderHyperparameters, str]]:
+        runs = []
+
+        for latent_dim, teacher_forcing_dropout_rate in product(
+            self.latent_dims,
+            self.teacher_forcing_dropout_rates,
+        ):
+            hyperparams = replace(
+                base,
+                latent_dim=latent_dim,
+                teacher_forcing_dropout_rate=teacher_forcing_dropout_rate,
+            )
+
+            suffix = autoencoder_sweep_suffix(
+                latent_dim,
+                teacher_forcing_dropout_rate,
+            )
+
+            runs.append((hyperparams, suffix))
+
+        return runs

@@ -30,7 +30,7 @@ from utils.dataloader import (
     compute_train_length_boundaries,
     create_dataloader,
 )
-from utils.hyperparameters import AutoencoderHyperparameters as AEParams
+from utils.hyperparameters import AutoencoderHyperparameters as AEParams, autoencoder_sweep_suffix
 from utils.test_input_validation import add_and_validate_test_inputs
 from utils.train_input_validation import autoencoder_artifact_stem
 
@@ -75,6 +75,7 @@ def version_checkpoint_path(
     task: str,
     version: str | int | None,
     length_quartile: str | None = None,
+    artifact_suffix: str | None = None,
 ) -> Path:
     checkpoint_dir = PROJECT_ROOT / "checkpoints" / "autoencoder" / task
     version_dir = _version_dir_name(version)
@@ -82,12 +83,12 @@ def version_checkpoint_path(
     if version_dir:
         checkpoint_dir = checkpoint_dir / version_dir
 
-    checkpoint_name = f"{autoencoder_artifact_stem(model_type, task, length_quartile)}.pt"
+    checkpoint_name = f"{autoencoder_artifact_stem(model_type, task, length_quartile, artifact_suffix=artifact_suffix)}.pt"
     checkpoint_path = checkpoint_dir / checkpoint_name
     if checkpoint_path.is_file() or length_quartile is None:
         return checkpoint_path
 
-    fallback_name = f"{autoencoder_artifact_stem(model_type, task)}.pt"
+    fallback_name = f"{autoencoder_artifact_stem(model_type, task, artifact_suffix=artifact_suffix)}.pt"
     fallback_path = checkpoint_dir / fallback_name
     if fallback_path.is_file():
         print(
@@ -97,6 +98,15 @@ def version_checkpoint_path(
         return fallback_path
 
     return checkpoint_path
+
+
+def default_checkpoint_path(
+    model_type: str,
+    task: str,
+    version: str | int | None,
+    length_quartile: str | None = None,
+) -> Path:
+    return version_checkpoint_path(model_type, task, version, length_quartile)
 
 
 def checkpoint_state_dict(checkpoint: object) -> dict[str, torch.Tensor]:
@@ -292,11 +302,18 @@ def main():
     #     args.version,
     #     args.length_quartile,
     # )
+    artifact_suffix = None
+    if args.latent_dim is not None:
+        artifact_suffix = autoencoder_sweep_suffix(
+            args.latent_dim,
+            args.teacher_forcing_dropout_rate,
+        )
     checkpoint_path = version_checkpoint_path(
         model_type,
         args.task,
         args.version,
         args.length_quartile,
+        artifact_suffix=artifact_suffix,
     )
     print(f"Loading checkpoint: {checkpoint_path}")
 

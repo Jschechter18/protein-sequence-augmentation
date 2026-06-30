@@ -66,6 +66,18 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
         default=None,
         help='If set, only sequences with length <= max_length will be used for training and validation. Ignored if --length_quartile is set.',
     )
+    args.add_argument(
+        '--latent_dim',
+        type=int,
+        default=None,
+        help='Latent dimension suffix for selecting a swept autoencoder checkpoint.',
+    )
+    args.add_argument(
+        '--teacher_forcing_dropout_rate',
+        type=float,
+        default=None,
+        help='Teacher forcing dropout suffix for selecting a swept autoencoder checkpoint.',
+    )
 
     return args.parse_args()
 
@@ -75,5 +87,12 @@ def add_and_validate_test_inputs():
     
     if args.model.upper() != "AE":
         raise ValueError("Only --model AE is currently supported")
+
+    has_latent_dim = args.latent_dim is not None
+    has_teacher_forcing_dropout = args.teacher_forcing_dropout_rate is not None
+    if has_latent_dim != has_teacher_forcing_dropout:
+        raise ValueError(
+            "--latent_dim and --teacher_forcing_dropout_rate must be provided together."
+        )
     
     return args

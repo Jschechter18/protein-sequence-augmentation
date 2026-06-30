@@ -37,10 +37,13 @@ if str(SRC_DIR) not in sys.path:
 
 from models.autoencoder import ProteinSequenceAutoencoder as AE
 from utils.dataloader import BOS_IDX, PAD_IDX, create_dataloader, compute_train_length_boundaries
-from utils.hyperparameters import (AutoencoderHyperparameters as AEParams)
+from utils.hyperparameters import (AutoencoderHyperparameters as AEParams, AutoencoderSweepConfig as AESweepConfig)
 from utils.utils import load_training_checkpoint, make_token_weights
 from utils.curriculum import make_length_curriculum_dataloader
-from utils.train_input_validation import add_and_validate_train_inputs, autoencoder_artifact_stem
+from utils.train_input_validation import (
+    add_and_validate_train_inputs,
+    autoencoder_artifact_stem,
+)
 
 
 # ----------------------------------------------------------------------------------------------------------------
@@ -61,15 +64,22 @@ print()
 num_workers = 4 if torch.cuda.is_available() else 0
 # ----------------------------------------------------------------------------------------------------------------
 SEED = 42
-random.seed(SEED)
-np.random.seed(SEED)
-torch.manual_seed(SEED)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed_all(SEED)
+
+
+def set_random_seed(seed: int = SEED) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+set_random_seed()
 # ----------------------------------------------------------------------------------------------------------------
 
 TRAIN_SPLIT = "train"
 VALID_SPLIT = "valid"
+
 
 def model_definition(model_type: str, hyperparams: AEParams) -> tuple[AE, torch.optim.Adam, ReduceLROnPlateau]:
     if model_type == "ae":
@@ -152,6 +162,7 @@ def train(
     curriculum_start_fraction: float = 0.3,
     length_quartile: str | None = None,
     cumulative_quartiles: bool = False,
+    artifact_suffix: str | None = None,
 ) -> tuple[AE, dict]:
 
     model, optimizer, scheduler = model_definition(model_type, hyperparams)
@@ -179,6 +190,7 @@ def train(
             "epochs": curriculum_epochs,
             "start_fraction": curriculum_start_fraction,
         },
+        "artifact_suffix": artifact_suffix,
         "epochs": [],
         "train_loss": [],
         "train_scores": {
@@ -298,6 +310,7 @@ def train(
                 task,
                 length_quartile,
                 is_overfit=is_overfit,
+                artifact_suffix=artifact_suffix,
             )
             checkpoint_path = checkpoint_dir / f"{checkpoint_stem}.pt"
             torch.save({
@@ -325,6 +338,46 @@ def train(
         model.load_state_dict(best_state_dict)
         
     return model, history
+
+
+def autoencoder_artifact_paths(
+    model_type: str,
+    task: str,
+    version: int,
+    length_quartile: str | None,
+    is_overfit: bool,
+    artifact_suffix: str | None = None,
+) -> tuple[Path, Path]:
+    artifact_stem = autoencoder_artifact_stem(
+        model_type,
+        task,
+        length_quartile,
+        is_overfit=is_overfit,
+        artifact_suffix=artifact_suffix,
+    )
+    project_root = Path(__file__).resolve().parents[3]
+    checkpoint_path = (
+        project_root
+        / "checkpoints"
+        / "autoencoder"
+        / task
+        / f"v{version}"
+        / f"{artifact_stem}.pt"
+    )
+    history_path = project_root / "history" / f"v{version}_{artifact_stem}_history.json"
+    return checkpoint_path, history_path
+
+
+def validate_artifact_paths(paths: list[tuple[Path, Path]]) -> None:
+    existing_paths = [
+        path
+        for checkpoint_path, history_path in paths
+        for path in (checkpoint_path, history_path)
+        if path.exists()
+    ]
+    if existing_paths:
+        formatted_paths = "\n".join(str(path) for path in existing_paths)
+        raise ValueError(f"Training artifacts already exist:\n{formatted_paths}")
 
 def test(model: AE, dataloader: DataLoader) -> None:
     model.eval()
@@ -479,38 +532,68 @@ def main():
             f"and reaching the full training set over {args.curriculum_epochs} epoch(s)."
         )
     
-    history_dir = Path(__file__).resolve().parents[3] / "history"
-    history_stem = autoencoder_artifact_stem(
-        args.model,
-        args.task,
-        args.length_quartile,
-        is_overfit=(args.overfit_batches is not None),
-    )
-    history_path = history_dir / f"v{args.version}_{history_stem}_history.json"
-
-    print()
-    model, _ = train(
-        args.model.lower(),
-        train_dataloader,
-        val_dataloader,
-        hyperparams,
-        version=args.version,
-        is_overfit=(args.overfit_batches is not None),
-        task=args.task,
-        load_path=args.load_path,
-        history_path=history_path,
-        curriculum_epochs=args.curriculum_epochs,
-        curriculum_start_fraction=args.curriculum_start_fraction,
-        length_quartile=args.length_quartile,
-        cumulative_quartiles=args.cumulative_quartiles,
-    )
-
-    print(f"Saved training history to: {history_path}")
-
-    if args.overfit_batches is None:
-        test(model, test_dataloader)
+    if args.sweep:
+        training_runs = AESweepConfig().iter_hyperparameters(hyperparams)
     else:
-        print("Skipping full test set evaluation in overfit debug mode.")
+        training_runs = [(hyperparams, None)]
+
+    artifact_paths = [
+        autoencoder_artifact_paths(
+            args.model,
+            args.task,
+            args.version,
+            args.length_quartile,
+            is_overfit=(args.overfit_batches is not None),
+            artifact_suffix=artifact_suffix,
+        )
+        for _, artifact_suffix in training_runs
+    ]
+    validate_artifact_paths(artifact_paths)
+    
+    if args.sweep:
+        print(f"Starting hyperparameter sweep with {len(training_runs)} runs.")
+        print(training_runs)
+
+    # Run training for each hyperparameter configuration (one loop for no sweep, multiple loops for sweep)
+    for run_index, ((run_hyperparams, artifact_suffix), (_, history_path)) in enumerate(
+        zip(training_runs, artifact_paths),
+        start=1,
+    ):
+        if args.sweep:
+            set_random_seed()
+
+        if args.sweep:
+            print(
+                f"\nStarting sweep run {run_index}/{len(training_runs)}: "
+                f"latent_dim={run_hyperparams.latent_dim}, "
+                f"teacher_forcing_dropout_rate={run_hyperparams.teacher_forcing_dropout_rate}"
+            )
+        else:
+            print()
+
+        model, _ = train(
+            args.model.lower(),
+            train_dataloader,
+            val_dataloader,
+            run_hyperparams,
+            version=args.version,
+            is_overfit=(args.overfit_batches is not None),
+            task=args.task,
+            load_path=args.load_path,
+            history_path=history_path,
+            curriculum_epochs=args.curriculum_epochs,
+            curriculum_start_fraction=args.curriculum_start_fraction,
+            length_quartile=args.length_quartile,
+            cumulative_quartiles=args.cumulative_quartiles,
+            artifact_suffix=artifact_suffix,
+        )
+
+        print(f"Saved training history to: {history_path}")
+
+        if args.overfit_batches is None:
+            test(model, test_dataloader)
+        else:
+            print("Skipping full test set evaluation in overfit debug mode.")
     
 
 

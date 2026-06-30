@@ -2,7 +2,7 @@ import argparse
 import warnings
 from pathlib import Path
 from typing import Optional
-from utils.hyperparameters import (AutoencoderHyperparameters as AEParams)
+from utils.hyperparameters import AutoencoderHyperparameters as AEParams
 
 LENGTH_QUARTILE_FILE_LABELS = {
     "s": "short",
@@ -28,6 +28,7 @@ def autoencoder_artifact_stem(
     task: str,
     length_quartile: Optional[str] = None,
     is_overfit: bool = False,
+    artifact_suffix: str | None = None,
 ) -> str:
     parts = ["model", model.lower()]
     if length_quartile is not None:
@@ -35,6 +36,8 @@ def autoencoder_artifact_stem(
     parts.append(task)
     if is_overfit:
         parts.append("overfit")
+    if artifact_suffix:
+        parts.append(artifact_suffix)
     return "_".join(parts)
 
 
@@ -99,8 +102,22 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
         default=None,
         help='If set, only sequences with length <= max_length will be used for training and validation. Ignored if --length_quartile is set.',
     )
+    # args.add_argument(
+    #     '--tuning',
+    #     type=bool,
+    #     default=False,
+    # )
+    args.add_argument(
+        '--sweep',
+        type=_str_to_bool,
+        nargs='?',
+        const=True,
+        default=False,
+        help='Run the autoencoder latent_dim/teacher_forcing_dropout_rate sweep.',
+    )
     
     return args.parse_args()
+
 
 def add_and_validate_train_inputs():
     args = _add_args(argparse.ArgumentParser())
@@ -113,28 +130,32 @@ def add_and_validate_train_inputs():
     else:
         raise ValueError("Only --model AE is currently supported")
     
-    # Make sure this checkpoint filename is unique to avoid overwriting previous runs.
-    model_dir = "autoencoder" if args.model.upper() == "AE" else args.model.lower()
-    version_dir = Path("checkpoints") / model_dir / args.task / f"v{args.version}"
-    artifact_stem = autoencoder_artifact_stem(
-        args.model,
-        args.task,
-        args.length_quartile,
-        is_overfit=(args.overfit_batches is not None),
-    )
-    checkpoint_path = version_dir / f"{artifact_stem}.pt"
+    if args.sweep and args.load_path is not None:
+        raise ValueError("--load_path is not supported with --sweep because swept latent dimensions may not match the checkpoint.")
 
-    if checkpoint_path.exists():
-        raise ValueError(
-            f"Checkpoint already exists for this run: {checkpoint_path}"
-            )
-        
-    history_path = Path("history") / f"v{args.version}_{artifact_stem}_history.json"
+    if not args.sweep:
+        # Make sure this checkpoint filename is unique to avoid overwriting previous runs.
+        model_dir = "autoencoder" if args.model.upper() == "AE" else args.model.lower()
+        version_dir = Path("checkpoints") / model_dir / args.task / f"v{args.version}"
+        artifact_stem = autoencoder_artifact_stem(
+            args.model,
+            args.task,
+            args.length_quartile,
+            is_overfit=(args.overfit_batches is not None),
+        )
+        checkpoint_path = version_dir / f"{artifact_stem}.pt"
 
-    if history_path.exists():
-        raise ValueError(
-            f"Training history already exists for this run: {history_path}"
-            )
+        if checkpoint_path.exists():
+            raise ValueError(
+                f"Checkpoint already exists for this run: {checkpoint_path}"
+                )
+
+        history_path = Path("history") / f"v{args.version}_{artifact_stem}_history.json"
+
+        if history_path.exists():
+            raise ValueError(
+                f"Training history already exists for this run: {history_path}"
+                )
 
     if args.curriculum_epochs < 0:
         raise ValueError("--curriculum_epochs must be non-negative")
