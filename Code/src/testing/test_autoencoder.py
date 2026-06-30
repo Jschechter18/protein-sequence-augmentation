@@ -3,6 +3,8 @@ Test script for evaluating a trained autoencoder checkpoint.
 
 Usage:
     python Code/src/testing/test_autoencoder.py --model AE --task solubility --checkpoint checkpoints/autoencoder/solubility/<version>/model_ae_solubility.pt  --teacher_forcing True
+    
+    python Code/src/testing/test_autoencoder.py --model AE --task solubility --version 6 --length_quartile ml --cumulative_quartiles True
 """
 
 import argparse
@@ -20,8 +22,17 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from models.autoencoder import ProteinSequenceAutoencoder as AE
-from utils.dataloader import BOS_IDX, EOS_IDX, PAD_IDX, VOCAB, create_dataloader
+from utils.dataloader import (
+    BOS_IDX,
+    EOS_IDX,
+    PAD_IDX,
+    VOCAB,
+    compute_train_length_boundaries,
+    create_dataloader,
+)
 from utils.hyperparameters import AutoencoderHyperparameters as AEParams
+from utils.test_input_validation import add_and_validate_test_inputs
+from utils.train_input_validation import autoencoder_artifact_stem
 
 IDX_TO_TOKEN = {idx: token for token, idx in VOCAB.items()}
 
@@ -52,15 +63,40 @@ def str_to_bool(value: str | bool) -> bool:
     raise argparse.ArgumentTypeError("Expected a boolean value.")
 
 
-def default_checkpoint_path(model_type: str, task: str, version: str | None) -> Path:
-    model_slug = model_type.lower()
-    checkpoint_name = f"model_{model_slug}_{task}.pt"
-    checkpoint_dir = PROJECT_ROOT / "checkpoints"
+def _version_dir_name(version: str | int | None) -> str | None:
+    if version is None:
+        return None
+    version_name = str(version)
+    return version_name if version_name.startswith("v") else f"v{version_name}"
 
-    if version:
-        return checkpoint_dir / version / checkpoint_name
 
-    return checkpoint_dir / checkpoint_name
+def version_checkpoint_path(
+    model_type: str,
+    task: str,
+    version: str | int | None,
+    length_quartile: str | None = None,
+) -> Path:
+    checkpoint_dir = PROJECT_ROOT / "checkpoints" / "autoencoder" / task
+    version_dir = _version_dir_name(version)
+
+    if version_dir:
+        checkpoint_dir = checkpoint_dir / version_dir
+
+    checkpoint_name = f"{autoencoder_artifact_stem(model_type, task, length_quartile)}.pt"
+    checkpoint_path = checkpoint_dir / checkpoint_name
+    if checkpoint_path.is_file() or length_quartile is None:
+        return checkpoint_path
+
+    fallback_name = f"{autoencoder_artifact_stem(model_type, task)}.pt"
+    fallback_path = checkpoint_dir / fallback_name
+    if fallback_path.is_file():
+        print(
+            f"Quartile-specific checkpoint not found: {checkpoint_path}\n"
+            f"Falling back to base checkpoint: {fallback_path}"
+        )
+        return fallback_path
+
+    return checkpoint_path
 
 
 def checkpoint_state_dict(checkpoint: object) -> dict[str, torch.Tensor]:
@@ -198,14 +234,12 @@ def test(
 
             decoder_inputs = inputs[:, :-1] if teacher_forcing else None
             targets = targets[:, 1:]
+            
+            outputs: torch.Tensor = model(inputs, decoder_input_ids=decoder_inputs, lengths=lengths) if teacher_forcing else model.decode_autoregressive(
+                model.encode(inputs, lengths=lengths),
+                max_length=targets.size(1),
+            )
 
-            if teacher_forcing:
-                outputs: torch.Tensor = model(inputs, decoder_input_ids=decoder_inputs, lengths=lengths)
-            else:
-                outputs = model.decode_autoregressive(
-                    model.encode(inputs, lengths=lengths),
-                    max_length=targets.size(1),
-                )
             loss: torch.Tensor = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
 
             predictions: torch.Tensor = outputs.argmax(dim=-1)
@@ -243,44 +277,48 @@ def test(
     avg_loss = total_loss / total_tokens if total_tokens > 0 else 0.0
     accuracy = total_correct / total_tokens if total_tokens > 0 else 0.0
 
-    print(
-        f"Test Loss: {avg_loss:.4f}, Test Accuracy: {accuracy:.4f}, "
-    )
+    print(f"Test Loss: {avg_loss:.4f}, Test Accuracy: {accuracy:.4f}, ")
     print(f"Saved decoder outputs to: {output_path}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Test an autoencoder checkpoint on protein sequences.")
-    parser.add_argument("--model", type=str, default="AE", choices=["AE", "ae"], help="Model to test.")
-    parser.add_argument("--task", type=str, default="solubility", choices=["localization", "solubility"], help="Task to test.")
-    parser.add_argument(
-        "--checkpoint",
-        type=str,
-        default=None,
-        help="Path to the checkpoint to test. Defaults to checkpoints/<version>/model_<model>_<task>.pt when --version is set.",
-    )
-    parser.add_argument("--version", type=str, default="v1", help="Checkpoint version directory to test.")
-    parser.add_argument(
-        "--teacher_forcing",
-        type=str_to_bool,
-        default=True,
-        help="Use teacher forcing during reconstruction evaluation.",
-    )
-    parser.add_argument(
-        "--output_path",
-        type=str,
-        default=str(PROJECT_ROOT / "outputs" / "output_results.csv"),
-        help="CSV path for decoder prediction results.",
-    )
-
-    args = parser.parse_args()
+    args = add_and_validate_test_inputs()
 
     model_type = args.model.lower()
     hyperparams = AEParams()
-    checkpoint_path = args.checkpoint or default_checkpoint_path(model_type, args.task, args.version)
+    # checkpoint_path = args.checkpoint or default_checkpoint_path(
+    #     model_type,
+    #     args.task,
+    #     args.version,
+    #     args.length_quartile,
+    # )
+    checkpoint_path = version_checkpoint_path(
+        model_type,
+        args.task,
+        args.version,
+        args.length_quartile,
+    )
     print(f"Loading checkpoint: {checkpoint_path}")
 
     model = model_definition(model_type, hyperparams, checkpoint_path=checkpoint_path)
+
+    if args.length_quartile is not None:
+        loader_type = "quartile"
+    elif args.max_length is not None:
+        loader_type = "max_length"
+    else:
+        loader_type = None
+
+    length_boundaries = None
+    if loader_type == "quartile":
+        train_dataloader = create_dataloader(
+            task=args.task,
+            split="train",
+            mode="autoencoder",
+            batch_size=hyperparams.batch_size,
+            shuffle=False,
+        )
+        length_boundaries = compute_train_length_boundaries(train_dataloader.dataset)
     
     test(
         model=model,
@@ -290,6 +328,11 @@ def main():
             mode="autoencoder",
             batch_size=hyperparams.batch_size,
             shuffle=False,
+            loader_type=loader_type,
+            max_length=args.max_length,
+            quartile_name=args.length_quartile,
+            cumulative=args.cumulative_quartiles,
+            length_boundaries=length_boundaries,
         ),
         output_path=args.output_path,
         teacher_forcing=args.teacher_forcing,

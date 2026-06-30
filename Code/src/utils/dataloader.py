@@ -4,7 +4,8 @@ Supports multiple tasks (e.g., localization, solubility), encoding modes (char, 
 """
 from pathlib import Path
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
+import numpy as np
 from .sequence_dataset import SequenceDataset
 
 
@@ -94,6 +95,75 @@ def collate_sequence_batch(batch: list[dict]) -> dict:
     return collated
 
 
+# ---------------------------------------------------------------------------
+# Sequence length quartile curriculum utilities
+# ---------------------------------------------------------------------------
+
+
+QUARTILES = ["s", "ms", "ml", "l"]
+
+def get_length(dataset, idx):
+    # Your SequenceDataset stores preprocessed examples with "_length"
+    if hasattr(dataset, "examples"):
+        return int(dataset.examples[idx]["_length"])
+
+    item = dataset[idx]
+    length = item["length"]
+    return int(length.item() if hasattr(length, "item") else length)
+
+
+def compute_train_length_boundaries(train_dataset):
+    lengths = np.array([get_length(train_dataset, i) for i in range(len(train_dataset))])
+    return np.quantile(lengths, [0.0, 0.25, 0.50, 0.75, 1.0])
+
+
+def quartile_indices(dataset, boundaries, quartile_name, cumulative=False):
+    q = QUARTILES.index(quartile_name)
+    lower = boundaries[q]
+    upper = boundaries[q + 1]
+
+    indices = []
+    for i in range(len(dataset)):
+        length = get_length(dataset, i)
+        if cumulative:
+            keep = length <= upper
+        elif q == 0:
+            keep = lower <= length <= upper
+        else:
+            keep = lower < length <= upper
+
+        if keep:
+            indices.append(i)
+
+    return indices
+
+
+def make_quartile_loader(base_loader, boundaries, quartile_name, shuffle, cumulative=False):
+    indices = quartile_indices(base_loader.dataset, boundaries, quartile_name, cumulative)
+    subset = Subset(base_loader.dataset, indices)
+
+    return DataLoader(
+        subset,
+        batch_size=base_loader.batch_size,
+        shuffle=shuffle,
+        num_workers=base_loader.num_workers,
+        pin_memory=base_loader.pin_memory,
+        collate_fn=base_loader.collate_fn,
+    )
+    
+def make_max_length_loader(base_loader, max_length, shuffle):
+    indices = [i for i in range(len(base_loader.dataset)) if get_length(base_loader.dataset, i) <= max_length]
+    subset = Subset(base_loader.dataset, indices)
+
+    return DataLoader(
+        subset,
+        batch_size=base_loader.batch_size,
+        shuffle=shuffle,
+        num_workers=base_loader.num_workers,
+        pin_memory=base_loader.pin_memory,
+        collate_fn=base_loader.collate_fn,
+    )
+
 def create_dataloader(
     task: str = "solubility",
     split: str = "train",
@@ -108,6 +178,11 @@ def create_dataloader(
     shuffle: bool = False,
     num_workers: int = 0,
     pin_memory: bool = False,
+    loader_type: str | None = None,
+    max_length: int | None = None,
+    quartile_name: str | None = None,
+    cumulative: bool = False,
+    length_boundaries: np.ndarray | None = None,
 ) -> DataLoader[SequenceDataset]:
     """Create a DataLoader for a protein sequence dataset.
 
@@ -139,6 +214,20 @@ def create_dataloader(
         Number of DataLoader worker processes.
     pin_memory:
         Whether to pin memory (allows for faster data transfers btw CPU and GPU).
+    loader_type:
+        Optional sequence-length filter type. Supports ``"max_length"`` and
+        ``"quartile"``. ``None`` returns the full dataset.
+    max_length:
+        Maximum sequence length to keep when ``loader_type="max_length"``.
+    quartile_name:
+        Length quartile to keep when ``loader_type="quartile"``. One of
+        ``"s"``, ``"ms"``, ``"ml"``, or ``"l"``.
+    cumulative:
+        If true, quartile filtering keeps the selected quartile and all shorter
+        quartiles.
+    length_boundaries:
+        Optional precomputed length boundaries to use for quartile filtering.
+        Pass train-set boundaries when filtering validation or test splits.
 
     Returns
     -------
@@ -179,8 +268,8 @@ def create_dataloader(
         seq_col=seq_col,
         label_col=label_col,
     )
-    
-    return DataLoader(
+
+    dataloader = DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
@@ -188,3 +277,23 @@ def create_dataloader(
         pin_memory=pin_memory,
         collate_fn=collate_sequence_batch, # The custom collate function keeps raw strings as lists and pads variable-length token tensors.
     )
+    
+    
+
+    if loader_type == "max_length":
+        if max_length is None:
+            raise ValueError("max_length must be specified when loader_type is 'max_length'")
+        dataloader = make_max_length_loader(dataloader, max_length, shuffle)
+    elif loader_type == "quartile":
+        if quartile_name is None:
+            raise ValueError("quartile_name must be specified when loader_type is 'quartile'")
+        if quartile_name not in QUARTILES:
+            raise ValueError(f"quartile_name must be one of {QUARTILES}")
+        boundaries = length_boundaries
+        if boundaries is None:
+            boundaries = compute_train_length_boundaries(dataset)
+        dataloader = make_quartile_loader(dataloader, boundaries, quartile_name, shuffle, cumulative=cumulative)
+    elif loader_type is not None:
+        raise ValueError("loader_type must be one of None, 'max_length', or 'quartile'")
+    
+    return dataloader

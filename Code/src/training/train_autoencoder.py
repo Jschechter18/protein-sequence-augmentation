@@ -6,12 +6,15 @@ To run script:
 python Code/src/training/train_autoencoder.py --model AE --task localization
 python Code/src/training/train_autoencoder.py --model AE --task solubility
 
+python Code/src/training/train_autoencoder.py --model AE --task solubility --curriculum_epochs 5 --curriculum_start_fraction 0.2 --version <version>
 
+# Length quartile training:
+python Code/src/training/train_autoencoder.py --model AE --task solubility --version <version> --length_quartile l
 
-python Code/src/training/train_autoencoder.py --model AE --task solubility --curriculum_epochs 5 --curriculum_start_fraction 0.2
+# Cummulative length quartile training:
+python Code/src/training/train_autoencoder.py --model AE --task solubility --version <version> --length_quartile ml --cumulative_quartiles True
 
 """
-import argparse
 import json
 import copy
 import random
@@ -33,12 +36,12 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from models.autoencoder import ProteinSequenceAutoencoder as AE
-from utils.dataloader import BOS_IDX, PAD_IDX, create_dataloader
-from utils.hyperparameters import (AutoencoderHyperparameters as AEParams, TransformerAutoencoderHyperparameters as TAEParams)
+from utils.dataloader import BOS_IDX, PAD_IDX, create_dataloader, compute_train_length_boundaries
+from utils.hyperparameters import (AutoencoderHyperparameters as AEParams)
 from utils.utils import load_training_checkpoint, make_token_weights
 from utils.curriculum import make_length_curriculum_dataloader
+from utils.train_input_validation import add_and_validate_train_inputs, autoencoder_artifact_stem
 
-import warnings
 
 # ----------------------------------------------------------------------------------------------------------------
 
@@ -108,10 +111,6 @@ def validate(model: AE, dataloader: DataLoader, loss_fn: nn.CrossEntropyLoss) ->
             targets = targets[:, 1:]
             
             outputs = model(inputs, decoder_input_ids=inputs[:, :-1], lengths=lengths)
-            # outputs = model.decode_autoregressive(
-            #     model.encode(inputs, lengths=lengths),
-            #     max_length=targets.size(1),
-            # )
             loss = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
             
             predictions = outputs.argmax(dim=-1)
@@ -151,6 +150,8 @@ def train(
     history_path: str | Path | None = None,
     curriculum_epochs: int = 0,
     curriculum_start_fraction: float = 0.3,
+    length_quartile: str | None = None,
+    cumulative_quartiles: bool = False,
 ) -> tuple[AE, dict]:
 
     model, optimizer, scheduler = model_definition(model_type, hyperparams)
@@ -236,7 +237,7 @@ def train(
             loss: torch.Tensor = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
             loss.backward()
             if hyperparams.grad_clip:
-                clip_grad_norm_(model.parameters(), max_norm=1.0) # Testing out gradient clipping to see if it helps with training stability
+                clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             
             predictions = outputs.argmax(dim=-1)
@@ -275,7 +276,6 @@ def train(
         history["train_scores"]["accuracy"].append(accuracy)
         history["train_scores"]["f1"].append(f1)
         
-
         val_metrics = validate(model, val_dataloader, loss_fn)
         val_loss = val_metrics["loss"]
         scheduler.step(val_loss)
@@ -293,10 +293,13 @@ def train(
             epochs_without_improvement = 0
             checkpoint_dir = Path(__file__).resolve().parents[3] / f"checkpoints/autoencoder/{task}/v{version}"
             checkpoint_dir.mkdir(parents=True, exist_ok=True)
-            if is_overfit:
-                checkpoint_path = checkpoint_dir / f"model_{model_type.lower()}_{task}_overfit.pt"
-            else:
-                checkpoint_path = checkpoint_dir / f"model_{model_type.lower()}_{task}.pt"
+            checkpoint_stem = autoencoder_artifact_stem(
+                model_type,
+                task,
+                length_quartile,
+                is_overfit=is_overfit,
+            )
+            checkpoint_path = checkpoint_dir / f"{checkpoint_stem}.pt"
             torch.save({
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
@@ -340,11 +343,6 @@ def test(model: AE, dataloader: DataLoader) -> None:
 
             targets = targets[:, 1:]
 
-            # No teacher forcing: decode autoregressively for exactly the shifted target length.
-            # outputs: torch.Tensor = model.decode_autoregressive(
-            #     model.encode(inputs, lengths=lengths),
-            #     max_length=targets.size(1),
-            # )
             outputs: torch.Tensor = model(inputs, decoder_input_ids=inputs[:, :-1], lengths=lengths)
             loss: torch.Tensor = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
 
@@ -391,6 +389,7 @@ def make_overfit_dataloaders(
     ValueError
         _description_
     """
+    # Input validation for the overfit test
     if num_batches <= 0:
         raise ValueError("--overfit_batches must be a positive integer")
 
@@ -424,110 +423,42 @@ def make_overfit_dataloaders(
     return train_subset_loader, val_subset_loader
 
 def main():
-    args = argparse.ArgumentParser(description='Train an autoencoder on protein sequences.')
-    args.add_argument('--model', type=str, default='AE', help='Model to train (default: AE)')
-    args.add_argument('--task', type=str, default='localization', help='Task to perform (default: localization)')
-    args.add_argument('--load_path', type=str, nargs='?', default=None, help='Path to load the best existing model checkpoint (optional)')
-    args.add_argument('--version', type=int, default=0, help='Version identifier for this training run (used for checkpoint and history naming)') # should always be unique
-    args.add_argument(
-        '--overfit_batches',
-        type=int,
-        default=None,
-        help='Debug mode: train and validate on this many batches from the training set.',
-    )
-    args.add_argument(
-        '--overfit_epochs',
-        type=int,
-        default=None,
-        help='Override num_epochs for an overfit/debug run.',
-    )
-    args.add_argument(
-        '--overfit_learning_rate',
-        type=float,
-        default=None,
-        help='Debug mode: override learning rate for overfit runs.',
-    )
-    args.add_argument(
-        '--overfit_batch_size',
-        type=int,
-        default=None,
-        help='Debug mode: override batch size before selecting overfit batches.',
-    )
-    args.add_argument(
-        '--curriculum_epochs',
-        type=int,
-        default=0, # for length curriculum start with 5
-        help='Use length curriculum for this many initial epochs. 0 disables curriculum.',
-    )
-    args.add_argument(
-        '--curriculum_start_fraction',
-        type=float,
-        default=0.2,
-        help='Fraction of shortest training examples to use in the first curriculum epoch.',
-    )
+    args, hyperparams = add_and_validate_train_inputs()
     
-    args = args.parse_args()
-    
-    if args.task != "localization" and args.task != "solubility":
-        raise ValueError("Task only accepts 'localization' or 'solubility'")
-    
-    if args.model.upper() == "AE":
-        hyperparams = AEParams()
+    if args.length_quartile is not None:
+        loader_type = "quartile"
+    elif args.max_length is not None:
+        loader_type = "max_length"
     else:
-        raise ValueError("Only --model AE is currently supported")
+        loader_type = None
+
+    length_boundaries = None
+    if loader_type == "quartile":
+        full_train_dataloader = create_dataloader(
+            task=args.task,
+            split=TRAIN_SPLIT,
+            mode="autoencoder",
+            batch_size=hyperparams.batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+        )
+        length_boundaries = compute_train_length_boundaries(full_train_dataloader.dataset)
     
-    # Make sure the version is unique for the task to avoid overwriting previous checkpoints and history
-    model_dir = "autoencoder" if args.model.upper() == "AE" else args.model.lower()
-    version_dir = Path("checkpoints") / model_dir / args.task / f"v{args.version}"
-
-    if version_dir.exists():
-        raise ValueError(
-            f"Version v{args.version} has already been run for {args.task}: "
-            f"{version_dir}"
-            )
-        
-    history_dir = Path("Code/results") / model_dir / args.task / f"v{args.version}"
-
-    # if version_dir.exists() or history_dir.exists():
-    if history_dir.exists():
-        raise ValueError(
-            f"Version v{args.version} has already been run for {args.task}. "
-            f"Found existing output at {version_dir if version_dir.exists() else history_dir}"
-            )
-
-    if args.curriculum_epochs < 0:
-        raise ValueError("--curriculum_epochs must be non-negative")
-    if not 0.0 < args.curriculum_start_fraction <= 1.0:
-        raise ValueError("--curriculum_start_fraction must be in the range (0, 1]")
-    if args.curriculum_start_fraction is not None and args.curriculum_epochs == 0:
-        warnings.warn("--curriculum_fraction has no effect when --curriculum_epochs is 0")
-
-    if args.overfit_batches is not None:
-        hyperparams.dropout = 0.0
-        if args.overfit_learning_rate is not None:
-            if args.overfit_learning_rate <= 0:
-                raise ValueError("--overfit_learning_rate must be positive")
-            hyperparams.learning_rate = args.overfit_learning_rate
-        if args.overfit_batch_size is not None:
-            if args.overfit_batch_size <= 0:
-                raise ValueError("--overfit_batch_size must be a positive integer")
-            hyperparams.batch_size = args.overfit_batch_size
-
-    if args.overfit_epochs is not None:
-        if args.overfit_epochs <= 0:
-            raise ValueError("--overfit_epochs must be a positive integer")
-        hyperparams.num_epochs = args.overfit_epochs
-    
-
     train_dataloader = create_dataloader(task=args.task, split=TRAIN_SPLIT, mode="autoencoder",
-                                   batch_size=hyperparams.batch_size, shuffle=hyperparams.shuffle,
-                                   num_workers=num_workers)
+                                batch_size=hyperparams.batch_size, shuffle=hyperparams.shuffle,
+                                num_workers=num_workers, loader_type=loader_type, max_length=args.max_length,
+                                quartile_name=args.length_quartile, cumulative=args.cumulative_quartiles,
+                                length_boundaries=length_boundaries)
     val_dataloader = create_dataloader(task=args.task, split=VALID_SPLIT, mode="autoencoder",
-                                       batch_size=hyperparams.batch_size, shuffle=False,
-                                       num_workers=num_workers)
+                                    batch_size=hyperparams.batch_size, shuffle=False,
+                                    num_workers=num_workers, loader_type=loader_type, max_length=args.max_length,
+                                    quartile_name=args.length_quartile, cumulative=args.cumulative_quartiles,
+                                    length_boundaries=length_boundaries)
     test_dataloader = create_dataloader(task=args.task, split="test", mode="autoencoder",
-                                       batch_size=hyperparams.batch_size, shuffle=False,
-                                       num_workers=num_workers)
+                                    batch_size=hyperparams.batch_size, shuffle=False,
+                                    num_workers=num_workers, loader_type=loader_type, max_length=args.max_length,
+                                    quartile_name=args.length_quartile, cumulative=args.cumulative_quartiles,
+                                    length_boundaries=length_boundaries)
     
     if args.overfit_batches is not None:
         train_dataloader, val_dataloader = make_overfit_dataloaders(
@@ -549,13 +480,16 @@ def main():
         )
     
     history_dir = Path(__file__).resolve().parents[3] / "history"
-    if args.overfit_batches is not None:
-        history_path = history_dir / f"{args.task}_{args.model.lower()}_overfit_{args.overfit_batches}_history.json"
-    else:
-        history_path = history_dir / f"{args.task}_{args.model.lower()}_history.json"
+    history_stem = autoencoder_artifact_stem(
+        args.model,
+        args.task,
+        args.length_quartile,
+        is_overfit=(args.overfit_batches is not None),
+    )
+    history_path = history_dir / f"v{args.version}_{history_stem}_history.json"
 
     print()
-    model, history = train(
+    model, _ = train(
         args.model.lower(),
         train_dataloader,
         val_dataloader,
@@ -567,6 +501,8 @@ def main():
         history_path=history_path,
         curriculum_epochs=args.curriculum_epochs,
         curriculum_start_fraction=args.curriculum_start_fraction,
+        length_quartile=args.length_quartile,
+        cumulative_quartiles=args.cumulative_quartiles,
     )
 
     print(f"Saved training history to: {history_path}")
@@ -580,15 +516,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# TODO:
-# - Important next steps:
-# 1. Per the protein vae paper, we should consider using a **KL divergence loss** (in addition to our cross entropy) to regularize the latent space -> this would require some changes to the architecture to output a mean and variance vector for the latent space, and then sampling from that distribution during training. This could help encourage the model to learn a more structured latent space, which could improve generalization and interpolation between sequences.
-# 2. When we do this, we should also implement dropout for the teacher forcing during training. We can start small at like 0.1, but then set it as a hyperparameter that can be tuned -> the paper set it up to 45% dropout for that dropout
-
-# Other goals:
-# 1. Better curriculum where we gradually add longer sequences for training -> idea is a smoother rampup has a better effect rather than slowly increasing which improves short faster but not long
-
-# Once we are done with these improvements, we will call what we have our baselines:
-# - Start hyperparameter tuning with the baselines we have
