@@ -13,6 +13,7 @@ check_lmdb_import() {
 install_lmdb() {
   echo "[PEER] Installing lmdb"
 
+  "$PYTHON_BIN" -m pip uninstall -y lmdb >/dev/null 2>&1 || true
   "$PYTHON_BIN" -m pip install cffi
 
   if "$PYTHON_BIN" -m pip install --no-cache-dir --force-reinstall --only-binary=:all: lmdb && check_lmdb_import; then
