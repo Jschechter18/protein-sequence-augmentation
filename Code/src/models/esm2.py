@@ -33,6 +33,7 @@ def parse_args():
     parser.add_argument("--results_dir", type=str, default="Code/results/esm2")
     parser.add_argument("--checkpoint_dir", type=str, default="checkpoints")
     parser.add_argument("--unfreeze_esm", action="store_true")
+    parser.add_argument("--classifier_head", type=str, default="cnn", choices=["cnn","lstm","gru"])
     parser.add_argument("--unfreeze_layers", type=int, default=1)
     parser.add_argument("--esm_learning_rate", type=float, default=1e-5)
     parser.add_argument("--cnn_checkpoint", type=str, default= None)
@@ -310,6 +311,88 @@ class CNN1DClassifier(nn.Module):
         logits = self.fc(x)
         return logits
 
+class RNNClassifier(nn.Module):
+    """
+    RNN classifier (LSTM or GRU) applied to ESM-2 embeddings.
+
+    Input to forward():
+        x shape [B, L, 320]
+        B = batch size
+        L = sequence length
+        320 = ESM embedding dimension
+
+    Output from forward():
+
+        logits: Tensor of shape [B,C]
+        B = batch size
+        C = number of classes
+    """
+
+    def __init__(
+        self,
+        input_dim: int = 320,
+        hidden_dim: int = 128,
+        num_classes: int = 2,
+        num_layers: int = 1,
+        dropout_rate: float = 0.3,
+        bidirectional: bool = True,
+        rnn_type: str = "gru"  # or "lstm"
+    ):
+        super().__init__()
+
+        self.rnn_type = rnn_type
+        self.bidirectional = bidirectional
+
+        rnn_class = nn.GRU if rnn_type == "gru" else nn.LSTM
+        self.rnn = rnn_class(
+            input_size=input_dim,
+            hidden_size=hidden_dim,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout_rate if num_layers > 1 else 0.0,
+            bidirectional=bidirectional
+        )
+
+        rnn_output_dim = hidden_dim * 2 if bidirectional else hidden_dim
+        
+        self.dropout = nn.Dropout(dropout_rate)
+        self.fc = nn.Linear(rnn_output_dim, num_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Input tensor of shape (batch_size, seq_len, input_dim)
+        Returns:
+            Logits of shape (batch_size, num_classes)
+        """
+        # RNN expects input shape [B, L, input_dim]
+        # ESM-2 embeddings are already in this shape.
+        rnn_out, hidden = self.rnn(x)
+
+        if self.rnn_type == "lstm":
+            # For LSTM, hidden is a tuple (h_n, c_n)
+            hidden_state, cell_state = hidden
+        else:
+            hidden_state = hidden
+
+        if self.bidirectional: 
+            #last forward and backward hidden states
+            forward_hidden = hidden_state[-2, :, :]
+            backward_hidden = hidden_state[-1, :, :]
+            last_hidden = torch.cat((forward_hidden, backward_hidden), dim=1)
+        else:
+            last_hidden = hidden_state[-1, :, :]    
+            
+        # last_hidden shape: 
+        # [B, hidden_dim * * 2] if bidirectional
+        # [B, hidden_dim] if unidirectional
+        last_hidden = self.dropout(last_hidden)
+
+        logits = self.fc(last_hidden)
+        return logits
+
+
+
 
 class ESM2CNNPipeline:
     """
@@ -342,6 +425,7 @@ class ESM2CNNPipeline:
         unfreeze_layers: int = 1,
         esm_learning_rate: float = 1e-5,
         cnn_checkpoint: str | None = None,
+        classifier_head: str = "cnn"  # or "lstm" or "gru"
     ):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.num_classes = num_classes
@@ -358,13 +442,41 @@ class ESM2CNNPipeline:
         # Output: embeddings [B, L, 320].
         self.encoder = ESM2Encoder(model_name=esm_model_name).to(self.device)
 
-        # Initialize CNN classifier.
+        # Initialize classifier.
         # Input: ESM embeddings [B, L, 320].
         # Output: class logits [B, num_classes].
-        self.classifier = CNN1DClassifier(
-            input_dim=320,
-            num_classes=num_classes
-        ).to(self.device)
+        self.classifier_head = classifier_head
+
+        if classifier_head == "cnn":
+            self.classifier = CNN1DClassifier(
+                input_dim=320,
+                num_classes=num_classes
+            ).to(self.device)
+
+        elif classifier_head == "gru":
+            self.classifier = RNNClassifier(
+                input_dim=320,
+                hidden_dim=128,
+                num_classes=num_classes,
+                num_layers=1,
+                dropout_rate=0.3,
+                bidirectional=True,
+                rnn_type="gru"
+            ).to(self.device)
+
+        elif classifier_head == "lstm":
+            self.classifier = RNNClassifier(
+                input_dim=320,
+                hidden_dim=128,
+                num_classes=num_classes,
+                num_layers=1,
+                dropout_rate=0.3,
+                bidirectional=True,
+                rnn_type="lstm"
+            ).to(self.device)
+
+        else:
+            raise ValueError(f"Unsupported classifier_head: {classifier_head}")
 
         self.checkpoint_dir = Path(checkpoint_dir)
 
@@ -600,7 +712,7 @@ class ESM2CNNPipeline:
                 "esm_learning_rate": self.esm_learning_rate,
                 "epochs": epochs,
                 "early_stopping_patience": early_stopping_patience,
-                "model": "ESM2 + 1D CNN",
+                "classifier_head": self.classifier_head,
                 "embedding_dim": 320,
                 "cnn_num_filters": 64,
                 "cnn_kernel_sizes": [3, 5, 7],
@@ -737,6 +849,7 @@ def main():
     config["device"] = device
     config["model"] = "ESM2 + 1D CNN"
     config["encoding"] = "raw"
+    config["classifier_head"] = args.classifier_head
 
     save_json(config, run_dir / "config.json")
 
@@ -778,6 +891,7 @@ def main():
         unfreeze_layers=args.unfreeze_layers,
         esm_learning_rate=args.esm_learning_rate,
         cnn_checkpoint=args.cnn_checkpoint,
+        classifier_head=args.classifier_head
     )
 
     pipeline.fit(
