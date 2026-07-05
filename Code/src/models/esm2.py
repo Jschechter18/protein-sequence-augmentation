@@ -8,8 +8,6 @@ from typing import Tuple, Dict
 
 import numpy as np
 import pandas as pd
-from sklearn import metrics
-from sklearn import metrics
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -34,7 +32,7 @@ def parse_args():
     parser.add_argument("--checkpoint_dir", type=str, default="checkpoints")
     parser.add_argument("--unfreeze_esm", action="store_true")
     parser.add_argument("--classifier_head", type=str, default="cnn", choices=["cnn","lstm","gru"])
-    parser.add_argument("--unfreeze_layers", type=int, default=1)
+    parser.add_argument("--unfreeze_layers", type=int, default=0)
     parser.add_argument("--esm_learning_rate", type=float, default=1e-5)
     parser.add_argument("--cnn_checkpoint", type=str, default= None)
 
@@ -164,7 +162,8 @@ class ESM2Encoder(nn.Module):
         if self.model is None:
             # Fallback: return random embeddings
             max_len = max(len(seq) for seq in sequences)
-            return torch.randn(len(sequences), max_len, 320, device=next(self.parameters()).device)
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            return torch.randn(len(sequences), max_len, 320, device=device)
         
         batch_converter = self.alphabet.get_batch_converter() # type: ignore
 
@@ -404,11 +403,11 @@ class ESM2CNNPipeline:
         5. validation loop
         6. checkpoint and metrics saving
 
-    Stage 1:
+    Stage 0:
         unfreeze_esm=False
         ESM-2 frozen, CNN trainable.
 
-    Stage 2:
+    Stage 1:
         unfreeze_esm=True
         final ESM-2 layer(s) trainable with low learning rate,
         CNN trainable with classifier learning rate.
@@ -433,6 +432,7 @@ class ESM2CNNPipeline:
         self.esm_learning_rate = esm_learning_rate
         self.unfreeze_layers = unfreeze_layers
         self.unfreeze_esm = unfreeze_esm
+        self.classifier_head = classifier_head
         self.run_dir = Path(run_dir) if run_dir is not None else Path(".")
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -515,6 +515,26 @@ class ESM2CNNPipeline:
                 "lr": esm_learning_rate
             }
         ])
+
+        trainable_encoder = sum(
+            p.numel()
+            for p in self.encoder.parameters()
+            if p.requires_grad
+        )
+
+        trainable_classifier = sum(
+            p.numel()
+            for p in self.classifier.parameters()
+            if p.requires_grad
+        )
+
+        logger.info(
+            f"Trainable ESM parameters: {trainable_encoder:,}"
+        )
+
+        logger.info(
+            f"Trainable classifier parameters: {trainable_classifier:,}"
+        )
         
         self.criterion = nn.CrossEntropyLoss()
         self.best_val_loss = float('inf')
@@ -713,10 +733,12 @@ class ESM2CNNPipeline:
                 "epochs": epochs,
                 "early_stopping_patience": early_stopping_patience,
                 "classifier_head": self.classifier_head,
+                "unfreeze_esm": self.unfreeze_esm,
+                "unfreeze_layers": self.unfreeze_layers if self.unfreeze_esm else 0,
+                "fine_tuning_strategy":(f"last_{self.unfreeze_layers}_layers" if self.unfreeze_esm else "frozen_backbone"),
                 "embedding_dim": 320,
                 "cnn_num_filters": 64,
                 "cnn_kernel_sizes": [3, 5, 7],
-                "unfreeze_layers": self.unfreeze_layers,
             },
             "summary": {
                 "best_val_loss": self.best_val_loss,
