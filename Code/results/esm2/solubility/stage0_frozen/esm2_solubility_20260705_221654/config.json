@@ -1,0 +1,22 @@
+{
+    "dataset": "solubility",
+    "data_dir": "data/processed/peer",
+    "results_dir": "Code/results/esm2",
+    "checkpoint_dir": "checkpoints",
+    "unfreeze_esm": false,
+    "classifier_head": "gru",
+    "unfreeze_layers": 0,
+    "esm_learning_rate": 1e-05,
+    "cnn_checkpoint": null,
+    "esm_model_name": "esm2_t6_8M_UR50D",
+    "num_classes": 2,
+    "batch_size": 16,
+    "epochs": 10,
+    "learning_rate": 0.001,
+    "early_stopping_patience": 5,
+    "seed": 42,
+    "run_dir": "Code/results/esm2/solubility/esm2_solubility_20260705_221654",
+    "device": "cuda",
+    "model": "ESM2 + 1D CNN",
+    "encoding": "raw"
+}

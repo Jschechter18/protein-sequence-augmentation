@@ -879,6 +879,8 @@ def main():
     logger.info(f"Dataset: {args.dataset}")
     logger.info(f"Device: {device}")
     logger.info(f"Run directory: {run_dir}")
+    logger.info(f"Classifier head: {self.classifier_head}") # type: ignore
+    logger.info(f"Fine-tuning strategy: {'Frozen' if not self.unfreeze_esm else f'Last {self.unfreeze_layers} layer(s)'}") # type: ignore
 
     train_loader = create_dataloader(
         task=args.dataset,
