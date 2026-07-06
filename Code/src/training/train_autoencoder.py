@@ -22,7 +22,7 @@ python Code/src/training/train_autoencoder.py \
   --length_bin <bin> \
   --cumulative \
   --sweep \
-  --version <version>
+  --version <version>; sudo shutdown -h now
 
 """
 from __future__ import annotations
