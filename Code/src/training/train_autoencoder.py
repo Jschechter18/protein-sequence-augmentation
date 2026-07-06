@@ -60,7 +60,7 @@ from utils.utils import load_training_checkpoint, make_token_weights
 from utils.curriculum import make_length_curriculum_dataloader
 from utils.train_input_validation import (
     add_and_validate_train_inputs,
-    autoencoder_artifact_stem,
+    autoencoder_artifact_paths,
 )
 
 
@@ -322,17 +322,16 @@ def train(
             best_val_loss = val_loss
             best_state_dict = copy.deepcopy(model.state_dict())
             epochs_without_improvement = 0
-            checkpoint_dir = Path(__file__).resolve().parents[3] / f"checkpoints/autoencoder/{task}/v{version}"
-            checkpoint_dir.mkdir(parents=True, exist_ok=True)
-            checkpoint_stem = autoencoder_artifact_stem(
+            checkpoint_path, _ = autoencoder_artifact_paths(
                 model_type,
                 task,
+                version,
                 length_options,
                 length_bin=length_bin,
                 is_overfit=is_overfit,
                 artifact_suffix=artifact_suffix,
             )
-            checkpoint_path = checkpoint_dir / f"{checkpoint_stem}.pt"
+            checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
             torch.save({
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
@@ -358,36 +357,6 @@ def train(
         model.load_state_dict(best_state_dict)
         
     return model, history
-
-
-def autoencoder_artifact_paths(
-    model_type: str,
-    task: str,
-    version: int,
-    length_options: str | None,
-    length_bin: int | None,
-    is_overfit: bool,
-    artifact_suffix: str | None = None,
-) -> tuple[Path, Path]:
-    artifact_stem = autoencoder_artifact_stem(
-        model_type,
-        task,
-        length_options,
-        length_bin=length_bin,
-        is_overfit=is_overfit,
-        artifact_suffix=artifact_suffix,
-    )
-    project_root = Path(__file__).resolve().parents[3]
-    checkpoint_path = (
-        project_root
-        / "checkpoints"
-        / "autoencoder"
-        / task
-        / f"v{version}"
-        / f"{artifact_stem}.pt"
-    )
-    history_path = project_root / "history" / f"v{version}_{artifact_stem}_history.json"
-    return checkpoint_path, history_path
 
 
 def validate_artifact_paths(paths: list[tuple[Path, Path]]) -> None:

@@ -19,6 +19,8 @@ LENGTH_SPLIT_COUNTS = {
     "quarters": 4,
 }
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
 
 def _str_to_bool(value: str | bool) -> bool:
     if isinstance(value, bool):
@@ -53,11 +55,42 @@ def autoencoder_artifact_stem(
     return "_".join(parts)
 
 
+def autoencoder_results_dir(task: str, version: int | str) -> Path:
+    version_name = str(version)
+    if not version_name:
+        raise ValueError("version must not be empty")
+    version_dir = version_name if version_name.startswith("v") else f"v{version_name}"
+    return PROJECT_ROOT / "Code" / "results" / "autoencoder" / task / version_dir
+
+
+def autoencoder_artifact_paths(
+    model_type: str,
+    task: str,
+    version: int | str,
+    length_options: str | None,
+    length_bin: int | None,
+    is_overfit: bool,
+    artifact_suffix: str | None = None,
+) -> tuple[Path, Path]:
+    artifact_stem = autoencoder_artifact_stem(
+        model_type,
+        task,
+        length_options,
+        length_bin=length_bin,
+        is_overfit=is_overfit,
+        artifact_suffix=artifact_suffix,
+    )
+    result_dir = autoencoder_results_dir(task, version)
+    checkpoint_path = result_dir / f"{artifact_stem}.pt"
+    history_path = result_dir / f"{result_dir.name}_{artifact_stem}_history.json"
+    return checkpoint_path, history_path
+
+
 def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
     args.add_argument('--model', type=str, default='AE', help='Model to train (default: AE)')
     args.add_argument('--task', type=str, default='localization', help='Task to perform (default: localization)')
     args.add_argument('--load_path', type=str, nargs='?', default=None, help='Path to load the best existing model checkpoint (optional)')
-    args.add_argument('--version', type=int, default=0, help='Version identifier for this training run (used for checkpoint and history naming)') # should always be unique
+    args.add_argument('--version', type=int, default=None, help='Version identifier for this training run (used for checkpoint and history naming)') # should always be unique
     args.add_argument(
         '--overfit_batches',
         type=int,
@@ -149,6 +182,11 @@ def add_and_validate_train_inputs():
         hyperparams = AEParams()
     else:
         raise ValueError("Only --model AE is currently supported")
+
+    if args.version is None:
+        raise ValueError("--version is required so autoencoder checkpoints and histories are saved under Code/results/autoencoder/<task>/v<version>")
+    if args.version < 0:
+        raise ValueError("--version must be non-negative")
     
     if args.sweep and args.load_path is not None:
         raise ValueError("--load_path is not supported with --sweep because swept latent dimensions may not match the checkpoint.")
@@ -166,23 +204,19 @@ def add_and_validate_train_inputs():
     
     if not args.sweep:
         # Make sure this checkpoint filename is unique to avoid overwriting previous runs.
-        model_dir = "autoencoder" if args.model.upper() == "AE" else args.model.lower()
-        version_dir = Path("checkpoints") / model_dir / args.task / f"v{args.version}"
-        artifact_stem = autoencoder_artifact_stem(
+        checkpoint_path, history_path = autoencoder_artifact_paths(
             args.model,
             args.task,
+            args.version,
             args.length_options,
             length_bin=args.length_bin,
             is_overfit=(args.overfit_batches is not None),
         )
-        checkpoint_path = version_dir / f"{artifact_stem}.pt"
 
         if checkpoint_path.exists():
             raise ValueError(
                 f"Checkpoint already exists for this run: {checkpoint_path}"
                 )
-
-        history_path = Path("history") / f"v{args.version}_{artifact_stem}_history.json"
 
         if history_path.exists():
             raise ValueError(

@@ -7,7 +7,6 @@ Usage:
     python Code/src/testing/test_autoencoder.py --model AE --task solubility --version 6 --length_quartile ml --cumulative_quartiles True
 """
 
-import argparse
 import csv
 import sys
 from pathlib import Path
@@ -25,6 +24,7 @@ from models.autoencoder import ProteinSequenceAutoencoder as AE
 from utils.dataloader import (
     BOS_IDX,
     EOS_IDX,
+    LENGTH_SPLIT_COUNTS,
     PAD_IDX,
     VOCAB,
     compute_train_length_boundaries,
@@ -32,9 +32,15 @@ from utils.dataloader import (
 )
 from utils.hyperparameters import AutoencoderHyperparameters as AEParams, autoencoder_sweep_suffix
 from utils.test_input_validation import add_and_validate_test_inputs
-from utils.train_input_validation import autoencoder_artifact_stem
+from utils.train_input_validation import autoencoder_artifact_paths, autoencoder_artifact_stem
 
 IDX_TO_TOKEN = {idx: token for token, idx in VOCAB.items()}
+LENGTH_QUARTILE_FILE_LABELS = {
+    "s": "short",
+    "ms": "medium_short",
+    "ml": "medium_long",
+    "l": "long",
+}
 
 # ----------------------------------------------------------------------------------------------------------------
 
@@ -50,19 +56,6 @@ print(f"Using device: {device}")
 print()
 
 # ----------------------------------------------------------------------------------------------------------------
-def str_to_bool(value: str | bool) -> bool:
-    if isinstance(value, bool):
-        return value
-
-    normalized = value.lower()
-    if normalized in {"true", "1", "yes", "y"}:
-        return True
-    if normalized in {"false", "0", "no", "n"}:
-        return False
-
-    raise argparse.ArgumentTypeError("Expected a boolean value.")
-
-
 def _version_dir_name(version: str | int | None) -> str | None:
     if version is None:
         return None
@@ -74,39 +67,91 @@ def version_checkpoint_path(
     model_type: str,
     task: str,
     version: str | int | None,
-    length_quartile: str | None = None,
+    length_options: str | None = None,
+    length_bin: int | None = None,
     artifact_suffix: str | None = None,
 ) -> Path:
-    checkpoint_dir = PROJECT_ROOT / "checkpoints" / "autoencoder" / task
+    if version is None:
+        raise ValueError("--version is required unless --checkpoint is provided")
+
+    result_checkpoint_path, _ = autoencoder_artifact_paths(
+        model_type,
+        task,
+        version,
+        length_options,
+        length_bin,
+        is_overfit=False,
+        artifact_suffix=artifact_suffix,
+    )
+    if result_checkpoint_path.is_file():
+        return result_checkpoint_path
+
     version_dir = _version_dir_name(version)
-
-    if version_dir:
-        checkpoint_dir = checkpoint_dir / version_dir
-
-    checkpoint_name = f"{autoencoder_artifact_stem(model_type, task, length_quartile, artifact_suffix=artifact_suffix)}.pt"
-    checkpoint_path = checkpoint_dir / checkpoint_name
-    if checkpoint_path.is_file() or length_quartile is None:
-        return checkpoint_path
-
-    fallback_name = f"{autoencoder_artifact_stem(model_type, task, artifact_suffix=artifact_suffix)}.pt"
-    fallback_path = checkpoint_dir / fallback_name
-    if fallback_path.is_file():
+    legacy_checkpoint_dir = PROJECT_ROOT / "checkpoints" / "autoencoder" / task / version_dir
+    checkpoint_name = f"{autoencoder_artifact_stem(model_type, task, length_options, length_bin=length_bin, artifact_suffix=artifact_suffix)}.pt"
+    legacy_checkpoint_path = legacy_checkpoint_dir / checkpoint_name
+    if legacy_checkpoint_path.is_file():
         print(
-            f"Quartile-specific checkpoint not found: {checkpoint_path}\n"
-            f"Falling back to base checkpoint: {fallback_path}"
+            f"Result checkpoint not found: {result_checkpoint_path}\n"
+            f"Falling back to legacy checkpoint: {legacy_checkpoint_path}"
         )
-        return fallback_path
+        return legacy_checkpoint_path
 
-    return checkpoint_path
+    candidates = sorted(result_checkpoint_path.parent.glob(f"model_{model_type.lower()}*.pt"))
+    candidates.extend(sorted(legacy_checkpoint_dir.glob(f"model_{model_type.lower()}*.pt")))
+    if len(candidates) == 1:
+        print(
+            f"Exact checkpoint not found: {result_checkpoint_path}\n"
+            f"Using the only available checkpoint for this version: {candidates[0]}"
+        )
+        return candidates[0]
+    if candidates:
+        formatted_candidates = "\n".join(f"  - {path}" for path in candidates)
+        raise FileNotFoundError(
+            f"No checkpoint matched the requested arguments for {task} {_version_dir_name(version)}.\n"
+            f"Expected: {result_checkpoint_path}\n"
+            f"Available checkpoints:\n{formatted_candidates}\n"
+            "Provide the length/sweep arguments that identify one checkpoint, for example:\n"
+            f"  --task {task} --version {version} --length_options halves --length_bin 1 "
+            "--latent_dim 128 --teacher_forcing_dropout_rate 0.3\n"
+            "Or pass an explicit checkpoint with --checkpoint."
+        )
+
+    raise FileNotFoundError(
+        f"Checkpoint not found: {result_checkpoint_path}\n"
+        f"Also checked legacy path: {legacy_checkpoint_path}"
+    )
 
 
-def default_checkpoint_path(
+def legacy_quartile_checkpoint_path(
     model_type: str,
     task: str,
     version: str | int | None,
-    length_quartile: str | None = None,
+    length_quartile: str,
+    artifact_suffix: str | None = None,
 ) -> Path:
-    return version_checkpoint_path(model_type, task, version, length_quartile)
+    if version is None:
+        raise ValueError("--version is required unless --checkpoint is provided")
+
+    version_dir = _version_dir_name(version)
+    checkpoint_dir = PROJECT_ROOT / "checkpoints" / "autoencoder" / task / version_dir
+    artifact_stem = autoencoder_artifact_stem(
+        model_type,
+        task,
+        artifact_suffix=artifact_suffix,
+    )
+    base_path = checkpoint_dir / f"{artifact_stem}.pt"
+    quartile_label = LENGTH_QUARTILE_FILE_LABELS[length_quartile]
+    quartile_path = checkpoint_dir / f"model_{model_type.lower()}_{quartile_label}_{task}.pt"
+    if quartile_path.is_file():
+        return quartile_path
+    if base_path.is_file():
+        print(
+            f"Quartile-specific checkpoint not found: {quartile_path}\n"
+            f"Falling back to base checkpoint: {base_path}"
+        )
+        return base_path
+    return quartile_path
 
 
 def checkpoint_state_dict(checkpoint: object) -> dict[str, torch.Tensor]:
@@ -204,6 +249,92 @@ def decode_token_ids(token_ids: torch.Tensor) -> str:
     return "".join(decoded_tokens)
 
 
+REQUIRED_RESULTS_COLUMNS = [
+    "version",
+    "file name",
+    "test teacher force loss",
+    "test autoregressive loss",
+    "test teacher forced accuracy",
+    "test autoregressive accuracy",
+]
+
+
+def output_path_for_mode(output_path: str | Path, mode: str) -> Path:
+    output_path = Path(output_path)
+    return output_path.with_name(f"{output_path.stem}_{mode}{output_path.suffix}")
+
+
+def infer_version(version: str | int | None, checkpoint_path: Path) -> str:
+    if version is not None:
+        return _version_dir_name(version) or str(version)
+
+    for parent in [checkpoint_path.parent, *checkpoint_path.parents]:
+        if parent.name.startswith("v") and parent.name[1:].isdigit():
+            return parent.name
+
+    raise ValueError("Could not infer version from checkpoint path; pass --version explicitly.")
+
+
+def append_autoencoder_results(
+    results_csv_path: str | Path,
+    version: str,
+    checkpoint_path: Path,
+    teacher_forced_metrics: dict[str, float],
+    autoregressive_metrics: dict[str, float],
+) -> None:
+    results_csv_path = Path(results_csv_path)
+    results_csv_path.parent.mkdir(parents=True, exist_ok=True)
+
+    rows: list[dict[str, str]] = []
+    fieldnames = REQUIRED_RESULTS_COLUMNS.copy()
+    if results_csv_path.exists():
+        with results_csv_path.open("r", newline="", encoding="utf-8") as csv_file:
+            reader = csv.DictReader(csv_file)
+            if reader.fieldnames is None:
+                raise ValueError(f"Existing results CSV has no header: {results_csv_path}")
+            fieldnames = []
+            seen_fields: set[str] = set()
+            for field in reader.fieldnames:
+                if field in seen_fields:
+                    continue
+                fieldnames.append(field)
+                seen_fields.add(field)
+            for column in REQUIRED_RESULTS_COLUMNS:
+                if column not in fieldnames:
+                    fieldnames.append(column)
+            rows = list(reader)
+
+    result_row = {
+        "version": version,
+        "file name": str(checkpoint_path),
+        "test teacher force loss": f"{teacher_forced_metrics['loss']:.6f}",
+        "test autoregressive loss": f"{autoregressive_metrics['loss']:.6f}",
+        "test teacher forced accuracy": f"{teacher_forced_metrics['accuracy']:.6f}",
+        "test autoregressive accuracy": f"{autoregressive_metrics['accuracy']:.6f}",
+    }
+
+    matching_row = next(
+        (
+            row
+            for row in rows
+            if row.get("version") == version and row.get("file name") == str(checkpoint_path)
+        ),
+        None,
+    )
+    if matching_row is None:
+        rows.append(result_row)
+        print(f"Appending test results to: {results_csv_path}")
+    else:
+        matching_row.update(result_row)
+        print(f"Updating existing test results row in: {results_csv_path}")
+
+    with results_csv_path.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames, lineterminator="\n")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: row.get(field, "") for field in fieldnames})
+
+
 # ----------------------------------------------------------------------------------------------------------------
 
 def test(
@@ -211,7 +342,7 @@ def test(
     dataloader: DataLoader,
     output_path: str | Path,
     teacher_forcing: bool = True,
-) -> None:
+) -> dict[str, float]:
     model.eval()
     loss_fn = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
     total_loss = 0.0
@@ -287,39 +418,32 @@ def test(
     avg_loss = total_loss / total_tokens if total_tokens > 0 else 0.0
     accuracy = total_correct / total_tokens if total_tokens > 0 else 0.0
 
-    print(f"Test Loss: {avg_loss:.4f}, Test Accuracy: {accuracy:.4f}, ")
+    mode_label = "teacher-forced" if teacher_forcing else "autoregressive"
+    print(f"{mode_label.capitalize()} Test Loss: {avg_loss:.4f}, Test Accuracy: {accuracy:.4f}, ")
     print(f"Saved decoder outputs to: {output_path}")
+    return {"loss": avg_loss, "accuracy": accuracy}
 
 
-def main():
-    args = add_and_validate_test_inputs()
-
-    model_type = args.model.lower()
-    hyperparams = AEParams()
-    # checkpoint_path = args.checkpoint or default_checkpoint_path(
-    #     model_type,
-    #     args.task,
-    #     args.version,
-    #     args.length_quartile,
-    # )
-    artifact_suffix = None
-    if args.latent_dim is not None:
-        artifact_suffix = autoencoder_sweep_suffix(
-            args.latent_dim,
-            args.teacher_forcing_dropout_rate,
-        )
-    checkpoint_path = version_checkpoint_path(
-        model_type,
-        args.task,
-        args.version,
-        args.length_quartile,
-        artifact_suffix=artifact_suffix,
-    )
+def evaluate_checkpoint(
+    args,
+    model_type: str,
+    hyperparams: AEParams,
+    checkpoint_path: Path,
+    length_options: str | None,
+    length_bin: int | None,
+    output_path: str | Path,
+) -> None:
     print(f"Loading checkpoint: {checkpoint_path}")
 
-    model = model_definition(model_type, hyperparams, checkpoint_path=checkpoint_path)
+    try:
+        model = model_definition(model_type, hyperparams, checkpoint_path=checkpoint_path)
+    except FileNotFoundError as error:
+        print(error)
+        sys.exit(1)
 
-    if args.length_quartile is not None:
+    if length_options is not None:
+        loader_type = "length_bin"
+    elif args.length_quartile is not None:
         loader_type = "quartile"
     elif args.max_length is not None:
         loader_type = "max_length"
@@ -327,7 +451,7 @@ def main():
         loader_type = None
 
     length_boundaries = None
-    if loader_type == "quartile":
+    if loader_type in {"quartile", "length_bin"}:
         train_dataloader = create_dataloader(
             task=args.task,
             split="train",
@@ -335,24 +459,91 @@ def main():
             batch_size=hyperparams.batch_size,
             shuffle=False,
         )
-        length_boundaries = compute_train_length_boundaries(train_dataloader.dataset)
-    
-    test(
+        num_bins = LENGTH_SPLIT_COUNTS[length_options] if loader_type == "length_bin" else 4
+        length_boundaries = compute_train_length_boundaries(train_dataloader.dataset, num_bins=num_bins)
+
+    test_dataloader = create_dataloader(
+        task=args.task,
+        split="test",
+        mode="autoencoder",
+        batch_size=hyperparams.batch_size,
+        shuffle=False,
+        loader_type=loader_type,
+        max_length=args.max_length,
+        quartile_name=args.length_quartile,
+        length_options=length_options,
+        length_bin=length_bin,
+        cumulative=args.cumulative if loader_type == "length_bin" else args.cumulative_quartiles,
+        length_boundaries=length_boundaries,
+    )
+
+    teacher_forced_metrics = test(
         model=model,
-        dataloader=create_dataloader(
-            task=args.task,
-            split="test",
-            mode="autoencoder",
-            batch_size=hyperparams.batch_size,
-            shuffle=False,
-            loader_type=loader_type,
-            max_length=args.max_length,
-            quartile_name=args.length_quartile,
-            cumulative=args.cumulative_quartiles,
-            length_boundaries=length_boundaries,
-        ),
+        dataloader=test_dataloader,
+        output_path=output_path_for_mode(output_path, "teacher_forced"),
+        teacher_forcing=True,
+    )
+    autoregressive_metrics = test(
+        model=model,
+        dataloader=test_dataloader,
+        output_path=output_path_for_mode(output_path, "autoregressive"),
+        teacher_forcing=False,
+    )
+    results_csv_path = PROJECT_ROOT / "Code" / "results" / "tables" / "autoencoder_results.csv"
+    append_autoencoder_results(
+        results_csv_path=results_csv_path,
+        version=infer_version(args.version if args.version_provided else None, checkpoint_path),
+        checkpoint_path=checkpoint_path,
+        teacher_forced_metrics=teacher_forced_metrics,
+        autoregressive_metrics=autoregressive_metrics,
+    )
+    print(f"Saved aggregate test results to: {results_csv_path}")
+
+
+def main():
+    args = add_and_validate_test_inputs()
+
+    model_type = args.model.lower()
+    hyperparams = AEParams()
+    artifact_suffix = None
+    if args.latent_dim is not None:
+        artifact_suffix = autoencoder_sweep_suffix(
+            args.latent_dim,
+            args.teacher_forcing_dropout_rate,
+        )
+
+    try:
+        if args.checkpoint is not None:
+            checkpoint_path = Path(args.checkpoint)
+        elif args.length_quartile is not None:
+            checkpoint_path = legacy_quartile_checkpoint_path(
+                model_type,
+                args.task,
+                args.version,
+                args.length_quartile,
+                artifact_suffix=artifact_suffix,
+            )
+        else:
+            checkpoint_path = version_checkpoint_path(
+                model_type,
+                args.task,
+                args.version,
+                args.length_options,
+                args.length_bin,
+                artifact_suffix=artifact_suffix,
+            )
+    except FileNotFoundError as error:
+        print(error)
+        sys.exit(1)
+
+    evaluate_checkpoint(
+        args=args,
+        model_type=model_type,
+        hyperparams=hyperparams,
+        checkpoint_path=checkpoint_path,
+        length_options=args.length_options,
+        length_bin=args.length_bin,
         output_path=args.output_path,
-        teacher_forcing=args.teacher_forcing,
     )
 
 
