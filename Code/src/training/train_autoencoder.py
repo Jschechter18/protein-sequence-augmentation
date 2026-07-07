@@ -8,13 +8,25 @@ python Code/src/training/train_autoencoder.py --model AE --task solubility
 
 python Code/src/training/train_autoencoder.py --model AE --task solubility --curriculum_epochs 5 --curriculum_start_fraction 0.2 --version <version>
 
-# Length quartile training:
-python Code/src/training/train_autoencoder.py --model AE --task solubility --version <version> --length_quartile l
+# Length-bin training:
+python Code/src/training/train_autoencoder.py --model AE --task solubility --version <version> --length_options thirds --length_bin 2
 
-# Cummulative length quartile training:
-python Code/src/training/train_autoencoder.py --model AE --task solubility --version <version> --length_quartile ml --cumulative_quartiles True
+# Cumulative length-bin training:
+python Code/src/training/train_autoencoder.py --model AE --task solubility --version <version> --length_options thirds --length_bin 2 --cumulative
+
+# Sweep:
+python Code/src/training/train_autoencoder.py \
+  --model AE \
+  --task solubility \
+  --length_options thirds \
+  --length_bin <bin> \
+  --cumulative \
+  --sweep \
+  --version <version>; sudo shutdown -h now
 
 """
+from __future__ import annotations
+
 import json
 import copy
 import random
@@ -25,7 +37,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader, Subset
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.nn.utils import clip_grad_norm_
 from sklearn.metrics import f1_score, accuracy_score
@@ -36,11 +48,20 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from models.autoencoder import ProteinSequenceAutoencoder as AE
-from utils.dataloader import BOS_IDX, PAD_IDX, create_dataloader, compute_train_length_boundaries
-from utils.hyperparameters import (AutoencoderHyperparameters as AEParams)
+from utils.dataloader import (
+    BOS_IDX,
+    LENGTH_SPLIT_COUNTS,
+    PAD_IDX,
+    create_dataloader,
+    compute_train_length_boundaries,
+)
+from utils.hyperparameters import (AutoencoderHyperparameters as AEParams, AutoencoderSweepConfig as AESweepConfig)
 from utils.utils import load_training_checkpoint, make_token_weights
 from utils.curriculum import make_length_curriculum_dataloader
-from utils.train_input_validation import add_and_validate_train_inputs, autoencoder_artifact_stem
+from utils.train_input_validation import (
+    add_and_validate_train_inputs,
+    autoencoder_artifact_paths,
+)
 
 
 # ----------------------------------------------------------------------------------------------------------------
@@ -61,15 +82,22 @@ print()
 num_workers = 4 if torch.cuda.is_available() else 0
 # ----------------------------------------------------------------------------------------------------------------
 SEED = 42
-random.seed(SEED)
-np.random.seed(SEED)
-torch.manual_seed(SEED)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed_all(SEED)
+
+
+def set_random_seed(seed: int = SEED) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+set_random_seed()
 # ----------------------------------------------------------------------------------------------------------------
 
 TRAIN_SPLIT = "train"
 VALID_SPLIT = "valid"
+
 
 def model_definition(model_type: str, hyperparams: AEParams) -> tuple[AE, torch.optim.Adam, ReduceLROnPlateau]:
     if model_type == "ae":
@@ -150,8 +178,10 @@ def train(
     history_path: str | Path | None = None,
     curriculum_epochs: int = 0,
     curriculum_start_fraction: float = 0.3,
-    length_quartile: str | None = None,
-    cumulative_quartiles: bool = False,
+    length_options: str | None = None,
+    length_bin: int | None = None,
+    cumulative: bool = False,
+    artifact_suffix: str | None = None,
 ) -> tuple[AE, dict]:
 
     model, optimizer, scheduler = model_definition(model_type, hyperparams)
@@ -179,6 +209,7 @@ def train(
             "epochs": curriculum_epochs,
             "start_fraction": curriculum_start_fraction,
         },
+        "artifact_suffix": artifact_suffix,
         "epochs": [],
         "train_loss": [],
         "train_scores": {
@@ -291,15 +322,16 @@ def train(
             best_val_loss = val_loss
             best_state_dict = copy.deepcopy(model.state_dict())
             epochs_without_improvement = 0
-            checkpoint_dir = Path(__file__).resolve().parents[3] / f"checkpoints/autoencoder/{task}/v{version}"
-            checkpoint_dir.mkdir(parents=True, exist_ok=True)
-            checkpoint_stem = autoencoder_artifact_stem(
+            checkpoint_path, _ = autoencoder_artifact_paths(
                 model_type,
                 task,
-                length_quartile,
+                version,
+                length_options,
+                length_bin=length_bin,
                 is_overfit=is_overfit,
+                artifact_suffix=artifact_suffix,
             )
-            checkpoint_path = checkpoint_dir / f"{checkpoint_stem}.pt"
+            checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
             torch.save({
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
@@ -326,14 +358,33 @@ def train(
         
     return model, history
 
-def test(model: AE, dataloader: DataLoader) -> None:
+
+def validate_artifact_paths(paths: list[tuple[Path, Path]]) -> None:
+    existing_paths = [
+        path
+        for checkpoint_path, history_path in paths
+        for path in (checkpoint_path, history_path)
+        if path.exists()
+    ]
+    if existing_paths:
+        formatted_paths = "\n".join(str(path) for path in existing_paths)
+        raise ValueError(f"Training artifacts already exist:\n{formatted_paths}")
+
+def test(model: AE, dataloader: DataLoader) -> dict[str, dict[str, float]]:
     model.eval()
     loss_fn = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
-    total_loss = 0.0
-    total_tokens = 0
-    total_correct = 0
-    all_targets: list[torch.Tensor] = []
-    all_predictions: list[torch.Tensor] = []
+    metrics = {
+        "autoregressive": {
+            "total_loss": 0.0,
+            "total_tokens": 0,
+            "total_correct": 0,
+        },
+        "teacher_forced": {
+            "total_loss": 0.0,
+            "total_tokens": 0,
+            "total_correct": 0,
+        },
+    }
 
     with torch.no_grad():
         for batch in dataloader:
@@ -342,27 +393,52 @@ def test(model: AE, dataloader: DataLoader) -> None:
             targets: torch.Tensor = batch["target_ids"].to(device)
 
             targets = targets[:, 1:]
-
-            outputs: torch.Tensor = model(inputs, decoder_input_ids=inputs[:, :-1], lengths=lengths)
-            loss: torch.Tensor = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
-
-            predictions: torch.Tensor = outputs.argmax(dim=-1)
+            latent = model.encode(inputs, lengths=lengths)
             non_pad_tokens: torch.Tensor = targets != PAD_IDX
             batch_tokens = non_pad_tokens.sum().item()
 
-            total_loss += loss.item() * batch_tokens
-            total_correct += (predictions[non_pad_tokens] == targets[non_pad_tokens]).sum().item()
-            total_tokens += batch_tokens
+            outputs_by_mode = {
+                "autoregressive": model.decode_autoregressive(
+                    latent,
+                    max_length=targets.size(1),
+                ),
+                "teacher_forced": model.decode(
+                    latent,
+                    decoder_input_ids=inputs[:, :-1],
+                ),
+            }
 
-            all_targets.append(targets[non_pad_tokens].detach().cpu())
-            all_predictions.append(predictions[non_pad_tokens].detach().cpu())
+            for mode, outputs in outputs_by_mode.items():
+                loss: torch.Tensor = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
+                predictions: torch.Tensor = outputs.argmax(dim=-1)
+                metrics[mode]["total_loss"] += loss.item() * batch_tokens
+                metrics[mode]["total_correct"] += (
+                    predictions[non_pad_tokens] == targets[non_pad_tokens]
+                ).sum().item()
+                metrics[mode]["total_tokens"] += batch_tokens
 
-    avg_loss = total_loss / total_tokens if total_tokens > 0 else 0.0
-    accuracy = total_correct / total_tokens if total_tokens > 0 else 0.0
+    results = {}
+    for mode, mode_metrics in metrics.items():
+        total_tokens = mode_metrics["total_tokens"]
+        avg_loss = mode_metrics["total_loss"] / total_tokens if total_tokens > 0 else 0.0
+        accuracy = mode_metrics["total_correct"] / total_tokens if total_tokens > 0 else 0.0
+        results[mode] = {
+            "loss": avg_loss,
+            "accuracy": accuracy,
+        }
 
     print(
-        f"Test Loss: {avg_loss:.4f}, Test Accuracy: {accuracy:.4f}, "
+        "Autoregressive Test Loss: "
+        f"{results['autoregressive']['loss']:.4f}, "
+        f"Test Accuracy: {results['autoregressive']['accuracy']:.4f}"
     )
+    print(
+        "Teacher-forced Test Loss: "
+        f"{results['teacher_forced']['loss']:.4f}, "
+        f"Test Accuracy: {results['teacher_forced']['accuracy']:.4f}"
+    )
+    
+    return results
 
 def make_overfit_dataloaders(
     train_dataloader: DataLoader,
@@ -425,15 +501,15 @@ def make_overfit_dataloaders(
 def main():
     args, hyperparams = add_and_validate_train_inputs()
     
-    if args.length_quartile is not None:
-        loader_type = "quartile"
+    if args.length_options is not None:
+        loader_type = "length_bin"
     elif args.max_length is not None:
         loader_type = "max_length"
     else:
         loader_type = None
 
     length_boundaries = None
-    if loader_type == "quartile":
+    if loader_type == "length_bin":
         full_train_dataloader = create_dataloader(
             task=args.task,
             split=TRAIN_SPLIT,
@@ -442,22 +518,28 @@ def main():
             shuffle=False,
             num_workers=num_workers,
         )
-        length_boundaries = compute_train_length_boundaries(full_train_dataloader.dataset)
+        length_boundaries = compute_train_length_boundaries(
+            full_train_dataloader.dataset,
+            num_bins=LENGTH_SPLIT_COUNTS[args.length_options],
+        )
     
     train_dataloader = create_dataloader(task=args.task, split=TRAIN_SPLIT, mode="autoencoder",
                                 batch_size=hyperparams.batch_size, shuffle=hyperparams.shuffle,
                                 num_workers=num_workers, loader_type=loader_type, max_length=args.max_length,
-                                quartile_name=args.length_quartile, cumulative=args.cumulative_quartiles,
+                                length_options=args.length_options, length_bin=args.length_bin,
+                                cumulative=args.cumulative,
                                 length_boundaries=length_boundaries)
     val_dataloader = create_dataloader(task=args.task, split=VALID_SPLIT, mode="autoencoder",
                                     batch_size=hyperparams.batch_size, shuffle=False,
                                     num_workers=num_workers, loader_type=loader_type, max_length=args.max_length,
-                                    quartile_name=args.length_quartile, cumulative=args.cumulative_quartiles,
+                                    length_options=args.length_options, length_bin=args.length_bin,
+                                    cumulative=args.cumulative,
                                     length_boundaries=length_boundaries)
     test_dataloader = create_dataloader(task=args.task, split="test", mode="autoencoder",
                                     batch_size=hyperparams.batch_size, shuffle=False,
                                     num_workers=num_workers, loader_type=loader_type, max_length=args.max_length,
-                                    quartile_name=args.length_quartile, cumulative=args.cumulative_quartiles,
+                                    length_options=args.length_options, length_bin=args.length_bin,
+                                    cumulative=args.cumulative,
                                     length_boundaries=length_boundaries)
     
     if args.overfit_batches is not None:
@@ -479,38 +561,78 @@ def main():
             f"and reaching the full training set over {args.curriculum_epochs} epoch(s)."
         )
     
-    history_dir = Path(__file__).resolve().parents[3] / "history"
-    history_stem = autoencoder_artifact_stem(
-        args.model,
-        args.task,
-        args.length_quartile,
-        is_overfit=(args.overfit_batches is not None),
-    )
-    history_path = history_dir / f"v{args.version}_{history_stem}_history.json"
-
-    print()
-    model, _ = train(
-        args.model.lower(),
-        train_dataloader,
-        val_dataloader,
-        hyperparams,
-        version=args.version,
-        is_overfit=(args.overfit_batches is not None),
-        task=args.task,
-        load_path=args.load_path,
-        history_path=history_path,
-        curriculum_epochs=args.curriculum_epochs,
-        curriculum_start_fraction=args.curriculum_start_fraction,
-        length_quartile=args.length_quartile,
-        cumulative_quartiles=args.cumulative_quartiles,
-    )
-
-    print(f"Saved training history to: {history_path}")
-
-    if args.overfit_batches is None:
-        test(model, test_dataloader)
+    if args.sweep:
+        training_runs = AESweepConfig().iter_hyperparameters(hyperparams)
     else:
-        print("Skipping full test set evaluation in overfit debug mode.")
+        training_runs = [(hyperparams, None)]
+
+    artifact_paths = [
+        autoencoder_artifact_paths(
+            args.model,
+            args.task,
+            args.version,
+            args.length_options,
+            args.length_bin,
+            is_overfit=(args.overfit_batches is not None),
+            artifact_suffix=artifact_suffix,
+        )
+        for _, artifact_suffix in training_runs
+    ]
+    validate_artifact_paths(artifact_paths)
+    
+    if args.sweep:
+        print(f"Starting hyperparameter sweep with {len(training_runs)} runs.")
+        print(training_runs)
+
+    # Run training for each hyperparameter configuration (one loop for no sweep, multiple loops for sweep)
+    for run_index, ((run_hyperparams, artifact_suffix), (_, history_path)) in enumerate(
+        zip(training_runs, artifact_paths),
+        start=1,
+    ):
+        if args.sweep:
+            set_random_seed()
+
+        if args.sweep:
+            print(
+                f"\nStarting sweep run {run_index}/{len(training_runs)}: "
+                f"latent_dim={run_hyperparams.latent_dim}, "
+                f"teacher_forcing_dropout_rate={run_hyperparams.teacher_forcing_dropout_rate}"
+            )
+        else:
+            print()
+
+        model, history = train(
+            args.model.lower(),
+            train_dataloader,
+            val_dataloader,
+            run_hyperparams,
+            version=args.version,
+            is_overfit=(args.overfit_batches is not None),
+            task=args.task,
+            load_path=args.load_path,
+            history_path=history_path,
+            curriculum_epochs=args.curriculum_epochs,
+            curriculum_start_fraction=args.curriculum_start_fraction,
+            length_options=args.length_options,
+            length_bin=args.length_bin,
+            cumulative=args.cumulative,
+            artifact_suffix=artifact_suffix,
+        )
+
+        print(f"Saved training history to: {history_path}")
+
+        if args.overfit_batches is None:
+            test_results = test(model, test_dataloader)
+            history["test"] = test_results
+            history["test_loss"] = test_results["autoregressive"]["loss"]
+            history["test_accuracy"] = test_results["autoregressive"]["accuracy"]
+            history["test_scores"] = {
+                "accuracy": test_results["autoregressive"]["accuracy"],
+            }
+            save_training_history(history, history_path)
+            print(f"Saved test results to training history: {history_path}")
+        else:
+            print("Skipping full test set evaluation in overfit debug mode.")
     
 
 

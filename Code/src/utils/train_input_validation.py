@@ -1,15 +1,25 @@
+from __future__ import annotations
+
 import argparse
 import warnings
 from pathlib import Path
 from typing import Optional
-from utils.hyperparameters import (AutoencoderHyperparameters as AEParams)
+from utils.hyperparameters import AutoencoderHyperparameters as AEParams
 
-LENGTH_QUARTILE_FILE_LABELS = {
-    "s": "short",
-    "ms": "medium_short",
-    "ml": "medium_long",
-    "l": "long",
+# LENGTH_QUARTILE_FILE_LABELS = {
+#     "s": "short",
+#     "ms": "medium_short",
+#     "ml": "medium_long",
+#     "l": "long",
+# }
+
+LENGTH_SPLIT_COUNTS = {
+    "halves": 2,
+    "thirds": 3,
+    "quarters": 4,
 }
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _str_to_bool(value: str | bool) -> bool:
@@ -26,23 +36,61 @@ def _str_to_bool(value: str | bool) -> bool:
 def autoencoder_artifact_stem(
     model: str,
     task: str,
-    length_quartile: Optional[str] = None,
+    length_options: Optional[str] = None,
+    length_bin: int | None = None,
     is_overfit: bool = False,
+    artifact_suffix: str | None = None,
 ) -> str:
     parts = ["model", model.lower()]
-    if length_quartile is not None:
-        parts.append(LENGTH_QUARTILE_FILE_LABELS[length_quartile])
+    if length_options is not None:
+        if length_bin is None:
+            raise ValueError("length_bin must be provided when length_options is set")
+        split_count = LENGTH_SPLIT_COUNTS[length_options]
+        parts.append(f"length_{length_bin}_of_{split_count}")
     parts.append(task)
     if is_overfit:
         parts.append("overfit")
+    if artifact_suffix:
+        parts.append(artifact_suffix)
     return "_".join(parts)
+
+
+def autoencoder_results_dir(task: str, version: int | str) -> Path:
+    version_name = str(version)
+    if not version_name:
+        raise ValueError("version must not be empty")
+    version_dir = version_name if version_name.startswith("v") else f"v{version_name}"
+    return PROJECT_ROOT / "Code" / "results" / "autoencoder" / task / version_dir
+
+
+def autoencoder_artifact_paths(
+    model_type: str,
+    task: str,
+    version: int | str,
+    length_options: str | None,
+    length_bin: int | None,
+    is_overfit: bool,
+    artifact_suffix: str | None = None,
+) -> tuple[Path, Path]:
+    artifact_stem = autoencoder_artifact_stem(
+        model_type,
+        task,
+        length_options,
+        length_bin=length_bin,
+        is_overfit=is_overfit,
+        artifact_suffix=artifact_suffix,
+    )
+    result_dir = autoencoder_results_dir(task, version)
+    checkpoint_path = result_dir / f"{artifact_stem}.pt"
+    history_path = result_dir / f"{result_dir.name}_{artifact_stem}_history.json"
+    return checkpoint_path, history_path
 
 
 def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
     args.add_argument('--model', type=str, default='AE', help='Model to train (default: AE)')
     args.add_argument('--task', type=str, default='localization', help='Task to perform (default: localization)')
     args.add_argument('--load_path', type=str, nargs='?', default=None, help='Path to load the best existing model checkpoint (optional)')
-    args.add_argument('--version', type=int, default=0, help='Version identifier for this training run (used for checkpoint and history naming)') # should always be unique
+    args.add_argument('--version', type=int, default=None, help='Version identifier for this training run (used for checkpoint and history naming)') # should always be unique
     args.add_argument(
         '--overfit_batches',
         type=int,
@@ -79,28 +127,50 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
         default=0.2,
         help='Fraction of shortest training examples to use in the first curriculum epoch.',
     )
+    # args.add_argument(
+    #     '--length_quartile',
+    #     type=str,
+    #     default=None,
+    #     choices=["s", "ms", "ml", "l"],
+    # )
     args.add_argument(
-        '--length_quartile',
+        '--length_options',
         type=str,
         default=None,
-        choices=["s", "ms", "ml", "l"],
+        choices=["quarters", "thirds", "halves"],
+        help='Split training data by sequence length into this many bins. If not set, train on all lengths.',
     )
     args.add_argument(
-        '--cumulative_quartiles',
+        '--length_bin',
+        type=int,
+        default=None,
+        help='1-indexed length bin to train on. Requires --length_options. For --length_options thirds, use 1, 2, or 3.',
+    )
+    args.add_argument(
+        '--cumulative',
         type=_str_to_bool,
         nargs='?',
         const=True,
         default=False,
-        help='If set, each length quartile includes all shorter quartiles (e.g., "ml" includes "s", "ms", and "ml"). Ignored if --length_quartile is not set.',
+        help='If set, train on all sequences up to the specified length. Otherwise, train on sequences only in the specified length range.',
+    )
+    args.add_argument(
+        '--sweep',
+        type=_str_to_bool,
+        nargs='?',
+        const=True,
+        default=False,
+        help='Run the autoencoder latent_dim/teacher_forcing_dropout_rate sweep.',
     )
     args.add_argument(
         '--max_length',
         type=int,
         default=None,
-        help='If set, only sequences with length <= max_length will be used for training and validation. Ignored if --length_quartile is set.',
+        help='If set, only sequences with length <= max_length will be used. Ignored if --length_options is set.',
     )
     
     return args.parse_args()
+
 
 def add_and_validate_train_inputs():
     args = _add_args(argparse.ArgumentParser())
@@ -112,29 +182,46 @@ def add_and_validate_train_inputs():
         hyperparams = AEParams()
     else:
         raise ValueError("Only --model AE is currently supported")
+
+    if args.version is None:
+        raise ValueError("--version is required so autoencoder checkpoints and histories are saved under Code/results/autoencoder/<task>/v<version>")
+    if args.version < 0:
+        raise ValueError("--version must be non-negative")
     
-    # Make sure this checkpoint filename is unique to avoid overwriting previous runs.
-    model_dir = "autoencoder" if args.model.upper() == "AE" else args.model.lower()
-    version_dir = Path("checkpoints") / model_dir / args.task / f"v{args.version}"
-    artifact_stem = autoencoder_artifact_stem(
-        args.model,
-        args.task,
-        args.length_quartile,
-        is_overfit=(args.overfit_batches is not None),
-    )
-    checkpoint_path = version_dir / f"{artifact_stem}.pt"
+    if args.sweep and args.load_path is not None:
+        raise ValueError("--load_path is not supported with --sweep because swept latent dimensions may not match the checkpoint.")
 
-    if checkpoint_path.exists():
-        raise ValueError(
-            f"Checkpoint already exists for this run: {checkpoint_path}"
-            )
-        
-    history_path = Path("history") / f"v{args.version}_{artifact_stem}_history.json"
+    if args.length_options is None and args.length_bin is not None:
+        raise ValueError("--length_bin requires --length_options")
+    if args.length_options is not None:
+        if args.length_bin is None:
+            raise ValueError("--length_bin is required when --length_options is set")
+        split_count = LENGTH_SPLIT_COUNTS[args.length_options]
+        if not 1 <= args.length_bin <= split_count:
+            raise ValueError(f"--length_bin must be between 1 and {split_count} for --length_options {args.length_options}")
+    if args.max_length is not None and args.max_length <= 0:
+        raise ValueError("--max_length must be positive")
+    
+    if not args.sweep:
+        # Make sure this checkpoint filename is unique to avoid overwriting previous runs.
+        checkpoint_path, history_path = autoencoder_artifact_paths(
+            args.model,
+            args.task,
+            args.version,
+            args.length_options,
+            length_bin=args.length_bin,
+            is_overfit=(args.overfit_batches is not None),
+        )
 
-    if history_path.exists():
-        raise ValueError(
-            f"Training history already exists for this run: {history_path}"
-            )
+        if checkpoint_path.exists():
+            raise ValueError(
+                f"Checkpoint already exists for this run: {checkpoint_path}"
+                )
+
+        if history_path.exists():
+            raise ValueError(
+                f"Training history already exists for this run: {history_path}"
+                )
 
     if args.curriculum_epochs < 0:
         raise ValueError("--curriculum_epochs must be non-negative")

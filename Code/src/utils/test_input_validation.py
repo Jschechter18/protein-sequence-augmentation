@@ -1,4 +1,5 @@
 import argparse
+import sys
 import warnings
 from pathlib import Path
 from utils.hyperparameters import (AutoencoderHyperparameters as AEParams)
@@ -33,12 +34,18 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
     #     default="Code/results/autoencoder/solubility/v5/solubility_ae_history.json",
     #     help="Path to the checkpoint to test. Defaults to checkpoints/<version>/model_<model>_<task>.pt when --version is set.",
     # )
+    args.add_argument(
+        "--checkpoint",
+        type=str,
+        default=None,
+        help="Path to the checkpoint to test. Defaults to Code/results/autoencoder/<task>/<version>/...",
+    )
     args.add_argument("--version", type=str, default="v5", help="Checkpoint version directory to test.")
     args.add_argument(
         "--teacher_forcing",
         type=_str_to_bool,
         default=True,
-        help="Use teacher forcing during reconstruction evaluation.",
+        help="Deprecated: both teacher-forced and autoregressive evaluations are always run.",
     )
     args.add_argument(
         "--output_path",
@@ -51,6 +58,19 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
         type=str,
         default=None,
         choices=["s", "ms", "ml", "l"],
+    )
+    args.add_argument(
+        '--length_options',
+        type=str,
+        default=None,
+        choices=["quarters", "thirds", "halves"],
+        help='Split test data by sequence length into this many bins. Matches training --length_options.',
+    )
+    args.add_argument(
+        '--length_bin',
+        type=int,
+        default=None,
+        help='1-indexed length bin to test. Requires --length_options.',
     )
     args.add_argument(
         '--cumulative_quartiles',
@@ -66,8 +86,33 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
         default=None,
         help='If set, only sequences with length <= max_length will be used for training and validation. Ignored if --length_quartile is set.',
     )
+    args.add_argument(
+        '--cumulative',
+        type=_str_to_bool,
+        nargs='?',
+        const=True,
+        default=False,
+        help='If set with --length_options, test on the selected length bin and all shorter bins.',
+    )
+    args.add_argument(
+        '--latent_dim',
+        type=int,
+        default=None,
+        help='Latent dimension suffix for selecting a swept autoencoder checkpoint.',
+    )
+    args.add_argument(
+        '--teacher_forcing_dropout_rate',
+        type=float,
+        default=None,
+        help='Teacher forcing dropout suffix for selecting a swept autoencoder checkpoint.',
+    )
 
-    return args.parse_args()
+    parsed_args = args.parse_args()
+    parsed_args.version_provided = any(
+        arg == "--version" or arg.startswith("--version=")
+        for arg in sys.argv[1:]
+    )
+    return parsed_args
 
 def add_and_validate_test_inputs():
     # pass
@@ -75,5 +120,24 @@ def add_and_validate_test_inputs():
     
     if args.model.upper() != "AE":
         raise ValueError("Only --model AE is currently supported")
+
+    has_latent_dim = args.latent_dim is not None
+    has_teacher_forcing_dropout = args.teacher_forcing_dropout_rate is not None
+    if has_latent_dim != has_teacher_forcing_dropout:
+        raise ValueError(
+            "--latent_dim and --teacher_forcing_dropout_rate must be provided together."
+        )
+
+    if args.length_quartile is not None and args.length_options is not None:
+        raise ValueError("--length_quartile and --length_options cannot be used together")
+    if args.length_options is None and args.length_bin is not None:
+        raise ValueError("--length_bin requires --length_options")
+    if args.length_options is not None:
+        if args.length_bin is None:
+            raise ValueError("--length_bin is required when --length_options is set")
+        split_counts = {"halves": 2, "thirds": 3, "quarters": 4}
+        split_count = split_counts[args.length_options]
+        if not 1 <= args.length_bin <= split_count:
+            raise ValueError(f"--length_bin must be between 1 and {split_count} for --length_options {args.length_options}")
     
     return args
