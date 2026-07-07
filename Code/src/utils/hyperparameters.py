@@ -35,7 +35,8 @@ class AutoencoderHyperparameters(Hyperparameters):
     bidirectional: bool = True
     grad_clip: bool = True # needed when training with 
     condition_decoder_on_latent: bool = True
-    teacher_forcing_dropout_rate: float = 0.3 # makes sure we don't totally rely on teacher forcing during training
+    # teacher_forcing_dropout_rate: float = 0.3 # makes sure we don't totally rely on teacher forcing during training
+    teacher_forcing_dropout_rate: float = 0.45 # makes sure we don't totally rely on teacher forcing during training
     scheduler_factor: float = 0.1
 
 @dataclass
@@ -52,9 +53,10 @@ class TransformerAutoencoderHyperparameters(Hyperparameters):
 @dataclass
 class AutoencoderSweepConfig:
     latent_dims: tuple[int, ...] = (256,)
-    teacher_forcing_dropout_rates: tuple[float, ...] = (0.3, 0.45)
+    # teacher_forcing_dropout_rates: tuple[float, ...] = (0.3, 0.45)
+    teacher_forcing_dropout_rates: tuple[float, ...] = (0.45,)
     learning_rates: tuple[float, ...] = (3e-4,)
-    lr_patiences: tuple[int, ...] = (5,)
+    lr_patiences: tuple[int, ...] = (3,)
     scheduler_factors: tuple[float, ...] = (0.5,)
 
     def iter_hyperparameters(
@@ -73,7 +75,7 @@ class AutoencoderSweepConfig:
             hyperparams = replace(
                 base,
                 latent_dim=latent_dim,
-                teacher_forcing_dropout_rate=teacher_forcing_dropout_rate,
+                teacher_forcing_dropout_rate=teacher_forcing_dropout_rate, # hardcoded for now, but can be changed to a variable if needed
                 learning_rate=learning_rate,
                 lr_patience=lr_patience,
                 scheduler_factor=scheduler_factor,
@@ -81,7 +83,7 @@ class AutoencoderSweepConfig:
 
             suffix = autoencoder_sweep_suffix(
                 latent_dim,
-                teacher_forcing_dropout_rate,
+                teacher_forcing_dropout_rate, # hardcoded for now, but can be changed to a variable if needed
                 scheduler_factor
             )
 
