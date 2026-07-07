@@ -154,6 +154,16 @@ def legacy_quartile_checkpoint_path(
     return quartile_path
 
 
+def default_checkpoint_path(
+    model_type: str,
+    task: str,
+    version: str | int | None,
+    length_quartile: str,
+) -> Path:
+    """Backward-compatible wrapper for older quartile checkpoint tests."""
+    return legacy_quartile_checkpoint_path(model_type, task, version, length_quartile)
+
+
 def checkpoint_state_dict(checkpoint: object) -> dict[str, torch.Tensor]:
     if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
         return checkpoint["model_state_dict"]
@@ -207,6 +217,7 @@ def ae_params_from_state_dict(
         "shuffle",
         "patience",
         "lr_patience",
+        "scheduler_factor",
     ):
         params.pop(training_only_param, None)
 
@@ -460,7 +471,10 @@ def evaluate_checkpoint(
             shuffle=False,
         )
         num_bins = LENGTH_SPLIT_COUNTS[length_options] if loader_type == "length_bin" else 4
-        length_boundaries = compute_train_length_boundaries(train_dataloader.dataset, num_bins=num_bins)
+        if loader_type == "length_bin":
+            length_boundaries = compute_train_length_boundaries(train_dataloader.dataset, num_bins=num_bins)
+        else:
+            length_boundaries = compute_train_length_boundaries(train_dataloader.dataset)
 
     test_dataloader = create_dataloader(
         task=args.task,
@@ -489,6 +503,9 @@ def evaluate_checkpoint(
         output_path=output_path_for_mode(output_path, "autoregressive"),
         teacher_forcing=False,
     )
+    if teacher_forced_metrics is None or autoregressive_metrics is None:
+        return
+
     results_csv_path = PROJECT_ROOT / "Code" / "results" / "tables" / "autoencoder_results.csv"
     append_autoencoder_results(
         results_csv_path=results_csv_path,
@@ -510,6 +527,7 @@ def main():
         artifact_suffix = autoencoder_sweep_suffix(
             args.latent_dim,
             args.teacher_forcing_dropout_rate,
+            args.scheduler_factor,
         )
 
     try:

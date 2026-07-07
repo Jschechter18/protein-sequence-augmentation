@@ -120,7 +120,7 @@ def model_definition(model_type: str, hyperparams: AEParams) -> tuple[AE, torch.
     
     optimizer = torch.optim.Adam(model.parameters(), lr=hyperparams.learning_rate)
     
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=hyperparams.lr_patience)
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=hyperparams.scheduler_factor, patience=hyperparams.lr_patience)
     
     return model, optimizer, scheduler
 # ----------------------------------------------------------------------------------------------------------------
@@ -238,6 +238,9 @@ def train(
         total_correct = 0
         epoch_targets = []
         epoch_predictions = []
+        grad_norm_total = 0.0
+        grad_norm_max = 0.0
+        grad_norm_batches = 0
 
         epoch_train_dataloader, curriculum_examples, curriculum_fraction = make_length_curriculum_dataloader(
             train_dataloader,
@@ -268,7 +271,12 @@ def train(
             loss: torch.Tensor = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
             loss.backward()
             if hyperparams.grad_clip:
-                clip_grad_norm_(model.parameters(), max_norm=1.0)
+                grad_norm = float(clip_grad_norm_(model.parameters(), max_norm=1.0))
+            else:
+                grad_norm = 0.0
+            grad_norm_total += grad_norm
+            grad_norm_max = max(grad_norm_max, grad_norm)
+            grad_norm_batches += 1
             optimizer.step()
             
             predictions = outputs.argmax(dim=-1)
@@ -302,6 +310,11 @@ def train(
             "train_f1": f1,
             "curriculum_fraction": curriculum_fraction,
             "curriculum_examples": curriculum_examples,
+            "learning_rate": optimizer.param_groups[0]["lr"],
+            "grad_norm_pre_clip_mean": (
+                grad_norm_total / grad_norm_batches if grad_norm_batches > 0 else 0.0
+            ),
+            "grad_norm_pre_clip_max": grad_norm_max,
         }
         history["train_loss"].append(avg_loss)
         history["train_scores"]["accuracy"].append(accuracy)
@@ -310,6 +323,7 @@ def train(
         val_metrics = validate(model, val_dataloader, loss_fn)
         val_loss = val_metrics["loss"]
         scheduler.step(val_loss)
+        epoch_info["learning_rate_after_scheduler"] = optimizer.param_groups[0]["lr"]
         epoch_info["val_loss"] = val_loss
         epoch_info["val_accuracy"] = val_metrics["accuracy"]
         history["val_loss"].append(val_loss)
@@ -596,7 +610,10 @@ def main():
             print(
                 f"\nStarting sweep run {run_index}/{len(training_runs)}: "
                 f"latent_dim={run_hyperparams.latent_dim}, "
-                f"teacher_forcing_dropout_rate={run_hyperparams.teacher_forcing_dropout_rate}"
+                f"teacher_forcing_dropout_rate={run_hyperparams.teacher_forcing_dropout_rate}, "
+                f"learning_rate={run_hyperparams.learning_rate}, "
+                f"lr_patience={run_hyperparams.lr_patience}, "
+                f"scheduler_factor={run_hyperparams.scheduler_factor}"
             )
         else:
             print()
@@ -624,13 +641,14 @@ def main():
         if args.overfit_batches is None:
             test_results = test(model, test_dataloader)
             history["test"] = test_results
-            history["test_loss"] = test_results["autoregressive"]["loss"]
-            history["test_accuracy"] = test_results["autoregressive"]["accuracy"]
-            history["test_scores"] = {
-                "accuracy": test_results["autoregressive"]["accuracy"],
-            }
-            save_training_history(history, history_path)
-            print(f"Saved test results to training history: {history_path}")
+            if test_results is not None:
+                history["test_loss"] = test_results["autoregressive"]["loss"]
+                history["test_accuracy"] = test_results["autoregressive"]["accuracy"]
+                history["test_scores"] = {
+                    "accuracy": test_results["autoregressive"]["accuracy"],
+                }
+                save_training_history(history, history_path)
+                print(f"Saved test results to training history: {history_path}")
         else:
             print("Skipping full test set evaluation in overfit debug mode.")
     

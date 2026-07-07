@@ -106,6 +106,12 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
         default=None,
         help='Teacher forcing dropout suffix for selecting a swept autoencoder checkpoint.',
     )
+    args.add_argument(
+        '--scheduler_factor',
+        type=float,
+        default=None,
+        help='Scheduler factor suffix for selecting swept checkpoints that include _sf<factor>.',
+    )
 
     parsed_args = args.parse_args()
     parsed_args.version_provided = any(
@@ -127,6 +133,8 @@ def add_and_validate_test_inputs():
         raise ValueError(
             "--latent_dim and --teacher_forcing_dropout_rate must be provided together."
         )
+    if args.scheduler_factor is not None and not has_latent_dim:
+        raise ValueError("--scheduler_factor requires --latent_dim and --teacher_forcing_dropout_rate.")
 
     if args.length_quartile is not None and args.length_options is not None:
         raise ValueError("--length_quartile and --length_options cannot be used together")
