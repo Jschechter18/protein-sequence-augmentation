@@ -112,6 +112,18 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
         default=None,
         help='Scheduler factor suffix for selecting swept checkpoints that include _sf<factor>.',
     )
+    args.add_argument(
+        '--learning_rate',
+        type=float,
+        default=None,
+        help='Learning rate suffix for selecting swept checkpoints that include _lr<learning_rate>.',
+    )
+    args.add_argument(
+        '--lr_patience',
+        type=int,
+        default=None,
+        help='LR scheduler patience suffix for selecting swept checkpoints that include _lrp<patience>.',
+    )
 
     parsed_args = args.parse_args()
     parsed_args.version_provided = any(
@@ -135,6 +147,10 @@ def add_and_validate_test_inputs():
         )
     if args.scheduler_factor is not None and not has_latent_dim:
         raise ValueError("--scheduler_factor requires --latent_dim and --teacher_forcing_dropout_rate.")
+    if args.learning_rate is not None and not has_latent_dim:
+        raise ValueError("--learning_rate requires --latent_dim and --teacher_forcing_dropout_rate.")
+    if args.lr_patience is not None and not has_latent_dim:
+        raise ValueError("--lr_patience requires --latent_dim and --teacher_forcing_dropout_rate.")
 
     if args.length_quartile is not None and args.length_options is not None:
         raise ValueError("--length_quartile and --length_options cannot be used together")

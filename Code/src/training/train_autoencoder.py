@@ -19,7 +19,7 @@ python Code/src/training/train_autoencoder.py \
   --model AE \
   --task solubility \
   --length_options thirds \
-  --length_bin <bin> \
+  --length_bin 2 \
   --cumulative \
   --sweep \
   --version <version>; sudo shutdown -h now
@@ -96,7 +96,7 @@ AUTOENCODER_SWEEP_SEARCH_SPACE = {
     "teacher_forcing_dropout_rate": (0.30,0.45),
     "learning_rate": (3e-4,),
     "lr_patience": (3,),
-    "scheduler_factor": (0.5,),
+    "scheduler_factor": (0.1,),
     "num_layers": (2,),
     "hidden_dim": (512,),
 }
