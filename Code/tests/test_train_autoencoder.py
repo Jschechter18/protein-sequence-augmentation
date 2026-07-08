@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader, Dataset
 from training import train_autoencoder
 from utils.dataloader import VOCAB_SIZE, collate_sequence_batch
 from utils.hyperparameters import AutoencoderHyperparameters as Params
+from utils.train_input_validation import autoencoder_artifact_paths
 
 
 class _FastTqdm:
@@ -91,6 +92,36 @@ def _batch(ids):
         "target_ids": input_ids.clone(),
         "length": lengths,
     }
+
+
+def test_autoencoder_artifact_paths_split_checkpoint_and_history_dirs():
+    checkpoint_path, history_path = autoencoder_artifact_paths(
+        "AE",
+        "solubility",
+        7,
+        "thirds",
+        length_bin=2,
+        is_overfit=False,
+        artifact_suffix="latent256_tfd0p45",
+    )
+
+    assert checkpoint_path.parts[-6:] == (
+        "protein-sequence-augmentation",
+        "checkpoints",
+        "autoencoder",
+        "solubility",
+        "v7",
+        "model_ae_length_2_of_3_solubility_latent256_tfd0p45.pt",
+    )
+    assert history_path.parts[-7:] == (
+        "protein-sequence-augmentation",
+        "Code",
+        "results",
+        "autoencoder",
+        "solubility",
+        "v7",
+        "v7_model_ae_length_2_of_3_solubility_latent256_tfd0p45_history.json",
+    )
 
 
 def test_model_definition_builds_autoencoder_optimizer_and_scheduler(monkeypatch):

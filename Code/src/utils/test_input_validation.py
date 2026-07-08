@@ -28,17 +28,11 @@ def _str_to_bool(value: str | bool) -> bool:
 def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
     args.add_argument("--model", type=str, default="AE", choices=["AE", "ae"], help="Model to test.")
     args.add_argument("--task", type=str, default="solubility", choices=["localization", "solubility"], help="Task to test.")
-    # args.add_argument(
-    #     "--checkpoint",
-    #     type=str,
-    #     default="Code/results/autoencoder/solubility/v5/solubility_ae_history.json",
-    #     help="Path to the checkpoint to test. Defaults to checkpoints/<version>/model_<model>_<task>.pt when --version is set.",
-    # )
     args.add_argument(
         "--checkpoint",
         type=str,
         default=None,
-        help="Path to the checkpoint to test. Defaults to Code/results/autoencoder/<task>/<version>/...",
+        help="Path to the checkpoint to test. Defaults to checkpoints/autoencoder/<task>/<version>/...",
     )
     args.add_argument("--version", type=str, default="v5", help="Checkpoint version directory to test.")
     args.add_argument(

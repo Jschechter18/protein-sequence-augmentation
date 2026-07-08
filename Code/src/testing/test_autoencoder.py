@@ -132,11 +132,11 @@ def resolve_matching_checkpoint(
     artifact_suffix: str | None,
 ) -> Path | None:
     suffix_components = artifact_suffix.split("_") if artifact_suffix else []
-    existing_candidates = sorted(
+    existing_candidates = sorted({
         path
         for path in candidates
         if path.is_file() and all(component in path.stem for component in suffix_components)
-    )
+    })
     if len(existing_candidates) == 1:
         print(
             f"Exact checkpoint not found: {expected_path}\n"
@@ -241,8 +241,10 @@ def version_checkpoint_path(
     if matching_checkpoint is not None:
         return matching_checkpoint
 
-    candidates = sorted(result_checkpoint_path.parent.glob(f"model_{model_type.lower()}*.pt"))
-    candidates.extend(sorted(legacy_checkpoint_dir.glob(f"model_{model_type.lower()}*.pt")))
+    candidates = sorted(
+        set(result_checkpoint_path.parent.glob(f"model_{model_type.lower()}*.pt"))
+        | set(legacy_checkpoint_dir.glob(f"model_{model_type.lower()}*.pt"))
+    )
     if len(candidates) == 1:
         print(
             f"Exact checkpoint not found: {result_checkpoint_path}\n"

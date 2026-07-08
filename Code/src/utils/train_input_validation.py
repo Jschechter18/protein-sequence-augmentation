@@ -55,6 +55,14 @@ def autoencoder_artifact_stem(
     return "_".join(parts)
 
 
+def autoencoder_checkpoint_dir(task: str, version: int | str) -> Path:
+    version_name = str(version)
+    if not version_name:
+        raise ValueError("version must not be empty")
+    version_dir = version_name if version_name.startswith("v") else f"v{version_name}"
+    return PROJECT_ROOT / "checkpoints" / "autoencoder" / task / version_dir
+
+
 def autoencoder_results_dir(task: str, version: int | str) -> Path:
     version_name = str(version)
     if not version_name:
@@ -80,9 +88,10 @@ def autoencoder_artifact_paths(
         is_overfit=is_overfit,
         artifact_suffix=artifact_suffix,
     )
-    result_dir = autoencoder_results_dir(task, version)
-    checkpoint_path = result_dir / f"{artifact_stem}.pt"
-    history_path = result_dir / f"{result_dir.name}_{artifact_stem}_history.json"
+    checkpoint_dir = autoencoder_checkpoint_dir(task, version)
+    results_dir = autoencoder_results_dir(task, version)
+    checkpoint_path = checkpoint_dir / f"{artifact_stem}.pt"
+    history_path = results_dir / f"{results_dir.name}_{artifact_stem}_history.json"
     return checkpoint_path, history_path
 
 
@@ -184,7 +193,7 @@ def add_and_validate_train_inputs():
         raise ValueError("Only --model AE is currently supported")
 
     if args.version is None:
-        raise ValueError("--version is required so autoencoder checkpoints and histories are saved under Code/results/autoencoder/<task>/v<version>")
+        raise ValueError("--version is required so autoencoder checkpoints and histories are saved under versioned artifact directories")
     if args.version < 0:
         raise ValueError("--version must be non-negative")
     
