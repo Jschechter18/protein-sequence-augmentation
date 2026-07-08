@@ -133,26 +133,20 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
     args.add_argument(
         '--curriculum_start_fraction',
         type=float,
-        default=0.2,
+        default=0,
         help='Fraction of shortest training examples to use in the first curriculum epoch.',
     )
-    # args.add_argument(
-    #     '--length_quartile',
-    #     type=str,
-    #     default=None,
-    #     choices=["s", "ms", "ml", "l"],
-    # )
     args.add_argument(
         '--length_options',
         type=str,
-        default=None,
+        default="thirds",
         choices=["quarters", "thirds", "halves"],
         help='Split training data by sequence length into this many bins. If not set, train on all lengths.',
     )
     args.add_argument(
         '--length_bin',
         type=int,
-        default=None,
+        default=2,
         help='1-indexed length bin to train on. Requires --length_options. For --length_options thirds, use 1, 2, or 3.',
     )
     args.add_argument(
@@ -160,7 +154,7 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
         type=_str_to_bool,
         nargs='?',
         const=True,
-        default=False,
+        default=True,
         help='If set, train on all sequences up to the specified length. Otherwise, train on sequences only in the specified length range.',
     )
     args.add_argument(
