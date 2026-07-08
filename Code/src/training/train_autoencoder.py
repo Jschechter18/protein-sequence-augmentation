@@ -82,6 +82,15 @@ print()
 num_workers = 4 if torch.cuda.is_available() else 0
 # ----------------------------------------------------------------------------------------------------------------
 SEED = 42
+AUTOENCODER_SWEEP_SEARCH_SPACE = {
+    "latent_dim": (256,),
+    "teacher_forcing_dropout_rate": (0.45,),
+    "learning_rate": (3e-4,1e-4),
+    "lr_patience": (3,),
+    "scheduler_factor": (0.5,),
+    "num_layers": (2,3),
+    "hidden_dim": (512, 1024),
+}
 
 
 def set_random_seed(seed: int = SEED) -> None:
@@ -576,7 +585,14 @@ def main():
         )
     
     if args.sweep:
-        training_runs = AESweepConfig().iter_hyperparameters(hyperparams)
+        # pass in any given hyperparameter values to the sweep config
+        training_runs = AESweepConfig(
+            latent_dim=AUTOENCODER_SWEEP_SEARCH_SPACE["latent_dim"],
+            teacher_forcing_dropout_rate=AUTOENCODER_SWEEP_SEARCH_SPACE["teacher_forcing_dropout_rate"],
+            learning_rate=AUTOENCODER_SWEEP_SEARCH_SPACE["learning_rate"],
+            lr_patience=AUTOENCODER_SWEEP_SEARCH_SPACE["lr_patience"],
+            scheduler_factor=AUTOENCODER_SWEEP_SEARCH_SPACE["scheduler_factor"],
+        ).iter_hyperparameters(hyperparams)
     else:
         training_runs = [(hyperparams, None)]
 

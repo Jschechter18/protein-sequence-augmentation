@@ -1,5 +1,8 @@
-from dataclasses import dataclass, replace
+from __future__ import annotations
+
+from dataclasses import dataclass, fields, replace
 from itertools import product
+from typing import Any, Mapping
 
 
 def autoencoder_sweep_suffix(
@@ -12,6 +15,39 @@ def autoencoder_sweep_suffix(
         return f"latent{latent_dim}_tfd{teacher_forcing_label}"
     scheduler_label = str(scheduler_factor).replace(".", "p")
     return f"latent{latent_dim}_tfd{teacher_forcing_label}_sf{scheduler_label}"
+
+
+SWEEP_FIELD_ALIASES = {
+    "latent_dims": "latent_dim",
+    "teacher_forcing_dropout_rates": "teacher_forcing_dropout_rate",
+    "learning_rates": "learning_rate",
+    "lr_patiences": "lr_patience",
+    "scheduler_factors": "scheduler_factor",
+}
+
+SWEEP_SUFFIX_LABELS = {
+    "latent_dim": "latent",
+    "teacher_forcing_dropout_rate": "tfd",
+    "learning_rate": "lr",
+    "lr_patience": "lrp",
+    "scheduler_factor": "sf",
+}
+
+
+def _format_sweep_value(value: Any) -> str:
+    if isinstance(value, float):
+        value_label = f"{value:g}"
+    else:
+        value_label = str(value)
+    return value_label.replace(".", "p").replace("-", "m")
+
+
+def _generic_sweep_suffix(hyperparameters: Mapping[str, Any]) -> str:
+    parts = []
+    for name, value in hyperparameters.items():
+        label = SWEEP_SUFFIX_LABELS.get(name, name)
+        parts.append(f"{label}{_format_sweep_value(value)}")
+    return "_".join(parts)
 
 
 @dataclass
@@ -29,11 +65,11 @@ class AutoencoderHyperparameters(Hyperparameters):
     embedding_dim: int = 256
     cnn_out_channels: int = 256
     hidden_dim: int = 512
-    latent_dim: int = 512
+    latent_dim: int = 256
     kernel_size: int = 5
     num_layers: int = 2
     bidirectional: bool = True
-    grad_clip: bool = True # needed when training with 
+    grad_clip: bool = True
     condition_decoder_on_latent: bool = True
     # teacher_forcing_dropout_rate: float = 0.3 # makes sure we don't totally rely on teacher forcing during training
     teacher_forcing_dropout_rate: float = 0.45 # makes sure we don't totally rely on teacher forcing during training
@@ -52,41 +88,46 @@ class TransformerAutoencoderHyperparameters(Hyperparameters):
 
 @dataclass
 class AutoencoderSweepConfig:
-    latent_dims: tuple[int, ...] = (256,)
-    # teacher_forcing_dropout_rates: tuple[float, ...] = (0.3, 0.45)
-    teacher_forcing_dropout_rates: tuple[float, ...] = (0.45,)
-    learning_rates: tuple[float, ...] = (3e-4,)
-    lr_patiences: tuple[int, ...] = (3,)
-    scheduler_factors: tuple[float, ...] = (0.5,)
+    def __init__(
+        self,
+        search_space: Mapping[str, tuple[Any, ...]] | None = None,
+        **hyperparameter_options: tuple[Any, ...],
+    ):
+        if search_space is None:
+            search_space = hyperparameter_options
+        elif hyperparameter_options:
+            raise ValueError(
+                "Pass sweep values either with search_space or keyword arguments, not both"
+            )
+
+        valid_fields = {field.name for field in fields(AutoencoderHyperparameters)}
+        normalized_search_space = {}
+        for name, values in search_space.items():
+            field_name = SWEEP_FIELD_ALIASES.get(name, name)
+            if field_name not in valid_fields:
+                raise ValueError(
+                    f"Unknown autoencoder hyperparameter for sweep: {name}"
+                )
+            if not values:
+                raise ValueError(
+                    f"Sweep search space for {name} must contain at least one value"
+                )
+            normalized_search_space[field_name] = values
+
+        self.search_space = normalized_search_space
 
     def iter_hyperparameters(
         self,
         base: AutoencoderHyperparameters,
     ) -> list[tuple[AutoencoderHyperparameters, str]]:
         runs = []
+        names = tuple(self.search_space.keys())
+        value_options = tuple(self.search_space[name] for name in names)
 
-        for latent_dim, teacher_forcing_dropout_rate, learning_rate, lr_patience, scheduler_factor in product(
-            self.latent_dims,
-            self.teacher_forcing_dropout_rates,
-            self.learning_rates,
-            self.lr_patiences,
-            self.scheduler_factors,
-        ):
-            hyperparams = replace(
-                base,
-                latent_dim=latent_dim,
-                teacher_forcing_dropout_rate=teacher_forcing_dropout_rate, # hardcoded for now, but can be changed to a variable if needed
-                learning_rate=learning_rate,
-                lr_patience=lr_patience,
-                scheduler_factor=scheduler_factor,
-            )
-
-            suffix = autoencoder_sweep_suffix(
-                latent_dim,
-                teacher_forcing_dropout_rate, # hardcoded for now, but can be changed to a variable if needed
-                scheduler_factor
-            )
-
+        for values in product(*value_options):
+            swept_hyperparameters = dict(zip(names, values))
+            hyperparams = replace(base, **swept_hyperparameters)
+            suffix = _generic_sweep_suffix(swept_hyperparameters)
             runs.append((hyperparams, suffix))
 
         return runs
