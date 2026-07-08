@@ -133,7 +133,7 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
     args.add_argument(
         '--curriculum_start_fraction',
         type=float,
-        default=0,
+        default=0.2,
         help='Fraction of shortest training examples to use in the first curriculum epoch.',
     )
     args.add_argument(
