@@ -2,24 +2,12 @@
 
 To run script:
 
-# GRU AE architecture:
-python Code/src/training/train_autoencoder.py --model AE --task localization
-python Code/src/training/train_autoencoder.py --model AE --task solubility
-
-python Code/src/training/train_autoencoder.py --model AE --task solubility --curriculum_epochs 5 --curriculum_start_fraction 0.2 --version <version>
-
-# Length-bin training:
-python Code/src/training/train_autoencoder.py --model AE --task solubility --version <version> --length_options thirds --length_bin 2
-
-# Cumulative length-bin training:
-python Code/src/training/train_autoencoder.py --model AE --task solubility --version <version> --length_options thirds --length_bin 2 --cumulative
-
 # Sweep:
 python Code/src/training/train_autoencoder.py \
   --model AE \
   --task solubility \
   --sweep \
-  --version _13_; sudo shutdown -h now
+  --version 12; sudo shutdown -h now
 """
 from __future__ import annotations
 
@@ -668,11 +656,13 @@ def main():
         if args.sweep:
             print(
                 f"\nStarting sweep run {run_index}/{len(training_runs)}: "
-                f"latent_dim={run_hyperparams.latent_dim}, "
-                f"teacher_forcing_dropout_rate={run_hyperparams.teacher_forcing_dropout_rate}, "
+                # f"latent_dim={run_hyperparams.latent_dim}, "
+                # f"teacher_forcing_dropout_rate={run_hyperparams.teacher_forcing_dropout_rate}, "
                 f"learning_rate={run_hyperparams.learning_rate}, "
-                f"lr_patience={run_hyperparams.lr_patience}, "
-                f"scheduler_factor={run_hyperparams.scheduler_factor}"
+                # f"lr_patience={run_hyperparams.lr_patience}, "
+                # f"scheduler_factor={run_hyperparams.scheduler_factor}"
+                f"num_layers={run_hyperparams.num_layers}, "
+                f"hidden_dim={run_hyperparams.hidden_dim}"
             )
         else:
             print()
