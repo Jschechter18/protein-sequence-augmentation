@@ -93,7 +93,7 @@ SEED = 42
 # }
 AUTOENCODER_SWEEP_SEARCH_SPACE = {
     "latent_dim": (256,),
-    "teacher_forcing_dropout_rate": (0.30,0.45),
+    "teacher_forcing_dropout_rate": (0.10,0.20,0.30,0.45),
     "learning_rate": (3e-4,),
     "lr_patience": (3,),
     "scheduler_factor": (0.1,),
