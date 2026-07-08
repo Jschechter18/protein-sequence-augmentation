@@ -67,6 +67,8 @@ class ProteinSequenceAutoencoder(nn.Module):
             raise ValueError("Only layer_type='gru' is currently supported")
         if num_layers < 1:
             raise ValueError("num_layers must be at least 1")
+        if not 0.0 <= teacher_forcing_dropout_rate <= 1.0:
+            raise ValueError("teacher_forcing_dropout_rate must be between 0 and 1")
         if latent_dim >= hidden_dim:
             # raise Warning("latent_dim should ideally be smaller than hidden_dim for effective compression")
             warnings.warn("latent_dim should ideally be smaller than hidden_dim for effective compression", UserWarning)
@@ -86,6 +88,7 @@ class ProteinSequenceAutoencoder(nn.Module):
         self.bos_idx = bos_idx
         self.eos_idx = eos_idx
         self.condition_decoder_on_latent = condition_decoder_on_latent
+        self.teacher_forcing_dropout_rate = teacher_forcing_dropout_rate
 
         self.embedding = nn.Embedding(self.vocab_size, self.embedding_dim, padding_idx=self.pad_idx)
         
@@ -120,7 +123,6 @@ class ProteinSequenceAutoencoder(nn.Module):
         # )
         self.from_latent = nn.Linear(self.latent_dim, self.hidden_dim * self.num_layers)
         decoder_input_dim = self.embedding_dim
-        self.decoder_dropout = nn.Dropout(teacher_forcing_dropout_rate)
         if self.condition_decoder_on_latent:
             decoder_input_dim += self.latent_dim
 
@@ -198,6 +200,27 @@ class ProteinSequenceAutoencoder(nn.Module):
         hidden = hidden.view(latent.size(0), self.num_layers, self.hidden_dim)
         return hidden.transpose(0, 1).contiguous()
 
+    def _apply_teacher_forcing_token_dropout(
+        self,
+        token_embeddings: torch.Tensor,
+        decoder_input_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        """Mask whole teacher-forced residue embeddings during training."""
+        if not self.training or self.teacher_forcing_dropout_rate == 0.0:
+            return token_embeddings
+
+        residue_tokens = (
+            (decoder_input_ids != self.pad_idx)
+            & (decoder_input_ids != self.bos_idx)
+            & (decoder_input_ids != self.eos_idx)
+        )
+        drop_tokens = (
+            torch.rand(decoder_input_ids.shape, device=decoder_input_ids.device)
+            < self.teacher_forcing_dropout_rate
+        ) & residue_tokens
+
+        return token_embeddings.masked_fill(drop_tokens.unsqueeze(-1), 0.0)
+
     def _decoder_inputs(
         self,
         decoder_input_ids: torch.Tensor,
@@ -218,7 +241,10 @@ class ProteinSequenceAutoencoder(nn.Module):
             The prepared decoder inputs.
         """
         token_embeddings = self.embedding(decoder_input_ids)
-        token_embeddings = self.decoder_dropout(token_embeddings) # apply teacher forcing dropout to decoder inputs
+        token_embeddings = self._apply_teacher_forcing_token_dropout(
+            token_embeddings,
+            decoder_input_ids,
+        )
         if not self.condition_decoder_on_latent:
             return token_embeddings
 

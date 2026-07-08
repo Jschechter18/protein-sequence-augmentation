@@ -82,14 +82,23 @@ print()
 num_workers = 4 if torch.cuda.is_available() else 0
 # ----------------------------------------------------------------------------------------------------------------
 SEED = 42
+# AUTOENCODER_SWEEP_SEARCH_SPACE = {
+#     "latent_dim": (256,),
+#     "teacher_forcing_dropout_rate": (0.45,),
+#     "learning_rate": (3e-4,1e-4),
+#     "lr_patience": (3,),
+#     "scheduler_factor": (0.5,),
+#     "num_layers": (2,3),
+#     "hidden_dim": (512, 1024),
+# }
 AUTOENCODER_SWEEP_SEARCH_SPACE = {
     "latent_dim": (256,),
-    "teacher_forcing_dropout_rate": (0.45,),
-    "learning_rate": (3e-4,1e-4),
+    "teacher_forcing_dropout_rate": (0.30,0.45),
+    "learning_rate": (3e-4,),
     "lr_patience": (3,),
     "scheduler_factor": (0.5,),
-    "num_layers": (2,3),
-    "hidden_dim": (512, 1024),
+    "num_layers": (2,),
+    "hidden_dim": (512,),
 }
 
 
