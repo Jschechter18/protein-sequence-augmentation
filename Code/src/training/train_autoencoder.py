@@ -19,7 +19,7 @@ python Code/src/training/train_autoencoder.py \
   --model AE \
   --task solubility \
   --sweep \
-  --version 12; sudo shutdown -h now
+  --version _13_; sudo shutdown -h now
 """
 from __future__ import annotations
 
@@ -627,11 +627,14 @@ def main():
     if args.sweep:
         # pass in any given hyperparameter values to the sweep config
         training_runs = AESweepConfig(
-            latent_dim=AUTOENCODER_SWEEP_SEARCH_SPACE["latent_dim"],
-            teacher_forcing_dropout_rate=AUTOENCODER_SWEEP_SEARCH_SPACE["teacher_forcing_dropout_rate"],
+            # latent_dim=AUTOENCODER_SWEEP_SEARCH_SPACE["latent_dim"],
+            # teacher_forcing_dropout_rate=AUTOENCODER_SWEEP_SEARCH_SPACE["teacher_forcing_dropout_rate"],
+            # learning_rate=AUTOENCODER_SWEEP_SEARCH_SPACE["learning_rate"],
+            # lr_patience=AUTOENCODER_SWEEP_SEARCH_SPACE["lr_patience"],
+            # scheduler_factor=AUTOENCODER_SWEEP_SEARCH_SPACE["scheduler_factor"],
             learning_rate=AUTOENCODER_SWEEP_SEARCH_SPACE["learning_rate"],
-            lr_patience=AUTOENCODER_SWEEP_SEARCH_SPACE["lr_patience"],
-            scheduler_factor=AUTOENCODER_SWEEP_SEARCH_SPACE["scheduler_factor"],
+            num_layers=AUTOENCODER_SWEEP_SEARCH_SPACE["num_layers"],
+            hidden_dim=AUTOENCODER_SWEEP_SEARCH_SPACE["hidden_dim"],
         ).iter_hyperparameters(hyperparams)
     else:
         training_runs = [(hyperparams, None)]
