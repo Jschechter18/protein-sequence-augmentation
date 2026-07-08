@@ -38,6 +38,7 @@ class _RecordingAutoencoder(nn.Module):
         super().__init__()
         self.logits = nn.Parameter(torch.zeros(VOCAB_SIZE))
         self.calls = []
+        self.autoregressive_calls = []
 
     def forward(self, input_ids, decoder_input_ids=None, lengths=None):
         self.calls.append(
@@ -49,6 +50,19 @@ class _RecordingAutoencoder(nn.Module):
         )
         batch_size, sequence_length = decoder_input_ids.shape
         return self.logits.view(1, 1, -1).expand(batch_size, sequence_length, -1)
+
+    def encode(self, input_ids, lengths=None):
+        return input_ids.float()
+
+    def decode_autoregressive(self, latent, max_length):
+        self.autoregressive_calls.append(
+            {
+                "latent": latent.detach().clone(),
+                "max_length": max_length,
+            }
+        )
+        batch_size = latent.size(0)
+        return self.logits.view(1, 1, -1).expand(batch_size, max_length, -1)
 
 
 class _LengthDataset(Dataset):
@@ -123,7 +137,7 @@ def test_model_definition_builds_autoencoder_optimizer_and_scheduler(monkeypatch
         "pad_idx": train_autoencoder.PAD_IDX,
         "bos_idx": train_autoencoder.BOS_IDX,
         "condition_decoder_on_latent": True,
-        "teacher_forcing_dropout_rate": 0.3,
+        "teacher_forcing_dropout_rate": hyperparams.teacher_forcing_dropout_rate,
     }
     assert created["device"] == torch.device("cpu")
     assert isinstance(optimizer, torch.optim.Adam)
@@ -164,6 +178,43 @@ def test_train_uses_shifted_decoder_inputs_and_validation_loss(monkeypatch):
     assert not torch.equal(model.logits.detach(), before)
     assert len(scheduler.metrics) == 1
     assert scheduler.metrics[0] == pytest.approx(history["val_loss"][0])
+    assert history["autoregressive_val"] == []
+
+
+def test_train_runs_autoregressive_validation_every_10_epochs(monkeypatch):
+    model = _RecordingAutoencoder()
+    scheduler = _RecordingScheduler()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.5)
+
+    monkeypatch.setattr(train_autoencoder, "device", torch.device("cpu"))
+    monkeypatch.setattr(train_autoencoder, "tqdm", _FastTqdm)
+    monkeypatch.setattr(train_autoencoder.torch, "save", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        train_autoencoder,
+        "model_definition",
+        lambda _model_type, _hyperparams: (model, optimizer, scheduler),
+    )
+
+    train_batch = _batch([[2, 4, 5, 0], [2, 6, 0, 0]])
+    valid_batch = _batch([[2, 7, 0, 0]])
+
+    _, history = train_autoencoder.train(
+        "ae",
+        [train_batch],
+        [valid_batch],
+        Params(num_epochs=10, patience=20),
+        version=0,
+    )
+
+    assert len(model.autoregressive_calls) == 1
+    assert model.autoregressive_calls[0]["max_length"] == 3
+    assert history["autoregressive_val"] == [
+        {
+            "epoch": 10,
+            "loss": pytest.approx(history["epochs"][9]["autoregressive_val_loss"]),
+            "accuracy": pytest.approx(history["epochs"][9]["autoregressive_val_accuracy"]),
+        }
+    ]
 
 
 def test_length_curriculum_uses_shortest_examples_first():

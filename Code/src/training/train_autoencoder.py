@@ -173,6 +173,40 @@ def validate(model: AE, dataloader: DataLoader, loss_fn: nn.CrossEntropyLoss) ->
     return {"loss": avg_loss, "accuracy": accuracy}
 # ----------------------------------------------------------------------------------------------------------------
 
+def validate_autoregressive(model: AE, dataloader: DataLoader, loss_fn: nn.CrossEntropyLoss) -> dict[str, float]:
+    model.eval()
+    total_loss = 0.0
+    total_tokens = 0
+    total_correct = 0
+
+    with torch.no_grad():
+        for batch in dataloader:
+            inputs = batch["input_ids"].to(device)
+            lengths = batch["length"].to(device)
+            targets = batch["target_ids"].to(device)
+
+            targets = targets[:, 1:]
+            latent = model.encode(inputs, lengths=lengths)
+            outputs = model.decode_autoregressive(
+                latent,
+                max_length=targets.size(1),
+            )
+            loss = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
+
+            predictions = outputs.argmax(dim=-1)
+            non_pad_tokens = targets != PAD_IDX
+            batch_tokens = non_pad_tokens.sum().item()
+            total_loss += loss.item() * batch_tokens
+            total_correct += (predictions[non_pad_tokens] == targets[non_pad_tokens]).sum().item()
+            total_tokens += batch_tokens
+
+    avg_loss = total_loss / total_tokens if total_tokens > 0 else 0.0
+    accuracy = total_correct / total_tokens if total_tokens > 0 else 0.0
+    print(f"Autoregressive Validation Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}")
+
+    return {"loss": avg_loss, "accuracy": accuracy}
+# ----------------------------------------------------------------------------------------------------------------
+
 def save_training_history(history: dict, history_path: str | Path) -> None:
     history_path = Path(history_path)
     history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -238,6 +272,7 @@ def train(
         "val_scores": {
             "accuracy": [],
         },
+        "autoregressive_val": [],
     }
     if history_path is not None:
         save_training_history(history, history_path)
@@ -346,6 +381,19 @@ def train(
         epoch_info["val_accuracy"] = val_metrics["accuracy"]
         history["val_loss"].append(val_loss)
         history["val_scores"]["accuracy"].append(val_metrics["accuracy"])
+
+        if (epoch + 1) % 10 == 0:
+            autoregressive_val_metrics = validate_autoregressive(model, val_dataloader, loss_fn)
+            epoch_info["autoregressive_val_loss"] = autoregressive_val_metrics["loss"]
+            epoch_info["autoregressive_val_accuracy"] = autoregressive_val_metrics["accuracy"]
+            history["autoregressive_val"].append(
+                {
+                    "epoch": epoch + 1,
+                    "loss": autoregressive_val_metrics["loss"],
+                    "accuracy": autoregressive_val_metrics["accuracy"],
+                }
+            )
+
         history["epochs"].append(epoch_info)
         if history_path is not None:
             save_training_history(history, history_path)
