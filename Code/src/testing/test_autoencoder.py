@@ -365,6 +365,12 @@ def ae_params_from_state_dict(
                 state_dict["decoder.weight_ih_l0"].shape[1]
                 == state_dict["embedding.weight"].shape[1] + state_dict["to_latent.weight"].shape[0]
             ),
+            "use_decoder_positional_embeddings": "decoder_position_embedding.weight" in state_dict,
+            "max_decoder_positions": (
+                state_dict["decoder_position_embedding.weight"].shape[0]
+                if "decoder_position_embedding.weight" in state_dict
+                else hyperparams.max_decoder_positions
+            ),
             "pad_idx": PAD_IDX,
             "bos_idx": BOS_IDX,
         }

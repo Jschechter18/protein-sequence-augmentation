@@ -103,6 +103,8 @@ def model_definition(model_type: str, hyperparams: AEParams) -> tuple[AE, torch.
             bos_idx=BOS_IDX,
             condition_decoder_on_latent=hyperparams.condition_decoder_on_latent,
             teacher_forcing_dropout_rate=hyperparams.teacher_forcing_dropout_rate,
+            use_decoder_positional_embeddings=hyperparams.use_decoder_positional_embeddings,
+            max_decoder_positions=hyperparams.max_decoder_positions,
         ).to(device)
     else:
         raise ValueError(f"Model type {model_type} not supported.")

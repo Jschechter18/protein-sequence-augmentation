@@ -62,6 +62,79 @@ def test_autoencoder_decoder() -> None:
     # Check the output shape
     assert output_logits.shape == (batch_size, sequence_length, model.vocab_size), f"Expected output shape {(batch_size, sequence_length, model.vocab_size)}, but got {output_logits.shape}"
 
+def test_autoencoder_decoder_positional_embeddings_forward_pass() -> None:
+    model = AE(
+        layer_type="gru",
+        embedding_dim=64,
+        cnn_out_channels=64,
+        hidden_dim=128,
+        latent_dim=64,
+        kernel_size=3,
+        num_layers=1,
+        dropout=0.0,
+        pad_idx=0,
+        bos_idx=2,
+        use_decoder_positional_embeddings=True,
+        max_decoder_positions=16,
+    )
+    batch_size = 4
+    sequence_length = 10
+    input_ids = torch.randint(0, model.vocab_size, (batch_size, sequence_length))
+
+    logits = model(input_ids)
+
+    assert logits.shape == (batch_size, sequence_length, model.vocab_size)
+
+
+def test_autoencoder_decoder_positional_embeddings_autoregressive_decode() -> None:
+    model = AE(
+        layer_type="gru",
+        embedding_dim=64,
+        cnn_out_channels=64,
+        hidden_dim=128,
+        latent_dim=64,
+        kernel_size=3,
+        num_layers=1,
+        dropout=0.0,
+        pad_idx=0,
+        bos_idx=2,
+        use_decoder_positional_embeddings=True,
+        max_decoder_positions=16,
+    )
+    batch_size = 4
+    sequence_length = 10
+    latent_vectors = torch.randn(batch_size, model.latent_dim)
+
+    output_logits = model.decode(latent_vectors, sequence_length=sequence_length)
+
+    assert output_logits.shape == (batch_size, sequence_length, model.vocab_size)
+
+
+def test_decoder_positional_embeddings_validate_max_positions() -> None:
+    model = AE(
+        layer_type="gru",
+        embedding_dim=64,
+        cnn_out_channels=64,
+        hidden_dim=128,
+        latent_dim=64,
+        kernel_size=3,
+        num_layers=1,
+        dropout=0.0,
+        pad_idx=0,
+        bos_idx=2,
+        use_decoder_positional_embeddings=True,
+        max_decoder_positions=4,
+    )
+    decoder_input_ids = torch.tensor([[2, 4, 5, 6, 7]])
+    latent = torch.randn(1, model.latent_dim)
+
+    try:
+        model._decoder_inputs(decoder_input_ids, latent)
+    except ValueError as exc:
+        assert "max_decoder_positions" in str(exc)
+    else:
+        raise AssertionError("Expected decoder inputs beyond max positions to fail")
+
 def test_autoencoder_decoder_can_disable_latent_conditioning() -> None:
     model = _make_model()
     legacy_model = AE(

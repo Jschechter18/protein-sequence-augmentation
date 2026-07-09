@@ -27,6 +27,8 @@ class AutoencoderHyperparameters(Hyperparameters):
     grad_clip: bool = True
     condition_decoder_on_latent: bool = True
     teacher_forcing_dropout_rate: float = 0.1
+    use_decoder_positional_embeddings: bool = False # try this out
+    max_decoder_positions: int = 1024
     scheduler_factor: float = 0.1
 
 @dataclass
