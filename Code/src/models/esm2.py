@@ -8,8 +8,6 @@ from typing import Tuple, Dict
 
 import numpy as np
 import pandas as pd
-from sklearn import metrics
-from sklearn import metrics
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -33,10 +31,11 @@ def parse_args():
     parser.add_argument("--results_dir", type=str, default="Code/results/esm2")
     parser.add_argument("--checkpoint_dir", type=str, default="checkpoints")
     parser.add_argument("--unfreeze_esm", action="store_true")
-    parser.add_argument("--unfreeze_layers", type=int, default=1)
+    parser.add_argument("--classifier_head", type=str, default="cnn", choices=["cnn","lstm","gru"])
+    parser.add_argument("--unfreeze_layers", type=int, default=0)
+    parser.add_argument("--unfreeze_all_esm", action="store_true", help="Unfreeze the entire ESM-2 backbone.")
     parser.add_argument("--esm_learning_rate", type=float, default=1e-5)
     parser.add_argument("--cnn_checkpoint", type=str, default= None)
-
     parser.add_argument("--esm_model_name", type=str, default="esm2_t6_8M_UR50D")
     parser.add_argument("--num_classes", type=int, default=2)
     parser.add_argument("--batch_size", type=int, default=16)
@@ -47,10 +46,32 @@ def parse_args():
 
     return parser.parse_args()
 
-def create_run_dir(results_dir, dataset):
+def get_stage_name(unfreeze_esm: bool, unfreeze_all_esm: bool, unfreeze_layers: int) -> str:
+    if not unfreeze_esm and not unfreeze_all_esm:
+        return "stage_0_frozen"
+    if unfreeze_all_esm:
+        return "stage_full"
+    return f"stage{unfreeze_layers}_unfreeze_last{unfreeze_layers}"
+
+
+def create_run_dir(results_dir, dataset, args):
+    stage = get_stage_name(
+        args.unfreeze_esm,
+        args.unfreeze_all_esm,
+        args.unfreeze_layers,
+    )
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = Path(results_dir) / dataset / f"esm2_{dataset}_{timestamp}"
+
+    run_dir = (
+        Path(results_dir)
+        / dataset
+        / stage
+        / f"esm2_{dataset}_{timestamp}"
+    )
+
     run_dir.mkdir(parents=True, exist_ok=True)
+
     return run_dir
 
 def save_json(obj, path):
@@ -163,7 +184,8 @@ class ESM2Encoder(nn.Module):
         if self.model is None:
             # Fallback: return random embeddings
             max_len = max(len(seq) for seq in sequences)
-            return torch.randn(len(sequences), max_len, 320, device=next(self.parameters()).device)
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            return torch.randn(len(sequences), max_len, 320, device=device)
         
         batch_converter = self.alphabet.get_batch_converter() # type: ignore
 
@@ -310,6 +332,88 @@ class CNN1DClassifier(nn.Module):
         logits = self.fc(x)
         return logits
 
+class RNNClassifier(nn.Module):
+    """
+    RNN classifier (LSTM or GRU) applied to ESM-2 embeddings.
+
+    Input to forward():
+        x shape [B, L, 320]
+        B = batch size
+        L = sequence length
+        320 = ESM embedding dimension
+
+    Output from forward():
+
+        logits: Tensor of shape [B,C]
+        B = batch size
+        C = number of classes
+    """
+
+    def __init__(
+        self,
+        input_dim: int = 320,
+        hidden_dim: int = 128,
+        num_classes: int = 2,
+        num_layers: int = 1,
+        dropout_rate: float = 0.3,
+        bidirectional: bool = True,
+        rnn_type: str = "gru"  # or "lstm"
+    ):
+        super().__init__()
+
+        self.rnn_type = rnn_type
+        self.bidirectional = bidirectional
+
+        rnn_class = nn.GRU if rnn_type == "gru" else nn.LSTM
+        self.rnn = rnn_class(
+            input_size=input_dim,
+            hidden_size=hidden_dim,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout_rate if num_layers > 1 else 0.0,
+            bidirectional=bidirectional
+        )
+
+        rnn_output_dim = hidden_dim * 2 if bidirectional else hidden_dim
+        
+        self.dropout = nn.Dropout(dropout_rate)
+        self.fc = nn.Linear(rnn_output_dim, num_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Input tensor of shape (batch_size, seq_len, input_dim)
+        Returns:
+            Logits of shape (batch_size, num_classes)
+        """
+        # RNN expects input shape [B, L, input_dim]
+        # ESM-2 embeddings are already in this shape.
+        rnn_out, hidden = self.rnn(x)
+
+        if self.rnn_type == "lstm":
+            # For LSTM, hidden is a tuple (h_n, c_n)
+            hidden_state, cell_state = hidden
+        else:
+            hidden_state = hidden
+
+        if self.bidirectional: 
+            #last forward and backward hidden states
+            forward_hidden = hidden_state[-2, :, :]
+            backward_hidden = hidden_state[-1, :, :]
+            last_hidden = torch.cat((forward_hidden, backward_hidden), dim=1)
+        else:
+            last_hidden = hidden_state[-1, :, :]    
+            
+        # last_hidden shape: 
+        # [B, hidden_dim * * 2] if bidirectional
+        # [B, hidden_dim] if unidirectional
+        last_hidden = self.dropout(last_hidden)
+
+        logits = self.fc(last_hidden)
+        return logits
+
+
+
 
 class ESM2CNNPipeline:
     """
@@ -321,11 +425,11 @@ class ESM2CNNPipeline:
         5. validation loop
         6. checkpoint and metrics saving
 
-    Stage 1:
+    Stage 0:
         unfreeze_esm=False
         ESM-2 frozen, CNN trainable.
 
-    Stage 2:
+    Stage 1:
         unfreeze_esm=True
         final ESM-2 layer(s) trainable with low learning rate,
         CNN trainable with classifier learning rate.
@@ -338,17 +442,21 @@ class ESM2CNNPipeline:
         esm_model_name: str = "facebook/esm2_t6_8M",
         run_dir: str | Path | None = None,
         checkpoint_dir: str | Path = "checkpoints",
+        unfreeze_all_esm: bool = False,
         unfreeze_esm: bool = False,
         unfreeze_layers: int = 1,
         esm_learning_rate: float = 1e-5,
         cnn_checkpoint: str | None = None,
+        classifier_head: str = "cnn"  # or "lstm" or "gru"
     ):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.num_classes = num_classes
         self.learning_rate = learning_rate
         self.esm_learning_rate = esm_learning_rate
         self.unfreeze_layers = unfreeze_layers
-        self.unfreeze_esm = unfreeze_esm
+        self.unfreeze_esm = unfreeze_esm     # unfreeze last N layers
+        self.unfreeze_all_esm = unfreeze_all_esm
+        self.classifier_head = classifier_head
         self.run_dir = Path(run_dir) if run_dir is not None else Path(".")
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -358,13 +466,41 @@ class ESM2CNNPipeline:
         # Output: embeddings [B, L, 320].
         self.encoder = ESM2Encoder(model_name=esm_model_name).to(self.device)
 
-        # Initialize CNN classifier.
+        # Initialize classifier.
         # Input: ESM embeddings [B, L, 320].
         # Output: class logits [B, num_classes].
-        self.classifier = CNN1DClassifier(
-            input_dim=320,
-            num_classes=num_classes
-        ).to(self.device)
+        self.classifier_head = classifier_head
+
+        if classifier_head == "cnn":
+            self.classifier = CNN1DClassifier(
+                input_dim=320,
+                num_classes=num_classes
+            ).to(self.device)
+
+        elif classifier_head == "gru":
+            self.classifier = RNNClassifier(
+                input_dim=320,
+                hidden_dim=128,
+                num_classes=num_classes,
+                num_layers=1,
+                dropout_rate=0.3,
+                bidirectional=True,
+                rnn_type="gru"
+            ).to(self.device)
+
+        elif classifier_head == "lstm":
+            self.classifier = RNNClassifier(
+                input_dim=320,
+                hidden_dim=128,
+                num_classes=num_classes,
+                num_layers=1,
+                dropout_rate=0.3,
+                bidirectional=True,
+                rnn_type="lstm"
+            ).to(self.device)
+
+        else:
+            raise ValueError(f"Unsupported classifier_head: {classifier_head}")
 
         self.checkpoint_dir = Path(checkpoint_dir)
 
@@ -376,10 +512,25 @@ class ESM2CNNPipeline:
         self.cnn_checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.esm_checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-        if unfreeze_esm:
-            self.encoder.unfreeze_last_layers(num_layers=unfreeze_layers)
-        else:
-            self.encoder.freeze()
+        # Freeze all ESM-2 parameters first.
+        self.encoder.freeze()
+
+        # Option 1: full fine-tuning
+        if unfreeze_all_esm:
+            logger.info("Unfreezing entire ESM-2 backbone.")
+
+            if self.encoder.model is not None:
+                for param in self.encoder.model.parameters():
+                    param.requires_grad = True
+            else:
+                logger.warning("ESM model is not available; cannot unfreeze backbone.")
+
+        # Option 2: partial fine-tuning
+        elif unfreeze_esm:
+            logger.info(
+                f"Unfreezing last {unfreeze_layers} ESM transformer layer(s)."
+            )
+            self.encoder.unfreeze_last_layers(unfreeze_layers)
 
         if cnn_checkpoint:
             checkpoint_path = Path(cnn_checkpoint)
@@ -403,6 +554,26 @@ class ESM2CNNPipeline:
                 "lr": esm_learning_rate
             }
         ])
+
+        trainable_encoder = sum(
+            p.numel()
+            for p in self.encoder.parameters()
+            if p.requires_grad
+        )
+
+        trainable_classifier = sum(
+            p.numel()
+            for p in self.classifier.parameters()
+            if p.requires_grad
+        )
+
+        logger.info(
+            f"Trainable ESM parameters: {trainable_encoder:,}"
+        )
+
+        logger.info(
+            f"Trainable classifier parameters: {trainable_classifier:,}"
+        )
         
         self.criterion = nn.CrossEntropyLoss()
         self.best_val_loss = float('inf')
@@ -594,17 +765,20 @@ class ESM2CNNPipeline:
                 "model": "ESM2 + CNN",
                 "esm_model": "esm2_t6_8M_UR50D",
                 "device": self.device,
-                "dataset": self.run_dir.name,
+                "dataset": self.run_dir.parent.parent.name,
                 "num_classes": self.num_classes,
                 "learning_rate": self.learning_rate,
                 "esm_learning_rate": self.esm_learning_rate,
                 "epochs": epochs,
                 "early_stopping_patience": early_stopping_patience,
-                "model": "ESM2 + 1D CNN",
+                "classifier_head": self.classifier_head,
+                "unfreeze_all_esm": self.unfreeze_all_esm,
+                "unfreeze_esm": self.unfreeze_esm,
+                "unfreeze_layers": self.unfreeze_layers if self.unfreeze_esm else 0,
+                "fine_tuning_strategy":("full_backbone" if self.unfreeze_all_esm else f"last_{self.unfreeze_layers}_layers" if self.unfreeze_esm else "frozen_backbone"),
                 "embedding_dim": 320,
                 "cnn_num_filters": 64,
                 "cnn_kernel_sizes": [3, 5, 7],
-                "unfreeze_layers": self.unfreeze_layers,
             },
             "summary": {
                 "best_val_loss": self.best_val_loss,
@@ -723,7 +897,7 @@ def main():
 
     torch.manual_seed(args.seed)
 
-    run_dir = create_run_dir(args.results_dir, args.dataset)
+    run_dir = create_run_dir(args.results_dir, args.dataset, args)
 
     if torch.cuda.is_available():
         device = "cuda"
@@ -737,6 +911,7 @@ def main():
     config["device"] = device
     config["model"] = "ESM2 + 1D CNN"
     config["encoding"] = "raw"
+    config["classifier_head"] = args.classifier_head
 
     save_json(config, run_dir / "config.json")
 
@@ -744,6 +919,16 @@ def main():
     logger.info(f"Dataset: {args.dataset}")
     logger.info(f"Device: {device}")
     logger.info(f"Run directory: {run_dir}")
+    logger.info(f"Classifier head: {args.classifier_head}") 
+
+    if args.unfreeze_all_esm:
+        strategy = "Full ESM-2 backbone unfrozen"
+    elif args.unfreeze_esm:
+        strategy = f"Last {args.unfreeze_layers} ESM layer(s) unfrozen"
+    else:
+        strategy = "Frozen ESM-2 backbone"
+
+    logger.info(f"Fine-tuning strategy: {strategy}")
 
     train_loader = create_dataloader(
         task=args.dataset,
@@ -775,9 +960,11 @@ def main():
         run_dir=run_dir,
         checkpoint_dir=args.checkpoint_dir,
         unfreeze_esm=args.unfreeze_esm,
+        unfreeze_all_esm=args.unfreeze_all_esm, 
         unfreeze_layers=args.unfreeze_layers,
         esm_learning_rate=args.esm_learning_rate,
         cnn_checkpoint=args.cnn_checkpoint,
+        classifier_head=args.classifier_head
     )
 
     pipeline.fit(
