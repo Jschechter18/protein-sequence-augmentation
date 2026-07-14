@@ -42,6 +42,9 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--learning_rate", type=float, default=1e-3)
     parser.add_argument("--early_stopping_patience", type=int, default=5)
+    parser.add_argument("--evaluate_test", action="store_true",help=(
+        "Reload the best validation checkpoint and evaluate "
+        "once on the held-out test set after training."),)
     parser.add_argument("--seed", type=int, default=42)
 
     return parser.parse_args()
@@ -838,7 +841,224 @@ class ESM2CNNPipeline:
         save_json(history_json, self.run_dir / "history.json")
 
         return history
+    def load_checkpoint(self):
+        """
+        
+        Load the classifier and ESM-2 states associated with the best
+        validation-loss checkpoint for the current run.
+
+        For frozen ESM-2 runs, loading best_esm.pt is optional because the
+        backbone was never updated. For partial/full fine-tuning runs, it is
+        necessary because the ESM weights changed during training.
+        
+        
+        
+        """
+
+        cnn_path = self.cnn_checkpoint_dir / "best_cnn.pt" # classifier checkpoint
+        esm_path = self.esm_checkpoint_dir / "best_esm.pt" # ESM-2 checkpoint
+
+        if not cnn_path.exists():
+            raise FileNotFoundError(f"CNN checkpoint not found: {cnn_path}"
+                )
+        
+        self.classifier.load_state_dict(
+            torch.load(
+                cnn_path, 
+                map_location=self.device,
+            )
+        )
+
+        logger.info(f"Best CNN checkpoint loaded from {cnn_path}")
+
+        if esm_path.exists() and self.encoder.model is not None:
+            self.encoder.model.load_state_dict(torch.load(esm_path, map_location=self.device))
+            logger.info(f"Best ESM checkpoint loaded from {esm_path}")
+        else:
+            logger.warning(f"ESM checkpoint not found: {esm_path}. Starting from scratch.")
+
+    def evaluate_test(self, test_loader: DataLoader,) -> Dict[str, float]:
+        """ 
+        Evaluate the model on the test set.
+
+        saves: test_predictions.csv & test_metrics.json
+        """
+        self.encoder.eval()
+        self.classifier.eval()
+
+        all_sequences = []
+        all_true_labels = []
+        all_predictions = []
+        all_probabilities = []
+        all_confidences = []
+        all_sequence_lengths = []
+
+        total_loss = 0.0
+        correct = 0
+        total = 0
+
+        with torch.inference_mode():
+            for batch in tqdm(
+                test_loader,
+                desc="Test evaluation",
+            ):
+                sequences = batch["sequence"]
+
+                labels = (
+                    batch["label"]
+                    .to(self.device)
+                    .long()
+                )
+
+                # Raw sequences -> ESM-2 residue representations.
+                embeddings = self.encoder(sequences)
+                embeddings = embeddings.to(self.device)
+
+                # ESM embeddings -> selected classifier head.
+                logits = self.classifier(embeddings)
+
+                loss = self.criterion(logits, labels)
+                total_loss += loss.item()
+
+                probabilities = torch.softmax(logits, dim =1)
+
+                confidence = torch.max(probabilities, dim=1).values
+
+                all_sequences.extend(sequences)
+                all_sequence_lengths.extend(
+                    [len(seq) for seq in sequences]
+                )
+
+                all_true_labels.extend(
+                labels.cpu().tolist()
+                )
+
+                all_predictions.extend(
+                    torch.argmax(logits, dim=1).cpu().tolist()
+                )
+
+                all_confidences.extend(
+                    confidence.cpu().tolist()
+                )
+
+                all_probabilities.extend(
+                    probabilities.cpu().tolist()
+                )
+
+        true_labels = np.asarray(all_true_labels)
+        predictions = np.asarray(all_predictions)
+        probabilities = np.asarray(all_probabilities)
+
+        test_metrics = {
+            "test_loss": float(
+                total_loss / len(test_loader)
+            ),
+            "test_accuracy": float(
+                accuracy_score(
+                    true_labels,
+                    predictions,
+                )
+            ),
+            "test_f1": float(
+                f1_score(
+                    true_labels,
+                    predictions,
+                    average="macro",
+                    zero_division=0,
+                )
+            ),
+            "test_precision": float(
+                precision_score(
+                    true_labels,
+                    predictions,
+                    average="macro",
+                    zero_division=0,
+                )
+            ),
+            "test_recall": float(
+                recall_score(
+                    true_labels,
+                    predictions,
+                    average="macro",
+                    zero_division=0,
+                )
+            ),
+            "num_test_samples": int(
+                len(true_labels)
+            ),
+        }
+
+        prediction_data = {
+            "sample_index": np.arange(
+                len(true_labels)
+            ),
+            "sequence": all_sequences,
+            "sequence_length": all_sequence_lengths,
+            "true_label": true_labels,
+            "predicted_label": predictions,
+            "confidence": all_confidences,
+            "correct": (
+                true_labels == predictions
+            ),
+        }
+
+        # Add one probability column for every class.
     
+        for class_index in range(self.num_classes):
+            prediction_data[
+                f"probability_class_{class_index}"
+            ] = probabilities[:, class_index]
+
+        predictions_df = pd.DataFrame(
+            prediction_data
+        )
+
+        predictions_path = (
+            self.run_dir
+            / "test_predictions.csv"
+        )
+
+        metrics_path = (
+            self.run_dir
+            / "test_metrics.json"
+        )
+
+        predictions_df.to_csv(
+            predictions_path,
+            index=False,
+        )
+
+        save_json(
+            test_metrics,
+            metrics_path,
+        )
+
+        logger.info(
+            f"Test predictions saved to {predictions_path}"
+        )
+
+        logger.info(
+            f"Test metrics saved to {metrics_path}"
+        )
+
+        logger.info(
+             "Test Loss: %.4f | "
+            "Test Accuracy: %.4f | "
+            "Test F1: %.4f | "
+            "Test Precision: %.4f | "
+            "Test Recall: %.4f",
+            test_metrics["test_loss"],
+            test_metrics["test_accuracy"],
+            test_metrics["test_f1"],
+            test_metrics["test_precision"],
+            test_metrics["test_recall"],
+        )
+
+        return test_metrics
+
+
+    
+
     def save_checkpoint(self):
         """Save CNN and ESM-2 checkpoints separately."""
 
@@ -906,6 +1126,7 @@ def main():
     else:
         device = "cpu"
 
+
     config = vars(args)
     config["run_dir"] = str(run_dir)
     config["device"] = device
@@ -952,6 +1173,17 @@ def main():
         use_cache=False,
     )
 
+    test_loader = create_dataloader(
+        task=args.dataset,
+        split="test",
+        data_dir=args.data_dir,
+        mode="classification",
+        encoding="raw",
+        batch_size=args.batch_size,
+        shuffle=False,
+        use_cache=False,
+    )
+
     pipeline = ESM2CNNPipeline(
         num_classes=args.num_classes,
         learning_rate=args.learning_rate,
@@ -974,6 +1206,20 @@ def main():
         early_stopping_patience=args.early_stopping_patience,
     )
 
+    # Reload the model selected by validation loss rather than evaluating
+    # whatever weights happened to remain after the final epoch.
+    pipeline.load_checkpoint()
+
+    # Evaluate the selected model once on the held-out test set.
+    pipeline.evaluate_test(
+        test_loader=test_loader
+    )
+
+    if args.evaluate_test:
+        pipeline.load_checkpoint()
+        pipeline.evaluate_test(
+            test_loader=test_loader
+    )
 
 
 if __name__ == "__main__":
