@@ -30,6 +30,8 @@ class ProteinSequenceAutoencoder(nn.Module):
         condition_decoder_on_latent: bool = True,
         layer_type: str = "gru", # placeholder for future layer types
         teacher_forcing_dropout_rate: float = 0.0,
+        use_decoder_positional_embeddings: bool = False,
+        max_decoder_positions: int = 1024,
         # is_autoregressive: bool = False, # really should only be when training -> optional for validation and testing
     ) -> None:
         """Initialize the protein sequence autoencoder.
@@ -67,6 +69,10 @@ class ProteinSequenceAutoencoder(nn.Module):
             raise ValueError("Only layer_type='gru' is currently supported")
         if num_layers < 1:
             raise ValueError("num_layers must be at least 1")
+        if not 0.0 <= teacher_forcing_dropout_rate <= 1.0:
+            raise ValueError("teacher_forcing_dropout_rate must be between 0 and 1")
+        if max_decoder_positions < 1:
+            raise ValueError("max_decoder_positions must be at least 1")
         if latent_dim >= hidden_dim:
             # raise Warning("latent_dim should ideally be smaller than hidden_dim for effective compression")
             warnings.warn("latent_dim should ideally be smaller than hidden_dim for effective compression", UserWarning)
@@ -86,8 +92,16 @@ class ProteinSequenceAutoencoder(nn.Module):
         self.bos_idx = bos_idx
         self.eos_idx = eos_idx
         self.condition_decoder_on_latent = condition_decoder_on_latent
+        self.teacher_forcing_dropout_rate = teacher_forcing_dropout_rate
+        self.use_decoder_positional_embeddings = use_decoder_positional_embeddings
+        self.max_decoder_positions = max_decoder_positions
 
         self.embedding = nn.Embedding(self.vocab_size, self.embedding_dim, padding_idx=self.pad_idx)
+        if self.use_decoder_positional_embeddings:
+            self.decoder_position_embedding = nn.Embedding(
+                self.max_decoder_positions,
+                self.embedding_dim,
+            )
         
         # TODO: experiment with adding a CNN layer before the GRU encoder to capture local patterns in the sequence
         self.cnn = nn.Conv1d(
@@ -120,7 +134,6 @@ class ProteinSequenceAutoencoder(nn.Module):
         # )
         self.from_latent = nn.Linear(self.latent_dim, self.hidden_dim * self.num_layers)
         decoder_input_dim = self.embedding_dim
-        self.decoder_dropout = nn.Dropout(teacher_forcing_dropout_rate)
         if self.condition_decoder_on_latent:
             decoder_input_dim += self.latent_dim
 
@@ -132,6 +145,7 @@ class ProteinSequenceAutoencoder(nn.Module):
             dropout=rnn_dropout,
             bidirectional=False,
         )
+        
         self.output = nn.Linear(self.hidden_dim, self.vocab_size)
 
     def encode(
@@ -198,10 +212,32 @@ class ProteinSequenceAutoencoder(nn.Module):
         hidden = hidden.view(latent.size(0), self.num_layers, self.hidden_dim)
         return hidden.transpose(0, 1).contiguous()
 
+    def _apply_teacher_forcing_token_dropout(
+        self,
+        token_embeddings: torch.Tensor,
+        decoder_input_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        """Mask whole teacher-forced residue embeddings during training."""
+        if not self.training or self.teacher_forcing_dropout_rate == 0.0:
+            return token_embeddings
+
+        residue_tokens = (
+            (decoder_input_ids != self.pad_idx)
+            & (decoder_input_ids != self.bos_idx)
+            & (decoder_input_ids != self.eos_idx)
+        )
+        drop_tokens = (
+            torch.rand(decoder_input_ids.shape, device=decoder_input_ids.device)
+            < self.teacher_forcing_dropout_rate
+        ) & residue_tokens
+
+        return token_embeddings.masked_fill(drop_tokens.unsqueeze(-1), 0.0)
+
     def _decoder_inputs(
         self,
         decoder_input_ids: torch.Tensor,
         latent: torch.Tensor,
+        position_offset: int = 0,
     ) -> torch.Tensor:
         """Prepare decoder inputs by optionally conditioning on the latent vector.
 
@@ -218,7 +254,26 @@ class ProteinSequenceAutoencoder(nn.Module):
             The prepared decoder inputs.
         """
         token_embeddings = self.embedding(decoder_input_ids)
-        token_embeddings = self.decoder_dropout(token_embeddings) # apply teacher forcing dropout to decoder inputs
+        if self.use_decoder_positional_embeddings:
+            batch_size, sequence_length = decoder_input_ids.shape
+            max_position = position_offset + sequence_length
+            if max_position > self.max_decoder_positions:
+                raise ValueError(
+                    f"Decoder position {max_position} exceeds "
+                    f"max_decoder_positions={self.max_decoder_positions}"
+                )
+
+            position_ids = torch.arange(
+                position_offset,
+                max_position,
+                device=decoder_input_ids.device,
+            ).unsqueeze(0).expand(batch_size, -1)
+            token_embeddings = token_embeddings + self.decoder_position_embedding(position_ids)
+
+        token_embeddings = self._apply_teacher_forcing_token_dropout(
+            token_embeddings,
+            decoder_input_ids,
+        )
         if not self.condition_decoder_on_latent:
             return token_embeddings
 
@@ -273,8 +328,12 @@ class ProteinSequenceAutoencoder(nn.Module):
         finished = torch.zeros(latent.size(0), dtype=torch.bool, device=latent.device)
         logits_by_step: list[torch.Tensor] = []
 
-        for _ in range(max_length):
-            decoder_inputs = self._decoder_inputs(decoder_input_ids, latent)
+        for step in range(max_length):
+            decoder_inputs = self._decoder_inputs(
+                decoder_input_ids,
+                latent,
+                position_offset=step,
+            )
             decoded, hidden = self.decoder(decoder_inputs, hidden)
             step_logits = self.output(decoded[:, -1, :])
             logits_by_step.append(step_logits)

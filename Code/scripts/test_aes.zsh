@@ -21,10 +21,14 @@ if [[ -x ".venv/bin/python" ]]; then
   python_cmd=".venv/bin/python"
 fi
 
-checkpoint_dir="checkpoints/autoencoder/${task}/${version_dir}"
+checkpoint_dir="Code/results/autoencoder/${task}/${version_dir}"
 checkpoints=("${checkpoint_dir}"/model_ae_length_*_"${task}"_latent*_tfd*.pt)
 if (( ${#checkpoints[@]} == 0 )); then
-  echo "No swept length-bin autoencoder checkpoints found in: ${checkpoint_dir}"
+  checkpoint_dir="checkpoints/autoencoder/${task}/${version_dir}"
+  checkpoints=("${checkpoint_dir}"/model_ae_length_*_"${task}"_latent*_tfd*.pt)
+fi
+if (( ${#checkpoints[@]} == 0 )); then
+  echo "No swept length-bin autoencoder checkpoints found in Code/results or checkpoints for: ${task}/${version_dir}"
   exit 1
 fi
 
@@ -43,6 +47,10 @@ for ckpt in "${checkpoints[@]}"; do
     total=$match[2]
     latent=$match[3]
     tfd="$match[4].$match[5]"
+    scheduler_args=()
+    if [[ $name =~ '_sf([0-9]+)p([0-9]+)' ]]; then
+      scheduler_args=(--scheduler_factor "$match[1].$match[2]")
+    fi
 
     case $total in
       2) length_options=halves ;;
@@ -59,6 +67,7 @@ for ckpt in "${checkpoints[@]}"; do
       --length_bin "$bin" \
       --latent_dim "$latent" \
       --teacher_forcing_dropout_rate "$tfd" \
+      "${scheduler_args[@]}" \
       "${cumulative_args[@]}" \
       --output_path "outputs/autoencoder/${version_dir}/${name:r}.csv"
   else

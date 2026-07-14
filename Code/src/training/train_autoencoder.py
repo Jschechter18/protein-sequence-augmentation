@@ -2,28 +2,12 @@
 
 To run script:
 
-# GRU AE architecture:
-python Code/src/training/train_autoencoder.py --model AE --task localization
-python Code/src/training/train_autoencoder.py --model AE --task solubility
-
-python Code/src/training/train_autoencoder.py --model AE --task solubility --curriculum_epochs 5 --curriculum_start_fraction 0.2 --version <version>
-
-# Length-bin training:
-python Code/src/training/train_autoencoder.py --model AE --task solubility --version <version> --length_options thirds --length_bin 2
-
-# Cumulative length-bin training:
-python Code/src/training/train_autoencoder.py --model AE --task solubility --version <version> --length_options thirds --length_bin 2 --cumulative
-
 # Sweep:
 python Code/src/training/train_autoencoder.py \
   --model AE \
   --task solubility \
-  --length_options thirds \
-  --length_bin <bin> \
-  --cumulative \
   --sweep \
-  --version <version>; sudo shutdown -h now
-
+  --version 12; sudo shutdown -h now
 """
 from __future__ import annotations
 
@@ -82,6 +66,11 @@ print()
 num_workers = 4 if torch.cuda.is_available() else 0
 # ----------------------------------------------------------------------------------------------------------------
 SEED = 42
+AUTOENCODER_SWEEP_SEARCH_SPACE = {
+    "learning_rate": (1e-4, 3e-4),
+    "num_layers": (2, 3),
+    "hidden_dim": (512, 1024),
+}
 
 
 def set_random_seed(seed: int = SEED) -> None:
@@ -114,13 +103,15 @@ def model_definition(model_type: str, hyperparams: AEParams) -> tuple[AE, torch.
             bos_idx=BOS_IDX,
             condition_decoder_on_latent=hyperparams.condition_decoder_on_latent,
             teacher_forcing_dropout_rate=hyperparams.teacher_forcing_dropout_rate,
+            use_decoder_positional_embeddings=hyperparams.use_decoder_positional_embeddings,
+            max_decoder_positions=hyperparams.max_decoder_positions,
         ).to(device)
     else:
         raise ValueError(f"Model type {model_type} not supported.")
     
     optimizer = torch.optim.Adam(model.parameters(), lr=hyperparams.learning_rate)
     
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=hyperparams.lr_patience)
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=hyperparams.scheduler_factor, patience=hyperparams.lr_patience)
     
     return model, optimizer, scheduler
 # ----------------------------------------------------------------------------------------------------------------
@@ -152,6 +143,40 @@ def validate(model: AE, dataloader: DataLoader, loss_fn: nn.CrossEntropyLoss) ->
     accuracy = total_correct / total_tokens if total_tokens > 0 else 0.0
     print(f"Validation Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}")
     
+    return {"loss": avg_loss, "accuracy": accuracy}
+# ----------------------------------------------------------------------------------------------------------------
+
+def validate_autoregressive(model: AE, dataloader: DataLoader, loss_fn: nn.CrossEntropyLoss) -> dict[str, float]:
+    model.eval()
+    total_loss = 0.0
+    total_tokens = 0
+    total_correct = 0
+
+    with torch.no_grad():
+        for batch in dataloader:
+            inputs = batch["input_ids"].to(device)
+            lengths = batch["length"].to(device)
+            targets = batch["target_ids"].to(device)
+
+            targets = targets[:, 1:]
+            latent = model.encode(inputs, lengths=lengths)
+            outputs = model.decode_autoregressive(
+                latent,
+                max_length=targets.size(1),
+            )
+            loss = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
+
+            predictions = outputs.argmax(dim=-1)
+            non_pad_tokens = targets != PAD_IDX
+            batch_tokens = non_pad_tokens.sum().item()
+            total_loss += loss.item() * batch_tokens
+            total_correct += (predictions[non_pad_tokens] == targets[non_pad_tokens]).sum().item()
+            total_tokens += batch_tokens
+
+    avg_loss = total_loss / total_tokens if total_tokens > 0 else 0.0
+    accuracy = total_correct / total_tokens if total_tokens > 0 else 0.0
+    print(f"Autoregressive Validation Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}")
+
     return {"loss": avg_loss, "accuracy": accuracy}
 # ----------------------------------------------------------------------------------------------------------------
 
@@ -220,6 +245,7 @@ def train(
         "val_scores": {
             "accuracy": [],
         },
+        "autoregressive_val": [],
     }
     if history_path is not None:
         save_training_history(history, history_path)
@@ -238,6 +264,9 @@ def train(
         total_correct = 0
         epoch_targets = []
         epoch_predictions = []
+        grad_norm_total = 0.0
+        grad_norm_max = 0.0
+        grad_norm_batches = 0
 
         epoch_train_dataloader, curriculum_examples, curriculum_fraction = make_length_curriculum_dataloader(
             train_dataloader,
@@ -268,7 +297,12 @@ def train(
             loss: torch.Tensor = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
             loss.backward()
             if hyperparams.grad_clip:
-                clip_grad_norm_(model.parameters(), max_norm=1.0)
+                grad_norm = float(clip_grad_norm_(model.parameters(), max_norm=1.0))
+            else:
+                grad_norm = 0.0
+            grad_norm_total += grad_norm
+            grad_norm_max = max(grad_norm_max, grad_norm)
+            grad_norm_batches += 1
             optimizer.step()
             
             predictions = outputs.argmax(dim=-1)
@@ -302,6 +336,11 @@ def train(
             "train_f1": f1,
             "curriculum_fraction": curriculum_fraction,
             "curriculum_examples": curriculum_examples,
+            "learning_rate": optimizer.param_groups[0]["lr"],
+            "grad_norm_pre_clip_mean": (
+                grad_norm_total / grad_norm_batches if grad_norm_batches > 0 else 0.0
+            ),
+            "grad_norm_pre_clip_max": grad_norm_max,
         }
         history["train_loss"].append(avg_loss)
         history["train_scores"]["accuracy"].append(accuracy)
@@ -310,10 +349,24 @@ def train(
         val_metrics = validate(model, val_dataloader, loss_fn)
         val_loss = val_metrics["loss"]
         scheduler.step(val_loss)
+        epoch_info["learning_rate_after_scheduler"] = optimizer.param_groups[0]["lr"]
         epoch_info["val_loss"] = val_loss
         epoch_info["val_accuracy"] = val_metrics["accuracy"]
         history["val_loss"].append(val_loss)
         history["val_scores"]["accuracy"].append(val_metrics["accuracy"])
+
+        if (epoch + 1) % 10 == 0:
+            autoregressive_val_metrics = validate_autoregressive(model, val_dataloader, loss_fn)
+            epoch_info["autoregressive_val_loss"] = autoregressive_val_metrics["loss"]
+            epoch_info["autoregressive_val_accuracy"] = autoregressive_val_metrics["accuracy"]
+            history["autoregressive_val"].append(
+                {
+                    "epoch": epoch + 1,
+                    "loss": autoregressive_val_metrics["loss"],
+                    "accuracy": autoregressive_val_metrics["accuracy"],
+                }
+            )
+
         history["epochs"].append(epoch_info)
         if history_path is not None:
             save_training_history(history, history_path)
@@ -562,7 +615,17 @@ def main():
         )
     
     if args.sweep:
-        training_runs = AESweepConfig().iter_hyperparameters(hyperparams)
+        # pass in any given hyperparameter values to the sweep config
+        training_runs = AESweepConfig(
+            # latent_dim=AUTOENCODER_SWEEP_SEARCH_SPACE["latent_dim"],
+            # teacher_forcing_dropout_rate=AUTOENCODER_SWEEP_SEARCH_SPACE["teacher_forcing_dropout_rate"],
+            # learning_rate=AUTOENCODER_SWEEP_SEARCH_SPACE["learning_rate"],
+            # lr_patience=AUTOENCODER_SWEEP_SEARCH_SPACE["lr_patience"],
+            # scheduler_factor=AUTOENCODER_SWEEP_SEARCH_SPACE["scheduler_factor"],
+            learning_rate=AUTOENCODER_SWEEP_SEARCH_SPACE["learning_rate"],
+            num_layers=AUTOENCODER_SWEEP_SEARCH_SPACE["num_layers"],
+            hidden_dim=AUTOENCODER_SWEEP_SEARCH_SPACE["hidden_dim"],
+        ).iter_hyperparameters(hyperparams)
     else:
         training_runs = [(hyperparams, None)]
 
@@ -595,8 +658,13 @@ def main():
         if args.sweep:
             print(
                 f"\nStarting sweep run {run_index}/{len(training_runs)}: "
-                f"latent_dim={run_hyperparams.latent_dim}, "
-                f"teacher_forcing_dropout_rate={run_hyperparams.teacher_forcing_dropout_rate}"
+                # f"latent_dim={run_hyperparams.latent_dim}, "
+                # f"teacher_forcing_dropout_rate={run_hyperparams.teacher_forcing_dropout_rate}, "
+                f"learning_rate={run_hyperparams.learning_rate}, "
+                # f"lr_patience={run_hyperparams.lr_patience}, "
+                # f"scheduler_factor={run_hyperparams.scheduler_factor}"
+                f"num_layers={run_hyperparams.num_layers}, "
+                f"hidden_dim={run_hyperparams.hidden_dim}"
             )
         else:
             print()
@@ -624,13 +692,14 @@ def main():
         if args.overfit_batches is None:
             test_results = test(model, test_dataloader)
             history["test"] = test_results
-            history["test_loss"] = test_results["autoregressive"]["loss"]
-            history["test_accuracy"] = test_results["autoregressive"]["accuracy"]
-            history["test_scores"] = {
-                "accuracy": test_results["autoregressive"]["accuracy"],
-            }
-            save_training_history(history, history_path)
-            print(f"Saved test results to training history: {history_path}")
+            if test_results is not None:
+                history["test_loss"] = test_results["autoregressive"]["loss"]
+                history["test_accuracy"] = test_results["autoregressive"]["accuracy"]
+                history["test_scores"] = {
+                    "accuracy": test_results["autoregressive"]["accuracy"],
+                }
+                save_training_history(history, history_path)
+                print(f"Saved test results to training history: {history_path}")
         else:
             print("Skipping full test set evaluation in overfit debug mode.")
     

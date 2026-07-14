@@ -63,6 +63,97 @@ def _version_dir_name(version: str | int | None) -> str | None:
     return version_name if version_name.startswith("v") else f"v{version_name}"
 
 
+def _format_sweep_value(value: int | float) -> str:
+    if isinstance(value, float):
+        value_label = f"{value:g}"
+    else:
+        value_label = str(value)
+    return value_label.replace(".", "p").replace("-", "m")
+
+
+def _sweep_suffix_component(name: str, value: int | float) -> str:
+    labels = {
+        "latent_dim": "latent",
+        "teacher_forcing_dropout_rate": "tfd",
+        "learning_rate": "lr",
+        "lr_patience": "lrp",
+        "scheduler_factor": "sf",
+    }
+    return f"{labels[name]}{_format_sweep_value(value)}"
+
+
+def sweep_artifact_suffix(args) -> str | None:
+    if args.latent_dim is None:
+        return None
+
+    components = [
+        _sweep_suffix_component("latent_dim", args.latent_dim),
+        _sweep_suffix_component("teacher_forcing_dropout_rate", args.teacher_forcing_dropout_rate),
+    ]
+    if args.learning_rate is not None:
+        components.append(_sweep_suffix_component("learning_rate", args.learning_rate))
+    if args.lr_patience is not None:
+        components.append(_sweep_suffix_component("lr_patience", args.lr_patience))
+    if args.scheduler_factor is not None:
+        components.append(_sweep_suffix_component("scheduler_factor", args.scheduler_factor))
+
+    return "_".join(components)
+
+
+def legacy_sweep_artifact_suffix(args) -> str | None:
+    if args.latent_dim is None:
+        return None
+    return autoencoder_sweep_suffix(
+        args.latent_dim,
+        args.teacher_forcing_dropout_rate,
+        args.scheduler_factor,
+    )
+
+
+def sweep_checkpoint_match_pattern(
+    model_type: str,
+    task: str,
+    length_options: str | None,
+    length_bin: int | None,
+) -> str:
+    artifact_stem = autoencoder_artifact_stem(
+        model_type,
+        task,
+        length_options,
+        length_bin=length_bin,
+        artifact_suffix=None,
+    )
+    return f"{artifact_stem}*.pt"
+
+
+def resolve_matching_checkpoint(
+    candidates: list[Path],
+    expected_path: Path,
+    artifact_suffix: str | None,
+) -> Path | None:
+    suffix_components = artifact_suffix.split("_") if artifact_suffix else []
+    existing_candidates = sorted({
+        path
+        for path in candidates
+        if path.is_file() and all(component in path.stem for component in suffix_components)
+    })
+    if len(existing_candidates) == 1:
+        print(
+            f"Exact checkpoint not found: {expected_path}\n"
+            f"Using matching swept checkpoint: {existing_candidates[0]}"
+        )
+        return existing_candidates[0]
+    if len(existing_candidates) > 1:
+        formatted_candidates = "\n".join(f"  - {path}" for path in existing_candidates)
+        raise FileNotFoundError(
+            f"Multiple checkpoints matched the requested sweep arguments.\n"
+            f"Expected exact path: {expected_path}\n"
+            f"Matching checkpoints:\n{formatted_candidates}\n"
+            "Add --learning_rate, --lr_patience, --scheduler_factor, or pass --checkpoint."
+        )
+    return None
+
+
 def version_checkpoint_path(
     model_type: str,
     task: str,
@@ -70,6 +161,7 @@ def version_checkpoint_path(
     length_options: str | None = None,
     length_bin: int | None = None,
     artifact_suffix: str | None = None,
+    fallback_artifact_suffix: str | None = None,
 ) -> Path:
     if version is None:
         raise ValueError("--version is required unless --checkpoint is provided")
@@ -86,6 +178,24 @@ def version_checkpoint_path(
     if result_checkpoint_path.is_file():
         return result_checkpoint_path
 
+    fallback_result_checkpoint_path = None
+    if fallback_artifact_suffix and fallback_artifact_suffix != artifact_suffix:
+        fallback_result_checkpoint_path, _ = autoencoder_artifact_paths(
+            model_type,
+            task,
+            version,
+            length_options,
+            length_bin,
+            is_overfit=False,
+            artifact_suffix=fallback_artifact_suffix,
+        )
+        if fallback_result_checkpoint_path.is_file():
+            print(
+                f"New sweep checkpoint not found: {result_checkpoint_path}\n"
+                f"Falling back to legacy sweep checkpoint: {fallback_result_checkpoint_path}"
+            )
+            return fallback_result_checkpoint_path
+
     version_dir = _version_dir_name(version)
     legacy_checkpoint_dir = PROJECT_ROOT / "checkpoints" / "autoencoder" / task / version_dir
     checkpoint_name = f"{autoencoder_artifact_stem(model_type, task, length_options, length_bin=length_bin, artifact_suffix=artifact_suffix)}.pt"
@@ -97,8 +207,44 @@ def version_checkpoint_path(
         )
         return legacy_checkpoint_path
 
-    candidates = sorted(result_checkpoint_path.parent.glob(f"model_{model_type.lower()}*.pt"))
-    candidates.extend(sorted(legacy_checkpoint_dir.glob(f"model_{model_type.lower()}*.pt")))
+    fallback_legacy_checkpoint_path = None
+    if fallback_artifact_suffix and fallback_artifact_suffix != artifact_suffix:
+        fallback_checkpoint_name = f"{autoencoder_artifact_stem(model_type, task, length_options, length_bin=length_bin, artifact_suffix=fallback_artifact_suffix)}.pt"
+        fallback_legacy_checkpoint_path = legacy_checkpoint_dir / fallback_checkpoint_name
+        if fallback_legacy_checkpoint_path.is_file():
+            print(
+                f"New sweep checkpoint not found: {result_checkpoint_path}\n"
+                f"Falling back to legacy sweep checkpoint: {fallback_legacy_checkpoint_path}"
+            )
+            return fallback_legacy_checkpoint_path
+
+    matching_checkpoint = resolve_matching_checkpoint(
+        list(result_checkpoint_path.parent.glob(
+            sweep_checkpoint_match_pattern(
+                model_type,
+                task,
+                length_options,
+                length_bin,
+            )
+        ))
+        + list(legacy_checkpoint_dir.glob(
+            sweep_checkpoint_match_pattern(
+                model_type,
+                task,
+                length_options,
+                length_bin,
+            )
+        )),
+        result_checkpoint_path,
+        artifact_suffix,
+    )
+    if matching_checkpoint is not None:
+        return matching_checkpoint
+
+    candidates = sorted(
+        set(result_checkpoint_path.parent.glob(f"model_{model_type.lower()}*.pt"))
+        | set(legacy_checkpoint_dir.glob(f"model_{model_type.lower()}*.pt"))
+    )
     if len(candidates) == 1:
         print(
             f"Exact checkpoint not found: {result_checkpoint_path}\n"
@@ -129,6 +275,7 @@ def legacy_quartile_checkpoint_path(
     version: str | int | None,
     length_quartile: str,
     artifact_suffix: str | None = None,
+    fallback_artifact_suffix: str | None = None,
 ) -> Path:
     if version is None:
         raise ValueError("--version is required unless --checkpoint is provided")
@@ -151,7 +298,30 @@ def legacy_quartile_checkpoint_path(
             f"Falling back to base checkpoint: {base_path}"
         )
         return base_path
+    if fallback_artifact_suffix and fallback_artifact_suffix != artifact_suffix:
+        fallback_artifact_stem = autoencoder_artifact_stem(
+            model_type,
+            task,
+            artifact_suffix=fallback_artifact_suffix,
+        )
+        fallback_base_path = checkpoint_dir / f"{fallback_artifact_stem}.pt"
+        if fallback_base_path.is_file():
+            print(
+                f"New sweep checkpoint not found: {base_path}\n"
+                f"Falling back to legacy sweep checkpoint: {fallback_base_path}"
+            )
+            return fallback_base_path
     return quartile_path
+
+
+def default_checkpoint_path(
+    model_type: str,
+    task: str,
+    version: str | int | None,
+    length_quartile: str,
+) -> Path:
+    """Backward-compatible wrapper for older quartile checkpoint tests."""
+    return legacy_quartile_checkpoint_path(model_type, task, version, length_quartile)
 
 
 def checkpoint_state_dict(checkpoint: object) -> dict[str, torch.Tensor]:
@@ -195,6 +365,12 @@ def ae_params_from_state_dict(
                 state_dict["decoder.weight_ih_l0"].shape[1]
                 == state_dict["embedding.weight"].shape[1] + state_dict["to_latent.weight"].shape[0]
             ),
+            "use_decoder_positional_embeddings": "decoder_position_embedding.weight" in state_dict,
+            "max_decoder_positions": (
+                state_dict["decoder_position_embedding.weight"].shape[0]
+                if "decoder_position_embedding.weight" in state_dict
+                else hyperparams.max_decoder_positions
+            ),
             "pad_idx": PAD_IDX,
             "bos_idx": BOS_IDX,
         }
@@ -207,6 +383,7 @@ def ae_params_from_state_dict(
         "shuffle",
         "patience",
         "lr_patience",
+        "scheduler_factor",
     ):
         params.pop(training_only_param, None)
 
@@ -460,7 +637,10 @@ def evaluate_checkpoint(
             shuffle=False,
         )
         num_bins = LENGTH_SPLIT_COUNTS[length_options] if loader_type == "length_bin" else 4
-        length_boundaries = compute_train_length_boundaries(train_dataloader.dataset, num_bins=num_bins)
+        if loader_type == "length_bin":
+            length_boundaries = compute_train_length_boundaries(train_dataloader.dataset, num_bins=num_bins)
+        else:
+            length_boundaries = compute_train_length_boundaries(train_dataloader.dataset)
 
     test_dataloader = create_dataloader(
         task=args.task,
@@ -489,6 +669,9 @@ def evaluate_checkpoint(
         output_path=output_path_for_mode(output_path, "autoregressive"),
         teacher_forcing=False,
     )
+    if teacher_forced_metrics is None or autoregressive_metrics is None:
+        return
+
     results_csv_path = PROJECT_ROOT / "Code" / "results" / "tables" / "autoencoder_results.csv"
     append_autoencoder_results(
         results_csv_path=results_csv_path,
@@ -505,12 +688,8 @@ def main():
 
     model_type = args.model.lower()
     hyperparams = AEParams()
-    artifact_suffix = None
-    if args.latent_dim is not None:
-        artifact_suffix = autoencoder_sweep_suffix(
-            args.latent_dim,
-            args.teacher_forcing_dropout_rate,
-        )
+    artifact_suffix = sweep_artifact_suffix(args)
+    fallback_artifact_suffix = legacy_sweep_artifact_suffix(args)
 
     try:
         if args.checkpoint is not None:
@@ -522,6 +701,7 @@ def main():
                 args.version,
                 args.length_quartile,
                 artifact_suffix=artifact_suffix,
+                fallback_artifact_suffix=fallback_artifact_suffix,
             )
         else:
             checkpoint_path = version_checkpoint_path(
@@ -531,6 +711,7 @@ def main():
                 args.length_options,
                 args.length_bin,
                 artifact_suffix=artifact_suffix,
+                fallback_artifact_suffix=fallback_artifact_suffix,
             )
     except FileNotFoundError as error:
         print(error)

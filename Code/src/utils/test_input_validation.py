@@ -28,17 +28,11 @@ def _str_to_bool(value: str | bool) -> bool:
 def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
     args.add_argument("--model", type=str, default="AE", choices=["AE", "ae"], help="Model to test.")
     args.add_argument("--task", type=str, default="solubility", choices=["localization", "solubility"], help="Task to test.")
-    # args.add_argument(
-    #     "--checkpoint",
-    #     type=str,
-    #     default="Code/results/autoencoder/solubility/v5/solubility_ae_history.json",
-    #     help="Path to the checkpoint to test. Defaults to checkpoints/<version>/model_<model>_<task>.pt when --version is set.",
-    # )
     args.add_argument(
         "--checkpoint",
         type=str,
         default=None,
-        help="Path to the checkpoint to test. Defaults to Code/results/autoencoder/<task>/<version>/...",
+        help="Path to the checkpoint to test. Defaults to checkpoints/autoencoder/<task>/<version>/...",
     )
     args.add_argument("--version", type=str, default="v5", help="Checkpoint version directory to test.")
     args.add_argument(
@@ -106,6 +100,24 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
         default=None,
         help='Teacher forcing dropout suffix for selecting a swept autoencoder checkpoint.',
     )
+    args.add_argument(
+        '--scheduler_factor',
+        type=float,
+        default=None,
+        help='Scheduler factor suffix for selecting swept checkpoints that include _sf<factor>.',
+    )
+    args.add_argument(
+        '--learning_rate',
+        type=float,
+        default=None,
+        help='Learning rate suffix for selecting swept checkpoints that include _lr<learning_rate>.',
+    )
+    args.add_argument(
+        '--lr_patience',
+        type=int,
+        default=None,
+        help='LR scheduler patience suffix for selecting swept checkpoints that include _lrp<patience>.',
+    )
 
     parsed_args = args.parse_args()
     parsed_args.version_provided = any(
@@ -127,6 +139,12 @@ def add_and_validate_test_inputs():
         raise ValueError(
             "--latent_dim and --teacher_forcing_dropout_rate must be provided together."
         )
+    if args.scheduler_factor is not None and not has_latent_dim:
+        raise ValueError("--scheduler_factor requires --latent_dim and --teacher_forcing_dropout_rate.")
+    if args.learning_rate is not None and not has_latent_dim:
+        raise ValueError("--learning_rate requires --latent_dim and --teacher_forcing_dropout_rate.")
+    if args.lr_patience is not None and not has_latent_dim:
+        raise ValueError("--lr_patience requires --latent_dim and --teacher_forcing_dropout_rate.")
 
     if args.length_quartile is not None and args.length_options is not None:
         raise ValueError("--length_quartile and --length_options cannot be used together")

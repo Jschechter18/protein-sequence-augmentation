@@ -55,6 +55,14 @@ def autoencoder_artifact_stem(
     return "_".join(parts)
 
 
+def autoencoder_checkpoint_dir(task: str, version: int | str) -> Path:
+    version_name = str(version)
+    if not version_name:
+        raise ValueError("version must not be empty")
+    version_dir = version_name if version_name.startswith("v") else f"v{version_name}"
+    return PROJECT_ROOT / "checkpoints" / "autoencoder" / task / version_dir
+
+
 def autoencoder_results_dir(task: str, version: int | str) -> Path:
     version_name = str(version)
     if not version_name:
@@ -80,9 +88,10 @@ def autoencoder_artifact_paths(
         is_overfit=is_overfit,
         artifact_suffix=artifact_suffix,
     )
-    result_dir = autoencoder_results_dir(task, version)
-    checkpoint_path = result_dir / f"{artifact_stem}.pt"
-    history_path = result_dir / f"{result_dir.name}_{artifact_stem}_history.json"
+    checkpoint_dir = autoencoder_checkpoint_dir(task, version)
+    results_dir = autoencoder_results_dir(task, version)
+    checkpoint_path = checkpoint_dir / f"{artifact_stem}.pt"
+    history_path = results_dir / f"{results_dir.name}_{artifact_stem}_history.json"
     return checkpoint_path, history_path
 
 
@@ -127,23 +136,17 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
         default=0.2,
         help='Fraction of shortest training examples to use in the first curriculum epoch.',
     )
-    # args.add_argument(
-    #     '--length_quartile',
-    #     type=str,
-    #     default=None,
-    #     choices=["s", "ms", "ml", "l"],
-    # )
     args.add_argument(
         '--length_options',
         type=str,
-        default=None,
+        default="thirds",
         choices=["quarters", "thirds", "halves"],
         help='Split training data by sequence length into this many bins. If not set, train on all lengths.',
     )
     args.add_argument(
         '--length_bin',
         type=int,
-        default=None,
+        default=2,
         help='1-indexed length bin to train on. Requires --length_options. For --length_options thirds, use 1, 2, or 3.',
     )
     args.add_argument(
@@ -151,7 +154,7 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
         type=_str_to_bool,
         nargs='?',
         const=True,
-        default=False,
+        default=True,
         help='If set, train on all sequences up to the specified length. Otherwise, train on sequences only in the specified length range.',
     )
     args.add_argument(
@@ -167,6 +170,20 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
         type=int,
         default=None,
         help='If set, only sequences with length <= max_length will be used. Ignored if --length_options is set.',
+    )
+    args.add_argument(
+        '--use_decoder_positional_embeddings',
+        type=_str_to_bool,
+        nargs='?',
+        const=True,
+        default=False,
+        help='Add learned absolute position embeddings to decoder token embeddings.',
+    )
+    args.add_argument(
+        '--max_decoder_positions',
+        type=int,
+        default=1024,
+        help='Maximum decoder sequence length supported by learned positional embeddings.',
     )
     
     return args.parse_args()
@@ -184,7 +201,7 @@ def add_and_validate_train_inputs():
         raise ValueError("Only --model AE is currently supported")
 
     if args.version is None:
-        raise ValueError("--version is required so autoencoder checkpoints and histories are saved under Code/results/autoencoder/<task>/v<version>")
+        raise ValueError("--version is required so autoencoder checkpoints and histories are saved under versioned artifact directories")
     if args.version < 0:
         raise ValueError("--version must be non-negative")
     
@@ -201,6 +218,11 @@ def add_and_validate_train_inputs():
             raise ValueError(f"--length_bin must be between 1 and {split_count} for --length_options {args.length_options}")
     if args.max_length is not None and args.max_length <= 0:
         raise ValueError("--max_length must be positive")
+    if args.max_decoder_positions <= 0:
+        raise ValueError("--max_decoder_positions must be positive")
+
+    hyperparams.use_decoder_positional_embeddings = args.use_decoder_positional_embeddings
+    hyperparams.max_decoder_positions = args.max_decoder_positions
     
     if not args.sweep:
         # Make sure this checkpoint filename is unique to avoid overwriting previous runs.
