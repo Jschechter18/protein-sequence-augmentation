@@ -145,45 +145,44 @@ class ProteinSequenceAutoencoder(nn.Module):
             )
             self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=self.num_layers)
             self.output = nn.Linear(self.embedding_dim, self.vocab_size)
-            return
-        
-        # TODO: experiment with adding a CNN layer before the GRU encoder to capture local patterns in the sequence
-        self.cnn = nn.Conv1d(
-            in_channels=self.embedding_dim,
-            out_channels=self.cnn_out_channels,
-            kernel_size=kernel_size,
-            padding=kernel_size // 2, # to maintain sequence length
-            )
-        
-        
-        self.encoder = nn.GRU(
-            self.cnn_out_channels, # self.embedding_dim is no longer output
-            self.hidden_dim,
-            num_layers=self.num_layers,
-            batch_first=True,
-            dropout=rnn_dropout,
-            bidirectional=self.bidirectional,
-            )
+        else:
+            # TODO: experiment with adding a CNN layer before the GRU encoder to capture local patterns in the sequence
+            self.cnn = nn.Conv1d(
+                in_channels=self.embedding_dim,
+                out_channels=self.cnn_out_channels,
+                kernel_size=kernel_size,
+                padding=kernel_size // 2, # to maintain sequence length
+                )
+            
+            
+            self.encoder = nn.GRU(
+                self.cnn_out_channels, # self.embedding_dim is no longer output
+                self.hidden_dim,
+                num_layers=self.num_layers,
+                batch_first=True,
+                dropout=rnn_dropout,
+                bidirectional=self.bidirectional,
+                )
 
-        # self.attention_score = nn.Linear(self.hidden_dim, 1)
-        self.attention_score = nn.Linear(self.hidden_dim * self.encoder_num_directions, 1)
-        
-        self.to_latent = nn.Linear(self.hidden_dim * self.encoder_num_directions, self.latent_dim)
-        self.from_latent = nn.Linear(self.latent_dim, self.hidden_dim * self.num_layers)
-        decoder_input_dim = self.embedding_dim
-        if self.condition_decoder_on_latent:
-            decoder_input_dim += self.latent_dim
+            # self.attention_score = nn.Linear(self.hidden_dim, 1)
+            self.attention_score = nn.Linear(self.hidden_dim * self.encoder_num_directions, 1)
+            
+            self.to_latent = nn.Linear(self.hidden_dim * self.encoder_num_directions, self.latent_dim)
+            self.from_latent = nn.Linear(self.latent_dim, self.hidden_dim * self.num_layers)
+            decoder_input_dim = self.embedding_dim
+            if self.condition_decoder_on_latent:
+                decoder_input_dim += self.latent_dim
 
-        self.decoder = nn.GRU(
-            decoder_input_dim,
-            self.hidden_dim,
-            num_layers=self.num_layers,
-            batch_first=True,
-            dropout=rnn_dropout,
-            bidirectional=False,
-        )
-        
-        self.output = nn.Linear(self.hidden_dim, self.vocab_size)
+            self.decoder = nn.GRU(
+                decoder_input_dim,
+                self.hidden_dim,
+                num_layers=self.num_layers,
+                batch_first=True,
+                dropout=rnn_dropout,
+                bidirectional=False,
+            )
+            
+            self.output = nn.Linear(self.hidden_dim, self.vocab_size)
 
     def encode(
         self,

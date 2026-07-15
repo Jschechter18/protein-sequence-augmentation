@@ -17,6 +17,7 @@ class Hyperparameters:
 @dataclass
 class AutoencoderHyperparameters(Hyperparameters):
     learning_rate: float = 3e-4 # do NOT increase this, the highest it should be is 1e-3
+    # layer_type: str = "lstm" # gru(+single cnn layer), transformer
     embedding_dim: int = 256
     cnn_out_channels: int = 256
     hidden_dim: int = 512
