@@ -98,6 +98,14 @@ def architecture_artifact_suffix(layer_type: str, artifact_suffix: str | None = 
     return "_".join(suffix_parts) if suffix_parts else None
 
 
+def describe_sweep_run(hyperparams: AEParams, search_space: dict[str, tuple]) -> str:
+    """Format the current values for whichever fields are in the sweep."""
+    return ", ".join(
+        f"{name}={getattr(hyperparams, name)}"
+        for name in search_space
+    )
+
+
 def model_definition(
     model_type: str,
     hyperparams: AEParams,
@@ -634,17 +642,7 @@ def main():
         )
     
     if args.sweep:
-        # pass in any given hyperparameter values to the sweep config
-        training_runs = AESweepConfig(
-            # latent_dim=AUTOENCODER_SWEEP_SEARCH_SPACE["latent_dim"],
-            # teacher_forcing_dropout_rate=AUTOENCODER_SWEEP_SEARCH_SPACE["teacher_forcing_dropout_rate"],
-            # learning_rate=AUTOENCODER_SWEEP_SEARCH_SPACE["learning_rate"],
-            # lr_patience=AUTOENCODER_SWEEP_SEARCH_SPACE["lr_patience"],
-            # scheduler_factor=AUTOENCODER_SWEEP_SEARCH_SPACE["scheduler_factor"],
-            learning_rate=AUTOENCODER_SWEEP_SEARCH_SPACE["learning_rate"],
-            num_layers=AUTOENCODER_SWEEP_SEARCH_SPACE["num_layers"],
-            hidden_dim=AUTOENCODER_SWEEP_SEARCH_SPACE["hidden_dim"],
-        ).iter_hyperparameters(hyperparams)
+        training_runs = AESweepConfig(AUTOENCODER_SWEEP_SEARCH_SPACE).iter_hyperparameters(hyperparams)
     else:
         training_runs = [(hyperparams, None)]
 
@@ -682,13 +680,7 @@ def main():
         if args.sweep:
             print(
                 f"\nStarting sweep run {run_index}/{len(training_runs)}: "
-                # f"latent_dim={run_hyperparams.latent_dim}, "
-                # f"teacher_forcing_dropout_rate={run_hyperparams.teacher_forcing_dropout_rate}, "
-                f"learning_rate={run_hyperparams.learning_rate}, "
-                # f"lr_patience={run_hyperparams.lr_patience}, "
-                # f"scheduler_factor={run_hyperparams.scheduler_factor}"
-                f"num_layers={run_hyperparams.num_layers}, "
-                f"hidden_dim={run_hyperparams.hidden_dim}"
+                f"{describe_sweep_run(run_hyperparams, AUTOENCODER_SWEEP_SEARCH_SPACE)}"
             )
         else:
             print()
