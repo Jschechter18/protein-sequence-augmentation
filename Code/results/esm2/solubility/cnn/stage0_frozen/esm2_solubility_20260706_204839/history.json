@@ -3,7 +3,7 @@
         "model": "ESM2 + CNN",
         "esm_model": "esm2_t6_8M_UR50D",
         "device": "cuda",
-        "dataset": "esm2_solubility_20260706_204839",
+        "dataset": "solubility",
         "num_classes": 2,
         "learning_rate": 0.001,
         "esm_learning_rate": 1e-05,
