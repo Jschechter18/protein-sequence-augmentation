@@ -157,6 +157,7 @@ def test_model_definition_builds_autoencoder_optimizer_and_scheduler(monkeypatch
 
     assert isinstance(model, FakeAutoencoder)
     assert created["kwargs"] == {
+        "layer_type": "gru",
         "embedding_dim": 8,
         "cnn_out_channels": 9,
         "hidden_dim": 16,
@@ -171,6 +172,9 @@ def test_model_definition_builds_autoencoder_optimizer_and_scheduler(monkeypatch
         "teacher_forcing_dropout_rate": hyperparams.teacher_forcing_dropout_rate,
         "use_decoder_positional_embeddings": hyperparams.use_decoder_positional_embeddings,
         "max_decoder_positions": hyperparams.max_decoder_positions,
+        "max_encoder_positions": hyperparams.max_encoder_positions,
+        "num_heads": hyperparams.num_heads,
+        "dim_feedforward": hyperparams.dim_feedforward,
     }
     assert created["device"] == torch.device("cpu")
     assert isinstance(optimizer, torch.optim.Adam)
@@ -189,7 +193,7 @@ def test_train_uses_shifted_decoder_inputs_and_validation_loss(monkeypatch):
     monkeypatch.setattr(
         train_autoencoder,
         "model_definition",
-        lambda _model_type, _hyperparams: (model, optimizer, scheduler),
+        lambda _model_type, _hyperparams, **_kwargs: (model, optimizer, scheduler),
     )
 
     train_batch = _batch([[2, 4, 5, 0], [2, 6, 0, 0]])
@@ -225,7 +229,7 @@ def test_train_runs_autoregressive_validation_every_10_epochs(monkeypatch):
     monkeypatch.setattr(
         train_autoencoder,
         "model_definition",
-        lambda _model_type, _hyperparams: (model, optimizer, scheduler),
+        lambda _model_type, _hyperparams, **_kwargs: (model, optimizer, scheduler),
     )
 
     train_batch = _batch([[2, 4, 5, 0], [2, 6, 0, 0]])
@@ -275,8 +279,13 @@ def test_length_curriculum_uses_shortest_examples_first():
 def test_main_validates_args_and_starts_autoencoder_training(monkeypatch):
     calls = {}
 
+    class DummyFullTrainLoader:
+        dataset = object()
+
     def fake_create_dataloader(**kwargs):
         calls.setdefault("dataloader_kwargs", []).append(kwargs)
+        if kwargs["split"] == train_autoencoder.TRAIN_SPLIT and "loader_type" not in kwargs:
+            return DummyFullTrainLoader()
         return [kwargs["split"]]
 
     def fake_train(
@@ -311,12 +320,18 @@ def test_main_validates_args_and_starts_autoencoder_training(monkeypatch):
         ],
     )
     monkeypatch.setattr(train_autoencoder, "create_dataloader", fake_create_dataloader)
+    monkeypatch.setattr(
+        train_autoencoder,
+        "compute_train_length_boundaries",
+        lambda _dataset, num_bins: list(range(num_bins + 1)),
+    )
     monkeypatch.setattr(train_autoencoder, "train", fake_train)
     monkeypatch.setattr(train_autoencoder, "test", lambda *_args, **_kwargs: None)
 
     train_autoencoder.main()
 
     assert [call["split"] for call in calls["dataloader_kwargs"]] == [
+        train_autoencoder.TRAIN_SPLIT,
         train_autoencoder.TRAIN_SPLIT,
         train_autoencoder.VALID_SPLIT,
         "test",
@@ -325,6 +340,7 @@ def test_main_validates_args_and_starts_autoencoder_training(monkeypatch):
     assert calls["train"]["train_dataloader"] == [train_autoencoder.TRAIN_SPLIT]
     assert calls["train"]["val_dataloader"] == [train_autoencoder.VALID_SPLIT]
     assert isinstance(calls["train"]["hyperparams"], Params)
+    assert calls["train"]["kwargs"]["layer_type"] == "gru"
     assert calls["train"]["kwargs"]["curriculum_epochs"] == 3
     assert calls["train"]["kwargs"]["curriculum_start_fraction"] == pytest.approx(0.4)
 

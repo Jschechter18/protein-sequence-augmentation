@@ -16,7 +16,6 @@ class Hyperparameters:
 
 @dataclass
 class AutoencoderHyperparameters(Hyperparameters):
-    # learning_rate: float = 1e-3 # do NOT increase this, the highest it should be is 1e-3
     learning_rate: float = 3e-4 # do NOT increase this, the highest it should be is 1e-3
     embedding_dim: int = 256
     cnn_out_channels: int = 256
@@ -30,19 +29,12 @@ class AutoencoderHyperparameters(Hyperparameters):
     teacher_forcing_dropout_rate: float = 0.1
     use_decoder_positional_embeddings: bool = False # try this out
     max_decoder_positions: int = 1024
-    scheduler_factor: float = 0.1
-
-@dataclass
-class TransformerAutoencoderHyperparameters(Hyperparameters):
-    learning_rate: float = 1e-3
-    embedding_dim: int = 256
-    hidden_dim: int = 256
-    latent_dim: int = 128
+    max_encoder_positions: int = 1024
     num_heads: int = 4
     dim_feedforward: int = 1024
-    dropout: float = 0.1
-    num_layers: int = 2
-    
+    scheduler_factor: float = 0.1
+
+
 def autoencoder_sweep_suffix(
     latent_dim: int,
     teacher_forcing_dropout_rate: float,

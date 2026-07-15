@@ -352,29 +352,53 @@ def ae_params_from_state_dict(
     state_dict: dict[str, torch.Tensor],
 ) -> dict:
     params = hyperparams.__dict__.copy()
-    params.update(
-        {
-            "embedding_dim": state_dict["embedding.weight"].shape[1],
-            "cnn_out_channels": state_dict["cnn.weight"].shape[0],
-            "hidden_dim": state_dict["encoder.weight_hh_l0"].shape[1],
-            "latent_dim": state_dict["to_latent.weight"].shape[0],
-            "num_layers": rnn_num_layers(state_dict, "encoder"),
-            "kernel_size": state_dict["cnn.weight"].shape[2],
-            "bidirectional": "encoder.weight_ih_l0_reverse" in state_dict,
-            "condition_decoder_on_latent": (
-                state_dict["decoder.weight_ih_l0"].shape[1]
-                == state_dict["embedding.weight"].shape[1] + state_dict["to_latent.weight"].shape[0]
-            ),
-            "use_decoder_positional_embeddings": "decoder_position_embedding.weight" in state_dict,
-            "max_decoder_positions": (
-                state_dict["decoder_position_embedding.weight"].shape[0]
-                if "decoder_position_embedding.weight" in state_dict
-                else hyperparams.max_decoder_positions
-            ),
-            "pad_idx": PAD_IDX,
-            "bos_idx": BOS_IDX,
-        }
-    )
+    layer_type = "transformer" if "encoder_position_embedding.weight" in state_dict else "gru"
+
+    if layer_type == "transformer":
+        params.update(
+            {
+                "layer_type": layer_type,
+                "embedding_dim": state_dict["embedding.weight"].shape[1],
+                "latent_dim": state_dict["to_latent.weight"].shape[0],
+                "dim_feedforward": state_dict["encoder.layers.0.linear1.weight"].shape[0],
+                "num_layers": len(
+                    {
+                        key.split(".")[2]
+                        for key in state_dict
+                        if key.startswith("encoder.layers.")
+                    }
+                ),
+                "max_encoder_positions": state_dict["encoder_position_embedding.weight"].shape[0],
+                "max_decoder_positions": state_dict["decoder_position_embedding.weight"].shape[0],
+                "pad_idx": PAD_IDX,
+                "bos_idx": BOS_IDX,
+            }
+        )
+    else:
+        params.update(
+            {
+                "layer_type": layer_type,
+                "embedding_dim": state_dict["embedding.weight"].shape[1],
+                "cnn_out_channels": state_dict["cnn.weight"].shape[0],
+                "hidden_dim": state_dict["encoder.weight_hh_l0"].shape[1],
+                "latent_dim": state_dict["to_latent.weight"].shape[0],
+                "num_layers": rnn_num_layers(state_dict, "encoder"),
+                "kernel_size": state_dict["cnn.weight"].shape[2],
+                "bidirectional": "encoder.weight_ih_l0_reverse" in state_dict,
+                "condition_decoder_on_latent": (
+                    state_dict["decoder.weight_ih_l0"].shape[1]
+                    == state_dict["embedding.weight"].shape[1] + state_dict["to_latent.weight"].shape[0]
+                ),
+                "use_decoder_positional_embeddings": "decoder_position_embedding.weight" in state_dict,
+                "max_decoder_positions": (
+                    state_dict["decoder_position_embedding.weight"].shape[0]
+                    if "decoder_position_embedding.weight" in state_dict
+                    else hyperparams.max_decoder_positions
+                ),
+                "pad_idx": PAD_IDX,
+                "bos_idx": BOS_IDX,
+            }
+        )
 
     for training_only_param in (
         "learning_rate",

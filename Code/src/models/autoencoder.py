@@ -8,8 +8,9 @@ import warnings
 
 
 class ProteinSequenceAutoencoder(nn.Module):
-    """GRU autoencoder for integer-encoded protein sequences.
+    """Autoencoder for integer-encoded protein sequences.
 
+    Supports the existing CNN+GRU encoder/GRU decoder path and a transformer encoder/decoder path.
     The model consumes batches shaped ``(batch, sequence_length)`` and returns reconstruction logits shaped ``(batch, sequence_length, vocab_size)``.
     """
 
@@ -28,10 +29,13 @@ class ProteinSequenceAutoencoder(nn.Module):
         bos_idx: int = 2,
         eos_idx: int = EOS_IDX,
         condition_decoder_on_latent: bool = True,
-        layer_type: str = "gru", # placeholder for future layer types
+        layer_type: str = "gru",
         teacher_forcing_dropout_rate: float = 0.0,
         use_decoder_positional_embeddings: bool = False,
         max_decoder_positions: int = 1024,
+        max_encoder_positions: int = 1024,
+        num_heads: int = 4,
+        dim_feedforward: int = 1024,
         # is_autoregressive: bool = False, # really should only be when training -> optional for validation and testing
     ) -> None:
         """Initialize the protein sequence autoencoder.
@@ -65,18 +69,22 @@ class ProteinSequenceAutoencoder(nn.Module):
             _description_
         """
         super().__init__()
-        if layer_type != "gru":
-            raise ValueError("Only layer_type='gru' is currently supported")
+        if layer_type not in {"gru", "transformer"}:
+            raise ValueError("layer_type must be 'gru' or 'transformer'")
         if num_layers < 1:
             raise ValueError("num_layers must be at least 1")
         if not 0.0 <= teacher_forcing_dropout_rate <= 1.0:
             raise ValueError("teacher_forcing_dropout_rate must be between 0 and 1")
         if max_decoder_positions < 1:
             raise ValueError("max_decoder_positions must be at least 1")
+        if max_encoder_positions < 1:
+            raise ValueError("max_encoder_positions must be at least 1")
+        if layer_type == "transformer" and embedding_dim % num_heads != 0:
+            raise ValueError("embedding_dim must be divisible by num_heads for transformer layers")
         if latent_dim >= hidden_dim:
-            # raise Warning("latent_dim should ideally be smaller than hidden_dim for effective compression")
             warnings.warn("latent_dim should ideally be smaller than hidden_dim for effective compression", UserWarning)
         
+        self.layer_type = layer_type
         self.bidirectional = bidirectional
         self.encoder_num_directions = 2 if self.bidirectional else 1
         self.grad_clip = grad_clip
@@ -95,13 +103,49 @@ class ProteinSequenceAutoencoder(nn.Module):
         self.teacher_forcing_dropout_rate = teacher_forcing_dropout_rate
         self.use_decoder_positional_embeddings = use_decoder_positional_embeddings
         self.max_decoder_positions = max_decoder_positions
+        self.max_encoder_positions = max_encoder_positions
+        self.num_heads = num_heads
+        self.dim_feedforward = dim_feedforward
 
         self.embedding = nn.Embedding(self.vocab_size, self.embedding_dim, padding_idx=self.pad_idx)
-        if self.use_decoder_positional_embeddings:
+        if self.layer_type == "transformer":
+            self.encoder_position_embedding = nn.Embedding(
+                self.max_encoder_positions,
+                self.embedding_dim,
+            )
+        if self.use_decoder_positional_embeddings or self.layer_type == "transformer":
             self.decoder_position_embedding = nn.Embedding(
                 self.max_decoder_positions,
                 self.embedding_dim,
             )
+
+        if self.layer_type == "transformer":
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=self.embedding_dim,
+                nhead=self.num_heads,
+                dim_feedforward=self.dim_feedforward,
+                dropout=dropout,
+                batch_first=True,
+            )
+            self.encoder = nn.TransformerEncoder(
+                encoder_layer,
+                num_layers=self.num_layers,
+                enable_nested_tensor=False,
+            )
+            self.attention_score = nn.Linear(self.embedding_dim, 1)
+            self.to_latent = nn.Linear(self.embedding_dim, self.latent_dim)
+            self.from_latent = nn.Linear(self.latent_dim, self.embedding_dim)
+
+            decoder_layer = nn.TransformerDecoderLayer(
+                d_model=self.embedding_dim,
+                nhead=self.num_heads,
+                dim_feedforward=self.dim_feedforward,
+                dropout=dropout,
+                batch_first=True,
+            )
+            self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=self.num_layers)
+            self.output = nn.Linear(self.embedding_dim, self.vocab_size)
+            return
         
         # TODO: experiment with adding a CNN layer before the GRU encoder to capture local patterns in the sequence
         self.cnn = nn.Conv1d(
@@ -125,13 +169,6 @@ class ProteinSequenceAutoencoder(nn.Module):
         self.attention_score = nn.Linear(self.hidden_dim * self.encoder_num_directions, 1)
         
         self.to_latent = nn.Linear(self.hidden_dim * self.encoder_num_directions, self.latent_dim)
-        # trying a deeper mapping to latent space with nonlinearity and dropout to encourage better compression
-        # self.to_latent = nn.Sequential(
-        #     nn.Linear(self.hidden_dim * self.encoder_num_directions, 512),
-        #     nn.LayerNorm(512),
-        #     nn.GELU(),
-        #     nn.Linear(512, self.latent_dim)
-        # )
         self.from_latent = nn.Linear(self.latent_dim, self.hidden_dim * self.num_layers)
         decoder_input_dim = self.embedding_dim
         if self.condition_decoder_on_latent:
@@ -154,6 +191,16 @@ class ProteinSequenceAutoencoder(nn.Module):
         lengths: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Encode token IDs into a latent vector."""
+        if self.layer_type == "transformer":
+            return self._encode_transformer(input_ids, lengths=lengths)
+        return self._encode_gru(input_ids, lengths=lengths)
+
+    def _encode_gru(
+        self,
+        input_ids: torch.Tensor,
+        lengths: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Encode token IDs with the CNN+GRU encoder."""
         embedded: torch.Tensor = self.embedding(input_ids)
         
         x = embedded.transpose(1, 2) # x: [batch, embedding_dim, seq_len]
@@ -194,6 +241,44 @@ class ProteinSequenceAutoencoder(nn.Module):
             ).squeeze(1)
         
         return self.to_latent(context)
+
+    def _encode_transformer(
+        self,
+        input_ids: torch.Tensor,
+        lengths: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Encode token IDs with a transformer encoder."""
+        batch_size, sequence_length = input_ids.shape
+        if sequence_length > self.max_encoder_positions:
+            raise ValueError(
+                f"Encoder sequence length {sequence_length} exceeds "
+                f"max_encoder_positions={self.max_encoder_positions}"
+            )
+
+        position_ids = torch.arange(sequence_length, device=input_ids.device).unsqueeze(0).expand(batch_size, -1)
+        encoder_inputs = self.embedding(input_ids) + self.encoder_position_embedding(position_ids)
+        padding_mask = self._padding_mask(input_ids, lengths=lengths)
+        encoder_outputs = self.encoder(encoder_inputs, src_key_padding_mask=padding_mask)
+
+        # TODO: use this attention/pooling for now, but not necessary for a transformer encoder to have more attention
+        attention_logits = self.attention_score(encoder_outputs).squeeze(-1)
+        attention_logits = attention_logits.masked_fill(padding_mask, float("-inf"))
+        attention_weights = torch.softmax(attention_logits, dim=1)
+        context = torch.bmm(attention_weights.unsqueeze(1), encoder_outputs).squeeze(1)
+        return self.to_latent(context)
+
+    def _padding_mask(
+        self,
+        input_ids: torch.Tensor,
+        lengths: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Return a True-for-padding mask for transformer attention."""
+        if lengths is None:
+            return input_ids == self.pad_idx
+
+        max_len = input_ids.size(1)
+        clipped_lengths = lengths.to(input_ids.device).clamp(min=1, max=max_len)
+        return torch.arange(max_len, device=input_ids.device).unsqueeze(0) >= clipped_lengths.unsqueeze(1)
 
     def _initial_decoder_hidden(self, latent: torch.Tensor) -> torch.Tensor:
         """Initialize the hidden state of the decoder from the latent vector.
@@ -284,6 +369,33 @@ class ProteinSequenceAutoencoder(nn.Module):
         )
         return torch.cat([token_embeddings, latent_repeated], dim=-1)
 
+    def _transformer_decoder_inputs(
+        self,
+        decoder_input_ids: torch.Tensor,
+        position_offset: int = 0,
+    ) -> torch.Tensor:
+        """Prepare transformer decoder token and positional embeddings."""
+        batch_size, sequence_length = decoder_input_ids.shape
+        max_position = position_offset + sequence_length
+        if max_position > self.max_decoder_positions:
+            raise ValueError(
+                f"Decoder position {max_position} exceeds "
+                f"max_decoder_positions={self.max_decoder_positions}"
+            )
+
+        position_ids = torch.arange(
+            position_offset,
+            max_position,
+            device=decoder_input_ids.device,
+        ).unsqueeze(0).expand(batch_size, -1)
+        token_embeddings = self.embedding(decoder_input_ids) + self.decoder_position_embedding(position_ids)
+        return self._apply_teacher_forcing_token_dropout(token_embeddings, decoder_input_ids)
+
+    def _causal_mask(self, sequence_length: int, device: torch.device) -> torch.Tensor:
+        """Return a causal attention mask for transformer decoding."""
+        mask = torch.full((sequence_length, sequence_length), float("-inf"), device=device)
+        return torch.triu(mask, diagonal=1)
+
     def decode(
         self,
         latent: torch.Tensor,
@@ -300,10 +412,38 @@ class ProteinSequenceAutoencoder(nn.Module):
                 raise ValueError("sequence_length is required without decoder_input_ids")
             # Call actual autoregressive decoding function which feeds predictions back in at each step
             return self.decode_autoregressive(latent, sequence_length)
-        
+
+        if self.layer_type == "transformer":
+            return self._decode_transformer(latent, decoder_input_ids)
+        return self._decode_gru(latent, decoder_input_ids)
+    
+    def _decode_gru(
+        self,
+        latent: torch.Tensor,
+        decoder_input_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        """Decode teacher-forced token IDs with the GRU decoder."""
         hidden = self._initial_decoder_hidden(latent)
         decoder_inputs = self._decoder_inputs(decoder_input_ids, latent)
         decoded, _ = self.decoder(decoder_inputs, hidden)
+        return self.output(decoded)
+
+    def _decode_transformer(
+        self,
+        latent: torch.Tensor,
+        decoder_input_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        """Decode teacher-forced token IDs with the transformer decoder."""
+        decoder_inputs = self._transformer_decoder_inputs(decoder_input_ids)
+        causal_mask = self._causal_mask(decoder_input_ids.size(1), decoder_input_ids.device)
+        padding_mask = decoder_input_ids == self.pad_idx
+        memory = self.from_latent(latent).unsqueeze(1)
+        decoded = self.decoder(
+            tgt=decoder_inputs,
+            memory=memory,
+            tgt_mask=causal_mask,
+            tgt_key_padding_mask=padding_mask,
+        )
         return self.output(decoded)
 
     def decode_autoregressive(
@@ -315,39 +455,106 @@ class ProteinSequenceAutoencoder(nn.Module):
         if max_length <= 0:
             raise ValueError("max_length must be positive")
 
-        hidden: torch.Tensor = self.from_latent(latent)
-        hidden = hidden.view(latent.size(0), self.num_layers, self.hidden_dim)
-        hidden = hidden.transpose(0, 1).contiguous()
+        if self.layer_type == "transformer":
+            return self._decode_autoregressive_transformer(latent, max_length)
+        return self._decode_autoregressive_gru(latent, max_length)
 
-        decoder_input_ids = torch.full(
+    def _initial_autoregressive_input(self, latent: torch.Tensor) -> torch.Tensor:
+        """Return a one-token BOS input for autoregressive decoding."""
+        return torch.full(
             (latent.size(0), 1),
             self.bos_idx,
             dtype=torch.long,
             device=latent.device,
         )
-        finished = torch.zeros(latent.size(0), dtype=torch.bool, device=latent.device)
+
+    def _initial_finished_mask(self, latent: torch.Tensor) -> torch.Tensor:
+        """Return the per-sequence EOS tracking mask for autoregressive decoding."""
+        return torch.zeros(latent.size(0), dtype=torch.bool, device=latent.device)
+
+    def _autoregressive_next_tokens(
+        self,
+        step_logits: torch.Tensor,
+        finished: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Greedily choose next tokens and pad sequences after EOS."""
+        next_tokens = step_logits.argmax(dim=-1)
+        finished = finished | (next_tokens == self.eos_idx)
+        next_tokens = torch.where(
+            finished,
+            torch.full_like(next_tokens, self.pad_idx),
+            next_tokens,
+        )
+        return next_tokens, finished
+
+    def _decode_autoregressive_gru(
+        self,
+        latent: torch.Tensor,
+        max_length: int,
+    ) -> torch.Tensor:
+        """Autoregressively decode latent vectors with the GRU decoder."""
+        hidden = self._initial_decoder_hidden(latent)
+        decoder_input_ids = self._initial_autoregressive_input(latent)
+        finished = self._initial_finished_mask(latent)
         logits_by_step: list[torch.Tensor] = []
 
         for step in range(max_length):
-            decoder_inputs = self._decoder_inputs(
-                decoder_input_ids,
-                latent,
+            step_logits, hidden = self._decode_autoregressive_gru_step(
+                latent=latent,
+                decoder_input_ids=decoder_input_ids,
+                hidden=hidden,
                 position_offset=step,
             )
-            decoded, hidden = self.decoder(decoder_inputs, hidden)
-            step_logits = self.output(decoded[:, -1, :])
             logits_by_step.append(step_logits)
 
-            next_tokens = step_logits.argmax(dim=-1)
-            finished = finished | (next_tokens == self.eos_idx)
-            next_tokens = torch.where(
-                finished,
-                torch.full_like(next_tokens, self.pad_idx),
-                next_tokens,
-            )
+            next_tokens, finished = self._autoregressive_next_tokens(step_logits, finished)
             decoder_input_ids = next_tokens.unsqueeze(1)
 
         return torch.stack(logits_by_step, dim=1)
+
+    def _decode_autoregressive_gru_step(
+        self,
+        latent: torch.Tensor,
+        decoder_input_ids: torch.Tensor,
+        hidden: torch.Tensor,
+        position_offset: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Run one GRU autoregressive decoding step."""
+        decoder_inputs = self._decoder_inputs(
+            decoder_input_ids,
+            latent,
+            position_offset=position_offset,
+        )
+        decoded, hidden = self.decoder(decoder_inputs, hidden)
+        return self.output(decoded[:, -1, :]), hidden
+
+    def _decode_autoregressive_transformer(
+        self,
+        latent: torch.Tensor,
+        max_length: int,
+    ) -> torch.Tensor:
+        """Autoregressively decode latent vectors with the transformer decoder."""
+        decoder_input_ids = self._initial_autoregressive_input(latent)
+        finished = self._initial_finished_mask(latent)
+        logits_by_step: list[torch.Tensor] = []
+
+        for _step in range(max_length):
+            step_logits = self._decode_autoregressive_transformer_step(latent, decoder_input_ids)
+            logits_by_step.append(step_logits)
+
+            next_tokens, finished = self._autoregressive_next_tokens(step_logits, finished)
+            decoder_input_ids = torch.cat([decoder_input_ids, next_tokens.unsqueeze(1)], dim=1)
+
+        return torch.stack(logits_by_step, dim=1)
+
+    def _decode_autoregressive_transformer_step(
+        self,
+        latent: torch.Tensor,
+        decoder_input_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        """Run one transformer autoregressive decoding step."""
+        logits = self._decode_transformer(latent, decoder_input_ids)
+        return logits[:, -1, :]
 
     def forward(
         self,

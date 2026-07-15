@@ -88,9 +88,24 @@ TRAIN_SPLIT = "train"
 VALID_SPLIT = "valid"
 
 
-def model_definition(model_type: str, hyperparams: AEParams) -> tuple[AE, torch.optim.Adam, ReduceLROnPlateau]:
+def architecture_artifact_suffix(layer_type: str, artifact_suffix: str | None = None) -> str | None:
+    """Include non-default architectures in artifact names."""
+    suffix_parts = []
+    if layer_type != "gru":
+        suffix_parts.append(layer_type)
+    if artifact_suffix:
+        suffix_parts.append(artifact_suffix)
+    return "_".join(suffix_parts) if suffix_parts else None
+
+
+def model_definition(
+    model_type: str,
+    hyperparams: AEParams,
+    layer_type: str = "gru",
+) -> tuple[AE, torch.optim.Adam, ReduceLROnPlateau]:
     if model_type == "ae":
         model = AE(
+            layer_type=layer_type,
             embedding_dim=hyperparams.embedding_dim,
             cnn_out_channels=hyperparams.cnn_out_channels,
             hidden_dim=hyperparams.hidden_dim,
@@ -105,6 +120,9 @@ def model_definition(model_type: str, hyperparams: AEParams) -> tuple[AE, torch.
             teacher_forcing_dropout_rate=hyperparams.teacher_forcing_dropout_rate,
             use_decoder_positional_embeddings=hyperparams.use_decoder_positional_embeddings,
             max_decoder_positions=hyperparams.max_decoder_positions,
+            max_encoder_positions=hyperparams.max_encoder_positions,
+            num_heads=hyperparams.num_heads,
+            dim_feedforward=hyperparams.dim_feedforward,
         ).to(device)
     else:
         raise ValueError(f"Model type {model_type} not supported.")
@@ -207,9 +225,10 @@ def train(
     length_bin: int | None = None,
     cumulative: bool = False,
     artifact_suffix: str | None = None,
+    layer_type: str = "gru",
 ) -> tuple[AE, dict]:
 
-    model, optimizer, scheduler = model_definition(model_type, hyperparams)
+    model, optimizer, scheduler = model_definition(model_type, hyperparams, layer_type=layer_type)
     start_epoch = 0
     best_val_loss = float("inf")
     best_state_dict = None
@@ -629,6 +648,11 @@ def main():
     else:
         training_runs = [(hyperparams, None)]
 
+    training_runs = [
+        (run_hyperparams, architecture_artifact_suffix(args.layer_type, artifact_suffix))
+        for run_hyperparams, artifact_suffix in training_runs
+    ]
+
     artifact_paths = [
         autoencoder_artifact_paths(
             args.model,
@@ -685,6 +709,7 @@ def main():
             length_bin=args.length_bin,
             cumulative=args.cumulative,
             artifact_suffix=artifact_suffix,
+            layer_type=args.layer_type,
         )
 
         print(f"Saved training history to: {history_path}")
