@@ -4,7 +4,7 @@ import logging
 
 from pathlib import Path
 from datetime import datetime
-from typing import Tuple, Dict
+from typing import Tuple, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -233,7 +233,7 @@ class CNN1DClassifier(nn.Module):
         self,
         input_dim: int = 320,
         num_classes: int = 2,
-        kernel_sizes: list = None, # type: ignore
+        kernel_sizes: Optional[List[int]] = None, 
         num_filters: int = 64,
         dropout_rate: float = 0.3
     ):
