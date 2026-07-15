@@ -66,10 +66,22 @@ print()
 num_workers = 4 if torch.cuda.is_available() else 0
 # ----------------------------------------------------------------------------------------------------------------
 SEED = 42
-AUTOENCODER_SWEEP_SEARCH_SPACE = {
+GRU_AUTOENCODER_SWEEP_SEARCH_SPACE = {
     "learning_rate": (1e-4, 3e-4),
     "num_layers": (2, 3),
     "hidden_dim": (512, 1024),
+}
+
+TRANSFORMER_AUTOENCODER_SWEEP_SEARCH_SPACE = {
+    "learning_rate": (1e-4, 3e-4),
+    "num_layers": (2, 3),
+    "num_heads": (4, 8),
+    "dim_feedforward": (512, 1024),
+}
+
+AUTOENCODER_SWEEP_SEARCH_SPACES = {
+    "gru": GRU_AUTOENCODER_SWEEP_SEARCH_SPACE,
+    "transformer": TRANSFORMER_AUTOENCODER_SWEEP_SEARCH_SPACE,
 }
 
 
@@ -96,6 +108,14 @@ def architecture_artifact_suffix(layer_type: str, artifact_suffix: str | None = 
     if artifact_suffix:
         suffix_parts.append(artifact_suffix)
     return "_".join(suffix_parts) if suffix_parts else None
+
+
+def sweep_search_space_for_layer(layer_type: str) -> dict[str, tuple]:
+    """Return the sweep search space for the selected autoencoder architecture."""
+    try:
+        return AUTOENCODER_SWEEP_SEARCH_SPACES[layer_type]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported layer_type for sweep: {layer_type}") from exc
 
 
 def describe_sweep_run(hyperparams: AEParams, search_space: dict[str, tuple]) -> str:
@@ -641,8 +661,10 @@ def main():
             f"and reaching the full training set over {args.curriculum_epochs} epoch(s)."
         )
     
+    sweep_search_space = sweep_search_space_for_layer(args.layer_type)
+
     if args.sweep:
-        training_runs = AESweepConfig(AUTOENCODER_SWEEP_SEARCH_SPACE).iter_hyperparameters(hyperparams)
+        training_runs = AESweepConfig(sweep_search_space).iter_hyperparameters(hyperparams)
     else:
         training_runs = [(hyperparams, None)]
 
@@ -667,6 +689,7 @@ def main():
     
     if args.sweep:
         print(f"Starting hyperparameter sweep with {len(training_runs)} runs.")
+        print(f"Sweep search space: {sweep_search_space}")
         print(training_runs)
 
     # Run training for each hyperparameter configuration (one loop for no sweep, multiple loops for sweep)
@@ -680,7 +703,7 @@ def main():
         if args.sweep:
             print(
                 f"\nStarting sweep run {run_index}/{len(training_runs)}: "
-                f"{describe_sweep_run(run_hyperparams, AUTOENCODER_SWEEP_SEARCH_SPACE)}"
+                f"{describe_sweep_run(run_hyperparams, sweep_search_space)}"
             )
         else:
             print()

@@ -182,6 +182,23 @@ def test_model_definition_builds_autoencoder_optimizer_and_scheduler(monkeypatch
     assert isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau)
 
 
+def test_sweep_search_space_depends_on_layer_type() -> None:
+    assert train_autoencoder.sweep_search_space_for_layer("gru") == {
+        "learning_rate": (1e-4, 3e-4),
+        "num_layers": (2, 3),
+        "hidden_dim": (512, 1024),
+    }
+    assert train_autoencoder.sweep_search_space_for_layer("transformer") == {
+        "learning_rate": (1e-4, 3e-4),
+        "num_layers": (2, 3),
+        "num_heads": (4, 8),
+        "dim_feedforward": (512, 1024),
+    }
+
+    with pytest.raises(ValueError, match="Unsupported layer_type"):
+        train_autoencoder.sweep_search_space_for_layer("cnn")
+
+
 def test_train_uses_shifted_decoder_inputs_and_validation_loss(monkeypatch):
     model = _RecordingAutoencoder()
     scheduler = _RecordingScheduler()
