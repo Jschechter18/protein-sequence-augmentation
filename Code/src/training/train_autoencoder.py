@@ -21,10 +21,10 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.nn.utils import clip_grad_norm_
-from sklearn.metrics import f1_score, accuracy_score
+from sklearn.metrics import accuracy_score
 from tqdm import tqdm
 
 SRC_DIR = Path(__file__).resolve().parents[1]
@@ -38,13 +38,21 @@ from utils.dataloader import (
     PAD_IDX,
     create_dataloader,
     compute_train_length_boundaries,
+    make_overfit_dataloaders,
 )
-from utils.hyperparameters import (AutoencoderHyperparameters as AEParams, AutoencoderSweepConfig as AESweepConfig)
+from utils.hyperparameters import (
+    AutoencoderHyperparameters as AEParams,
+    AutoencoderSweepConfig as AESweepConfig,
+    describe_sweep_run,
+    sweep_search_space_for_layer,
+)
 from utils.utils import load_training_checkpoint, make_token_weights
 from utils.curriculum import make_length_curriculum_dataloader
 from utils.train_input_validation import (
     add_and_validate_train_inputs,
+    architecture_artifact_suffix,
     autoencoder_artifact_paths,
+    validate_artifact_paths,
 )
 
 
@@ -66,24 +74,6 @@ print()
 num_workers = 4 if torch.cuda.is_available() else 0
 # ----------------------------------------------------------------------------------------------------------------
 SEED = 42
-GRU_AUTOENCODER_SWEEP_SEARCH_SPACE = {
-    "learning_rate": (1e-4, 3e-4),
-    "num_layers": (2, 3),
-    "hidden_dim": (512, 1024),
-}
-
-TRANSFORMER_AUTOENCODER_SWEEP_SEARCH_SPACE = {
-    "learning_rate": (1e-4, 3e-4),
-    "num_layers": (2, 3),
-    "num_heads": (4, 8),
-    "dim_feedforward": (512, 1024),
-}
-
-AUTOENCODER_SWEEP_SEARCH_SPACES = {
-    "gru": GRU_AUTOENCODER_SWEEP_SEARCH_SPACE,
-    "transformer": TRANSFORMER_AUTOENCODER_SWEEP_SEARCH_SPACE,
-}
-
 
 def set_random_seed(seed: int = SEED) -> None:
     random.seed(seed)
@@ -100,37 +90,13 @@ TRAIN_SPLIT = "train"
 VALID_SPLIT = "valid"
 
 
-def architecture_artifact_suffix(layer_type: str, artifact_suffix: str | None = None) -> str | None:
-    """Include non-default architectures in artifact names."""
-    suffix_parts = []
-    if layer_type != "gru":
-        suffix_parts.append(layer_type)
-    if artifact_suffix:
-        suffix_parts.append(artifact_suffix)
-    return "_".join(suffix_parts) if suffix_parts else None
-
-
-def sweep_search_space_for_layer(layer_type: str) -> dict[str, tuple]:
-    """Return the sweep search space for the selected autoencoder architecture."""
-    try:
-        return AUTOENCODER_SWEEP_SEARCH_SPACES[layer_type]
-    except KeyError as exc:
-        raise ValueError(f"Unsupported layer_type for sweep: {layer_type}") from exc
-
-
-def describe_sweep_run(hyperparams: AEParams, search_space: dict[str, tuple]) -> str:
-    """Format the current values for whichever fields are in the sweep."""
-    return ", ".join(
-        f"{name}={getattr(hyperparams, name)}"
-        for name in search_space
-    )
-
-
 def model_definition(
     model_type: str,
     hyperparams: AEParams,
-    layer_type: str = "gru",
+    layer_type: str | None = None,
 ) -> tuple[AE, torch.optim.Adam, ReduceLROnPlateau]:
+    layer_type = hyperparams.layer_type if layer_type is None else layer_type
+
     if model_type == "ae":
         model = AE(
             layer_type=layer_type,
@@ -151,6 +117,7 @@ def model_definition(
             max_encoder_positions=hyperparams.max_encoder_positions,
             num_heads=hyperparams.num_heads,
             dim_feedforward=hyperparams.dim_feedforward,
+            use_cnn_before_transformer=hyperparams.use_cnn_before_transformer,
         ).to(device)
     else:
         raise ValueError(f"Model type {model_type} not supported.")
@@ -253,9 +220,10 @@ def train(
     length_bin: int | None = None,
     cumulative: bool = False,
     artifact_suffix: str | None = None,
-    layer_type: str = "gru",
+    layer_type: str | None = None,
 ) -> tuple[AE, dict]:
 
+    layer_type = hyperparams.layer_type if layer_type is None else layer_type
     model, optimizer, scheduler = model_definition(model_type, hyperparams, layer_type=layer_type)
     start_epoch = 0
     best_val_loss = float("inf")
@@ -286,7 +254,6 @@ def train(
         "train_loss": [],
         "train_scores": {
             "accuracy": [],
-            "f1": [],
         },
         "val_loss": [],
         "val_scores": {
@@ -343,7 +310,7 @@ def train(
             outputs = model(inputs, decoder_input_ids=inputs[:, :-1], lengths=lengths)
             loss: torch.Tensor = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
             loss.backward()
-            if hyperparams.grad_clip:
+            if hyperparams.grad_clip and layer_type != "transformer":
                 grad_norm = float(clip_grad_norm_(model.parameters(), max_norm=1.0))
             else:
                 grad_norm = 0.0
@@ -370,17 +337,14 @@ def train(
             all_targets = torch.cat(epoch_targets)
             all_predictions = torch.cat(epoch_predictions)
             accuracy = accuracy_score(all_targets, all_predictions)
-            f1 = f1_score(all_targets, all_predictions, average='weighted')
         else:
             accuracy = 0.0
-            f1 = 0.0
-        print(f"Epoch [{epoch+1}/{hyperparams.num_epochs}], Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}, F1: {f1:.4f}")
+        print(f"Epoch [{epoch+1}/{hyperparams.num_epochs}], Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}")
 
         epoch_info = {
             "epoch": epoch + 1,
             "train_loss": avg_loss,
             "train_accuracy": accuracy,
-            "train_f1": f1,
             "curriculum_fraction": curriculum_fraction,
             "curriculum_examples": curriculum_examples,
             "learning_rate": optimizer.param_groups[0]["lr"],
@@ -391,7 +355,6 @@ def train(
         }
         history["train_loss"].append(avg_loss)
         history["train_scores"]["accuracy"].append(accuracy)
-        history["train_scores"]["f1"].append(f1)
         
         val_metrics = validate(model, val_dataloader, loss_fn)
         val_loss = val_metrics["loss"]
@@ -458,17 +421,6 @@ def train(
         
     return model, history
 
-
-def validate_artifact_paths(paths: list[tuple[Path, Path]]) -> None:
-    existing_paths = [
-        path
-        for checkpoint_path, history_path in paths
-        for path in (checkpoint_path, history_path)
-        if path.exists()
-    ]
-    if existing_paths:
-        formatted_paths = "\n".join(str(path) for path in existing_paths)
-        raise ValueError(f"Training artifacts already exist:\n{formatted_paths}")
 
 def test(model: AE, dataloader: DataLoader) -> dict[str, dict[str, float]]:
     model.eval()
@@ -540,64 +492,6 @@ def test(model: AE, dataloader: DataLoader) -> dict[str, dict[str, float]]:
     
     return results
 
-def make_overfit_dataloaders(
-    train_dataloader: DataLoader,
-    num_batches: int,
-) -> tuple[DataLoader, DataLoader]:
-    """Create train/validation loaders over the same tiny training subset.
-
-    Parameters
-    ----------
-    train_dataloader : DataLoader
-        Original training dataloader
-    num_batches : int
-        _description_
-
-    Returns
-    -------
-    tuple[DataLoader, DataLoader]
-        _description_
-
-    Raises
-    ------
-    ValueError
-        _description_
-    ValueError
-        _description_
-    """
-    # Input validation for the overfit test
-    if num_batches <= 0:
-        raise ValueError("--overfit_batches must be a positive integer")
-
-    batch_size = train_dataloader.batch_size
-    if batch_size is None:
-        raise ValueError("batch_size cannot be None")
-
-    num_examples = min(
-        num_batches * batch_size,
-        len(train_dataloader.dataset),
-    )
-    subset = Subset(train_dataloader.dataset, range(num_examples))
-
-    train_subset_loader = DataLoader(
-        subset,
-        batch_size=train_dataloader.batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        pin_memory=train_dataloader.pin_memory,
-        collate_fn=train_dataloader.collate_fn,
-    )
-    val_subset_loader = DataLoader(
-        subset,
-        batch_size=train_dataloader.batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=train_dataloader.pin_memory,
-        collate_fn=train_dataloader.collate_fn,
-    )
-
-    return train_subset_loader, val_subset_loader
-
 def main():
     args, hyperparams = add_and_validate_train_inputs()
     
@@ -607,7 +501,6 @@ def main():
         loader_type = "max_length"
     else:
         loader_type = None
-
     length_boundaries = None
     if loader_type == "length_bin":
         full_train_dataloader = create_dataloader(
@@ -661,7 +554,7 @@ def main():
             f"and reaching the full training set over {args.curriculum_epochs} epoch(s)."
         )
     
-    sweep_search_space = sweep_search_space_for_layer(args.layer_type)
+    sweep_search_space = sweep_search_space_for_layer(hyperparams.layer_type)
 
     if args.sweep:
         training_runs = AESweepConfig(sweep_search_space).iter_hyperparameters(hyperparams)
@@ -669,7 +562,7 @@ def main():
         training_runs = [(hyperparams, None)]
 
     training_runs = [
-        (run_hyperparams, architecture_artifact_suffix(args.layer_type, artifact_suffix))
+        (run_hyperparams, architecture_artifact_suffix(run_hyperparams.layer_type, artifact_suffix))
         for run_hyperparams, artifact_suffix in training_runs
     ]
 
@@ -724,7 +617,7 @@ def main():
             length_bin=args.length_bin,
             cumulative=args.cumulative,
             artifact_suffix=artifact_suffix,
-            layer_type=args.layer_type,
+            layer_type=run_hyperparams.layer_type,
         )
 
         print(f"Saved training history to: {history_path}")

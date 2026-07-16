@@ -210,6 +210,45 @@ def make_max_length_loader(base_loader, max_length, shuffle):
         collate_fn=base_loader.collate_fn,
     )
 
+
+def make_overfit_dataloaders(
+    train_dataloader: DataLoader,
+    num_batches: int,
+) -> tuple[DataLoader, DataLoader]:
+    """Create train/validation loaders over the same small training subset."""
+    if num_batches <= 0:
+        raise ValueError("--overfit_batches must be a positive integer")
+
+    batch_size = train_dataloader.batch_size
+    if batch_size is None:
+        raise ValueError("batch_size cannot be None")
+
+    num_examples = min(
+        num_batches * batch_size,
+        len(train_dataloader.dataset),
+    )
+    subset = Subset(train_dataloader.dataset, range(num_examples))
+
+    train_subset_loader = DataLoader(
+        subset,
+        batch_size=train_dataloader.batch_size,
+        shuffle=True,
+        num_workers=train_dataloader.num_workers,
+        pin_memory=train_dataloader.pin_memory,
+        collate_fn=train_dataloader.collate_fn,
+    )
+    val_subset_loader = DataLoader(
+        subset,
+        batch_size=train_dataloader.batch_size,
+        shuffle=False,
+        num_workers=train_dataloader.num_workers,
+        pin_memory=train_dataloader.pin_memory,
+        collate_fn=train_dataloader.collate_fn,
+    )
+
+    return train_subset_loader, val_subset_loader
+
+
 def create_dataloader(
     task: str = "solubility",
     split: str = "train",

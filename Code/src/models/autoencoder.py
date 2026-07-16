@@ -23,7 +23,7 @@ class ProteinSequenceAutoencoder(nn.Module):
         num_layers: int,
         kernel_size: int,
         bidirectional: bool = True,
-        grad_clip: bool = True,
+        # grad_clip: bool = True,
         dropout: float = 0.0,
         pad_idx: int = 0,
         bos_idx: int = 2,
@@ -36,6 +36,7 @@ class ProteinSequenceAutoencoder(nn.Module):
         max_encoder_positions: int = 1024,
         num_heads: int = 4,
         dim_feedforward: int = 1024,
+        use_cnn_before_transformer: bool = False,  # TODO: experiment with adding this CNN layer to transformer
         # is_autoregressive: bool = False, # really should only be when training -> optional for validation and testing
     ) -> None:
         """Initialize the protein sequence autoencoder.
@@ -81,13 +82,13 @@ class ProteinSequenceAutoencoder(nn.Module):
             raise ValueError("max_encoder_positions must be at least 1")
         if layer_type == "transformer" and embedding_dim % num_heads != 0:
             raise ValueError("embedding_dim must be divisible by num_heads for transformer layers")
-        if latent_dim >= hidden_dim:
+        if latent_dim >= hidden_dim and layer_type != "transformer":
             warnings.warn("latent_dim should ideally be smaller than hidden_dim for effective compression", UserWarning)
         
         self.layer_type = layer_type
-        self.bidirectional = bidirectional
-        self.encoder_num_directions = 2 if self.bidirectional else 1
-        self.grad_clip = grad_clip
+        self.bidirectional = bidirectional # meaningful in gru only
+        self.encoder_num_directions = 2 if self.bidirectional else 1 # meaningful in gru only
+        # self.grad_clip = grad_clip # meaningful in gru only
 
         rnn_dropout = dropout if num_layers > 1 else 0.0
         self.vocab_size = VOCAB_SIZE
@@ -106,6 +107,8 @@ class ProteinSequenceAutoencoder(nn.Module):
         self.max_encoder_positions = max_encoder_positions
         self.num_heads = num_heads
         self.dim_feedforward = dim_feedforward
+        
+        self.use_cnn_before_transformer = use_cnn_before_transformer  # TODO: experiment with adding this CNN layer to transformer
 
         self.embedding = nn.Embedding(self.vocab_size, self.embedding_dim, padding_idx=self.pad_idx)
         if self.layer_type == "transformer":
@@ -120,6 +123,14 @@ class ProteinSequenceAutoencoder(nn.Module):
             )
 
         if self.layer_type == "transformer":
+            if self.use_cnn_before_transformer:
+                self.cnn = nn.Conv1d(
+                    in_channels=self.embedding_dim,
+                    out_channels=self.embedding_dim,
+                    kernel_size=kernel_size,
+                    padding=kernel_size // 2,  # to maintain sequence length
+                )
+            
             encoder_layer = nn.TransformerEncoderLayer(
                 d_model=self.embedding_dim,
                 nhead=self.num_heads,
@@ -135,11 +146,13 @@ class ProteinSequenceAutoencoder(nn.Module):
             self.attention_score = nn.Linear(self.embedding_dim, 1)
             self.to_latent = nn.Linear(self.embedding_dim, self.latent_dim)
             self.from_latent = nn.Linear(self.latent_dim, self.embedding_dim)
+            transformer_decoder_input_dim = self.embedding_dim
             if self.condition_decoder_on_latent:
-                self.transformer_decoder_input_projection = nn.Linear(
-                    self.embedding_dim + self.latent_dim,
-                    self.embedding_dim,
-                )
+                transformer_decoder_input_dim += self.latent_dim
+            self.transformer_decoder_input_projection = nn.Linear(
+                transformer_decoder_input_dim,
+                self.embedding_dim,
+            )
 
             decoder_layer = nn.TransformerDecoderLayer(
                 d_model=self.embedding_dim,
@@ -262,6 +275,10 @@ class ProteinSequenceAutoencoder(nn.Module):
         position_ids = torch.arange(sequence_length, device=input_ids.device).unsqueeze(0).expand(batch_size, -1)
         encoder_inputs = self.embedding(input_ids) + self.encoder_position_embedding(position_ids)
         padding_mask = self._padding_mask(input_ids, lengths=lengths)
+        if self.use_cnn_before_transformer:
+            x = self.cnn(encoder_inputs.transpose(1, 2))
+            x = torch.relu(x) # x: [batch, cnn_out_channels, seq_len]
+            encoder_inputs = x.transpose(1, 2)
         encoder_outputs = self.encoder(encoder_inputs, src_key_padding_mask=padding_mask)
 
         # TODO: use this attention/pooling for now, but not necessary for a transformer encoder to have more attention
@@ -395,11 +412,10 @@ class ProteinSequenceAutoencoder(nn.Module):
         ).unsqueeze(0).expand(batch_size, -1)
         token_embeddings = self.embedding(decoder_input_ids) + self.decoder_position_embedding(position_ids)
         token_embeddings = self._apply_teacher_forcing_token_dropout(token_embeddings, decoder_input_ids)
-        if not self.condition_decoder_on_latent:
-            return token_embeddings
-
-        latent_repeated = latent.unsqueeze(1).expand(-1, sequence_length, -1)
-        decoder_inputs = torch.cat([token_embeddings, latent_repeated], dim=-1)
+        decoder_inputs = token_embeddings
+        if self.condition_decoder_on_latent:
+            latent_repeated = latent.unsqueeze(1).expand(-1, sequence_length, -1)
+            decoder_inputs = torch.cat([token_embeddings, latent_repeated], dim=-1)
         return self.transformer_decoder_input_projection(decoder_inputs)
 
     def _causal_mask(self, sequence_length: int, device: torch.device) -> torch.Tensor:

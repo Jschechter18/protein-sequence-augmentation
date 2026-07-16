@@ -67,3 +67,5 @@ def make_token_weights(device):
         weights[VOCAB[aa]] = weight
 
     return weights.to(device)
+
+

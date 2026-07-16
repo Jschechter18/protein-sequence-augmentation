@@ -17,7 +17,7 @@ class Hyperparameters:
 @dataclass
 class AutoencoderHyperparameters(Hyperparameters):
     learning_rate: float = 1e-4
-    # layer_type: str = "lstm" # gru(+single cnn layer), transformer
+    layer_type: str = "gru" # lstm, gru(+single cnn layer), transformer
     embedding_dim: int = 512
     cnn_out_channels: int = 256
     hidden_dim: int = 512
@@ -34,6 +34,45 @@ class AutoencoderHyperparameters(Hyperparameters):
     num_heads: int = 8
     dim_feedforward: int = 2048
     scheduler_factor: float = 0.1
+    use_cnn_before_transformer: bool = False  # TODO: experiment with adding this CNN layer to transformer
+
+
+GRU_AUTOENCODER_SWEEP_SEARCH_SPACE = {
+    "learning_rate": (1e-4, 3e-4),
+    "num_layers": (2, 3),
+    "hidden_dim": (512, 1024),
+}
+
+TRANSFORMER_AUTOENCODER_SWEEP_SEARCH_SPACE = {
+    "learning_rate": (1e-4, 3e-4),
+    "num_layers": (2, 3),
+    "num_heads": (4, 8),
+    "dim_feedforward": (512, 1024),
+}
+
+AUTOENCODER_SWEEP_SEARCH_SPACES = {
+    "gru": GRU_AUTOENCODER_SWEEP_SEARCH_SPACE,
+    "transformer": TRANSFORMER_AUTOENCODER_SWEEP_SEARCH_SPACE,
+}
+
+
+def sweep_search_space_for_layer(layer_type: str) -> dict[str, tuple]:
+    """Return the sweep search space for the selected autoencoder architecture."""
+    try:
+        return AUTOENCODER_SWEEP_SEARCH_SPACES[layer_type]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported layer_type for sweep: {layer_type}") from exc
+
+
+def describe_sweep_run(
+    hyperparams: AutoencoderHyperparameters,
+    search_space: Mapping[str, tuple],
+) -> str:
+    """Format the current values for whichever fields are in the sweep."""
+    return ", ".join(
+        f"{name}={getattr(hyperparams, name)}"
+        for name in search_space
+    )
 
 
 def autoencoder_sweep_suffix(

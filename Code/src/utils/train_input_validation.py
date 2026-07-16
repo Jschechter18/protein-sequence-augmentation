@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import warnings
 from pathlib import Path
 from typing import Optional
@@ -33,6 +34,67 @@ def _str_to_bool(value: str | bool) -> bool:
     raise argparse.ArgumentTypeError("Expected a boolean value")
 
 
+def _cli_arg_provided(flag: str) -> bool:
+    return any(arg == flag or arg.startswith(f"{flag}=") for arg in sys.argv[1:])
+
+
+def _validate_autoencoder_hyperparams(hyperparams: AEParams) -> None:
+    if hyperparams.layer_type not in {"gru", "transformer"}:
+        raise ValueError("layer_type must be 'gru' or 'transformer'")
+    if hyperparams.batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    if hyperparams.num_epochs <= 0:
+        raise ValueError("num_epochs must be positive")
+    if hyperparams.learning_rate <= 0:
+        raise ValueError("learning_rate must be positive")
+    if not 0.0 <= hyperparams.dropout < 1.0:
+        raise ValueError("dropout must be in the range [0, 1)")
+    if hyperparams.patience < 0:
+        raise ValueError("patience must be non-negative")
+    if hyperparams.lr_patience < 0:
+        raise ValueError("lr_patience must be non-negative")
+    if hyperparams.embedding_dim <= 0:
+        raise ValueError("embedding_dim must be positive")
+    if hyperparams.cnn_out_channels <= 0:
+        raise ValueError("cnn_out_channels must be positive")
+    if hyperparams.hidden_dim <= 0:
+        raise ValueError("hidden_dim must be positive")
+    if hyperparams.latent_dim <= 0:
+        raise ValueError("latent_dim must be positive")
+    if hyperparams.kernel_size <= 0:
+        raise ValueError("kernel_size must be positive")
+    if hyperparams.num_layers < 1:
+        raise ValueError("num_layers must be at least 1")
+    if not 0.0 <= hyperparams.teacher_forcing_dropout_rate <= 1.0:
+        raise ValueError("teacher_forcing_dropout_rate must be in the range [0, 1]")
+    if hyperparams.max_decoder_positions <= 0:
+        raise ValueError("max_decoder_positions must be positive")
+    if hyperparams.max_encoder_positions <= 0:
+        raise ValueError("max_encoder_positions must be positive")
+    if hyperparams.num_heads <= 0:
+        raise ValueError("num_heads must be positive")
+    if hyperparams.dim_feedforward <= 0:
+        raise ValueError("dim_feedforward must be positive")
+    if not 0.0 < hyperparams.scheduler_factor < 1.0:
+        raise ValueError("scheduler_factor must be in the range (0, 1)")
+
+    uses_cnn_stem = (
+        hyperparams.layer_type == "gru"
+        or (
+            hyperparams.layer_type == "transformer"
+            and hyperparams.use_cnn_before_transformer
+        )
+    )
+    if uses_cnn_stem and hyperparams.kernel_size % 2 == 0:
+        raise ValueError("kernel_size must be odd when a CNN stem is used")
+
+    if (
+        hyperparams.layer_type == "transformer"
+        and hyperparams.embedding_dim % hyperparams.num_heads != 0
+    ):
+        raise ValueError("embedding_dim must be divisible by num_heads for transformer layers")
+
+
 def autoencoder_artifact_stem(
     model: str,
     task: str,
@@ -53,6 +115,16 @@ def autoencoder_artifact_stem(
     if artifact_suffix:
         parts.append(artifact_suffix)
     return "_".join(parts)
+
+
+def architecture_artifact_suffix(layer_type: str, artifact_suffix: str | None = None) -> str | None:
+    """Include non-default architectures in artifact names."""
+    suffix_parts = []
+    if layer_type != "gru":
+        suffix_parts.append(layer_type)
+    if artifact_suffix:
+        suffix_parts.append(artifact_suffix)
+    return "_".join(suffix_parts) if suffix_parts else None
 
 
 def autoencoder_checkpoint_dir(task: str, version: int | str) -> Path:
@@ -93,6 +165,18 @@ def autoencoder_artifact_paths(
     checkpoint_path = checkpoint_dir / f"{artifact_stem}.pt"
     history_path = results_dir / f"{results_dir.name}_{artifact_stem}_history.json"
     return checkpoint_path, history_path
+
+
+def validate_artifact_paths(paths: list[tuple[Path, Path]]) -> None:
+    existing_paths = [
+        path
+        for checkpoint_path, history_path in paths
+        for path in (checkpoint_path, history_path)
+        if path.exists()
+    ]
+    if existing_paths:
+        formatted_paths = "\n".join(str(path) for path in existing_paths)
+        raise ValueError(f"Training artifacts already exist:\n{formatted_paths}")
 
 
 def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
@@ -189,7 +273,7 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
         '--layer_type',
         type=str,
         choices=["gru", "transformer"],
-        default="gru",
+        default=None,
         help="Autoencoder architecture to train.",
     )
     args.add_argument(
@@ -198,7 +282,9 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
         default=1024,
         help='Maximum encoder sequence length supported by learned positional embeddings.',
     )
-    return args.parse_args()
+    parsed_args = args.parse_args()
+    parsed_args.curriculum_start_fraction_provided = _cli_arg_provided("--curriculum_start_fraction")
+    return parsed_args
 
 
 def add_and_validate_train_inputs():
@@ -219,6 +305,8 @@ def add_and_validate_train_inputs():
     
     if args.sweep and args.load_path is not None:
         raise ValueError("--load_path is not supported with --sweep because swept latent dimensions may not match the checkpoint.")
+    if args.load_path is not None and not Path(args.load_path).exists():
+        raise ValueError(f"--load_path does not exist: {args.load_path}")
 
     if args.length_options is None and args.length_bin is not None:
         raise ValueError("--length_bin requires --length_options")
@@ -230,18 +318,24 @@ def add_and_validate_train_inputs():
             raise ValueError(f"--length_bin must be between 1 and {split_count} for --length_options {args.length_options}")
     if args.max_length is not None and args.max_length <= 0:
         raise ValueError("--max_length must be positive")
+    if args.max_length is not None and args.length_options is not None:
+        warnings.warn("--max_length is ignored when --length_options is set")
     if args.max_decoder_positions <= 0:
         raise ValueError("--max_decoder_positions must be positive")
     if args.max_encoder_positions <= 0:
         raise ValueError("--max_encoder_positions must be positive")
 
+    if args.layer_type is not None:
+        hyperparams.layer_type = args.layer_type
+
     hyperparams.use_decoder_positional_embeddings = args.use_decoder_positional_embeddings
     hyperparams.max_decoder_positions = args.max_decoder_positions
     hyperparams.max_encoder_positions = args.max_encoder_positions
+    _validate_autoencoder_hyperparams(hyperparams)
     
     if not args.sweep:
         # Make sure this checkpoint filename is unique to avoid overwriting previous runs.
-        artifact_suffix = args.layer_type if args.layer_type != "gru" else None
+        artifact_suffix = hyperparams.layer_type if hyperparams.layer_type != "gru" else None
         checkpoint_path, history_path = autoencoder_artifact_paths(
             args.model,
             args.task,
@@ -266,8 +360,8 @@ def add_and_validate_train_inputs():
         raise ValueError("--curriculum_epochs must be non-negative")
     if not 0.0 < args.curriculum_start_fraction <= 1.0:
         raise ValueError("--curriculum_start_fraction must be in the range (0, 1]")
-    if args.curriculum_start_fraction is not None and args.curriculum_epochs == 0:
-        warnings.warn("--curriculum_fraction has no effect when --curriculum_epochs is 0")
+    if args.curriculum_start_fraction_provided and args.curriculum_epochs == 0:
+        warnings.warn("--curriculum_start_fraction has no effect when --curriculum_epochs is 0")
 
     if args.overfit_batches is not None:
         hyperparams.dropout = 0.0
@@ -284,5 +378,7 @@ def add_and_validate_train_inputs():
         if args.overfit_epochs <= 0:
             raise ValueError("--overfit_epochs must be a positive integer")
         hyperparams.num_epochs = args.overfit_epochs
+
+    _validate_autoencoder_hyperparams(hyperparams)
     
     return args, hyperparams
