@@ -16,23 +16,23 @@ class Hyperparameters:
 
 @dataclass
 class AutoencoderHyperparameters(Hyperparameters):
-    learning_rate: float = 3e-4 # do NOT increase this, the highest it should be is 1e-3
+    learning_rate: float = 1e-4
     # layer_type: str = "lstm" # gru(+single cnn layer), transformer
-    embedding_dim: int = 256
+    embedding_dim: int = 512
     cnn_out_channels: int = 256
     hidden_dim: int = 512
     latent_dim: int = 256
     kernel_size: int = 5
-    num_layers: int = 2
+    num_layers: int = 3
     bidirectional: bool = True
     grad_clip: bool = True
     condition_decoder_on_latent: bool = True
-    teacher_forcing_dropout_rate: float = 0.1
-    use_decoder_positional_embeddings: bool = False # try this out
+    teacher_forcing_dropout_rate: float = 0.0
+    use_decoder_positional_embeddings: bool = False
     max_decoder_positions: int = 1024
     max_encoder_positions: int = 1024
-    num_heads: int = 4
-    dim_feedforward: int = 1024
+    num_heads: int = 8
+    dim_feedforward: int = 2048
     scheduler_factor: float = 0.1
 
 

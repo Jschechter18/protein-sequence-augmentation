@@ -198,19 +198,6 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
         default=1024,
         help='Maximum encoder sequence length supported by learned positional embeddings.',
     )
-    args.add_argument(
-        '--num_heads',
-        type=int,
-        default=4,
-        help='Number of transformer attention heads.',
-    )
-    args.add_argument(
-        '--dim_feedforward',
-        type=int,
-        default=1024,
-        help='Transformer feed-forward hidden dimension.',
-    )
-    
     return args.parse_args()
 
 
@@ -247,16 +234,10 @@ def add_and_validate_train_inputs():
         raise ValueError("--max_decoder_positions must be positive")
     if args.max_encoder_positions <= 0:
         raise ValueError("--max_encoder_positions must be positive")
-    if args.num_heads <= 0:
-        raise ValueError("--num_heads must be positive")
-    if args.dim_feedforward <= 0:
-        raise ValueError("--dim_feedforward must be positive")
 
     hyperparams.use_decoder_positional_embeddings = args.use_decoder_positional_embeddings
     hyperparams.max_decoder_positions = args.max_decoder_positions
     hyperparams.max_encoder_positions = args.max_encoder_positions
-    hyperparams.num_heads = args.num_heads
-    hyperparams.dim_feedforward = args.dim_feedforward
     
     if not args.sweep:
         # Make sure this checkpoint filename is unique to avoid overwriting previous runs.

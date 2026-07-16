@@ -135,6 +135,11 @@ class ProteinSequenceAutoencoder(nn.Module):
             self.attention_score = nn.Linear(self.embedding_dim, 1)
             self.to_latent = nn.Linear(self.embedding_dim, self.latent_dim)
             self.from_latent = nn.Linear(self.latent_dim, self.embedding_dim)
+            if self.condition_decoder_on_latent:
+                self.transformer_decoder_input_projection = nn.Linear(
+                    self.embedding_dim + self.latent_dim,
+                    self.embedding_dim,
+                )
 
             decoder_layer = nn.TransformerDecoderLayer(
                 d_model=self.embedding_dim,
@@ -371,6 +376,7 @@ class ProteinSequenceAutoencoder(nn.Module):
     def _transformer_decoder_inputs(
         self,
         decoder_input_ids: torch.Tensor,
+        latent: torch.Tensor,
         position_offset: int = 0,
     ) -> torch.Tensor:
         """Prepare transformer decoder token and positional embeddings."""
@@ -388,7 +394,13 @@ class ProteinSequenceAutoencoder(nn.Module):
             device=decoder_input_ids.device,
         ).unsqueeze(0).expand(batch_size, -1)
         token_embeddings = self.embedding(decoder_input_ids) + self.decoder_position_embedding(position_ids)
-        return self._apply_teacher_forcing_token_dropout(token_embeddings, decoder_input_ids)
+        token_embeddings = self._apply_teacher_forcing_token_dropout(token_embeddings, decoder_input_ids)
+        if not self.condition_decoder_on_latent:
+            return token_embeddings
+
+        latent_repeated = latent.unsqueeze(1).expand(-1, sequence_length, -1)
+        decoder_inputs = torch.cat([token_embeddings, latent_repeated], dim=-1)
+        return self.transformer_decoder_input_projection(decoder_inputs)
 
     def _causal_mask(self, sequence_length: int, device: torch.device) -> torch.Tensor:
         """Return a causal attention mask for transformer decoding."""
@@ -433,7 +445,7 @@ class ProteinSequenceAutoencoder(nn.Module):
         decoder_input_ids: torch.Tensor,
     ) -> torch.Tensor:
         """Decode teacher-forced token IDs with the transformer decoder."""
-        decoder_inputs = self._transformer_decoder_inputs(decoder_input_ids)
+        decoder_inputs = self._transformer_decoder_inputs(decoder_input_ids, latent)
         causal_mask = self._causal_mask(decoder_input_ids.size(1), decoder_input_ids.device)
         padding_mask = decoder_input_ids == self.pad_idx
         memory = self.from_latent(latent).unsqueeze(1)
