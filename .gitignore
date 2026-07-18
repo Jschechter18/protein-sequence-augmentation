@@ -76,13 +76,6 @@ Code/results/*
 !Code/results/esm2
 !Code/results/figures
 !Code/results/tables
-<<<<<<< HEAD
-=======
-
-# =========================================================
-# Models
-# =========================================================
->>>>>>> origin/main
 
 # =========================================================
 # Models
@@ -90,6 +83,7 @@ Code/results/*
 Code/src/models/*
 !Code/src/models/.gitkeep
 !Code/src/models/README.md
+!Code/src/models/*.py
 
 # =========================================================
 # Pytest
