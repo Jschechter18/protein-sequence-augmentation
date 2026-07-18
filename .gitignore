@@ -74,6 +74,7 @@ Code/results/*
 !Code/results/README.md
 !Code/results/autoencoder
 !Code/results/esm2
+!Code/results/encoder_benchmark
 !Code/results/figures
 !Code/results/tables
 
