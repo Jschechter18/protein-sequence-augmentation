@@ -128,8 +128,9 @@ class ESM2Encoder(nn.Module):
     Output:
         Mean-pooled sequence embeddings [B, 320]
     """
-    def __init__(self, model_name: str = "esm2_t6_8M_UR50D"):
+    def __init__(self, model_name: str = "esm2_t6_8M_UR50D", device: str = "cpu"):
         super().__init__()
+        self.device = device
         try:
             import esm
 
@@ -213,7 +214,7 @@ class ESM2Encoder(nn.Module):
 
         _, _, batch_tokens = batch_converter([(str(i), seq) for i, seq in enumerate(sequences)])
 
-        batch_tokens = batch_tokens.to(next(self.model.parameters()).device)
+        batch_tokens = batch_tokens.to(self.device)
             # Run pretrained ESM-2 model
             #
             # Output shape:
@@ -833,84 +834,156 @@ class EncoderPipeline:
             index=False
         )
         
-        history_json = {
-            "hyperparameters": {
-                "model": f"{self.encoder_type} encoder " + "linear output head",
-                "esm_model": "esm2_t6_8M_UR50D",
-                "device": self.device,
-                "dataset": self.dataset,
-                "num_classes": self.num_classes,
-                "esm_learning_rate": self.esm_learning_rate,
-                "epochs": epochs,
-                "early_stopping_patience": early_stopping_patience,
-                "autoencoder_checkpoint": self.autoencoder_checkpoint,
-                "autoencoder_embedding_dim": self.autoencoder_embedding_dim,
-                "autoencoder_cnn_channels": self.autoencoder_cnn_channels,
-                "autoencoder_hidden_dim": self.autoencoder_hidden_dim,
-                "autoencoder_latent_dim": self.autoencoder_latent_dim,
-                "autoencoder_num_layers": self.autoencoder_num_layers,
-                "autoencoder_kernel_size": self.autoencoder_kernel_size,
-                "unfreeze_all_esm": self.unfreeze_all_esm,
-                "unfreeze_esm": self.unfreeze_esm,
-                "unfreeze_layers": self.unfreeze_layers if self.unfreeze_esm else 0,
-                "fine_tuning_strategy":("full_backbone" if self.unfreeze_all_esm else f"last_{self.unfreeze_layers}_layers" if self.unfreeze_esm else "frozen_backbone"),
-                "embedding_dim": self.encoder_output_dim,
-                "cnn_num_filters": 64,
+        hyperparameters = {
+            "model": (
+                f"{self.encoder_type} encoder "
+                "linear output head"
+            ),
+            "encoder_type": self.encoder_type,
+            "device": self.device,
+            "dataset": self.dataset,
+            "num_classes": self.num_classes,
+            "learning_rate": self.learning_rate,
+            "epochs": epochs,
+            "early_stopping_patience": early_stopping_patience,
+            "encoder_output_dim": self.encoder_output_dim,
+        }
+
+        if self.encoder_type == "cnn":
+            hyperparameters.update({
+                "encoder_learning_rate": (
+                    self.encoder_learning_rate
+                ),
+                "cnn_embedding_dim": (
+                    self.cnn_embedding_dim
+                ),
+                "cnn_num_filters": (
+                    self.cnn_num_filters
+                ),
                 "cnn_kernel_sizes": [3, 5, 7],
-            },
+                "training_strategy": (
+                    "trained_from_scratch"
+                ),
+            })
+
+        elif self.encoder_type == "esm2":
+            if self.unfreeze_all_esm:
+                training_strategy = (
+                    "full_backbone_unfrozen"
+                )
+            elif self.unfreeze_esm:
+                training_strategy = (
+                    f"last_{self.unfreeze_layers}_layers_unfrozen"
+                )
+            else:
+                training_strategy = (
+                    "frozen_backbone"
+                )
+
+            hyperparameters.update({
+                "esm_model": "esm2_t6_8M_UR50D",
+                "esm_learning_rate": (
+                    self.esm_learning_rate
+                ),
+                "unfreeze_all_esm": (
+                    self.unfreeze_all_esm
+                ),
+                "unfreeze_esm": (
+                    self.unfreeze_esm
+                ),
+                "unfreeze_layers": (
+                    self.unfreeze_layers
+                    if self.unfreeze_esm
+                    else 0
+                ),
+                "training_strategy": training_strategy,
+            })
+
+        elif self.encoder_type == "autoencoder":
+            hyperparameters.update({
+                "autoencoder_checkpoint": (
+                    self.autoencoder_checkpoint
+                ),
+                "autoencoder_embedding_dim": (
+                    self.autoencoder_embedding_dim
+                ),
+                "autoencoder_cnn_channels": (
+                    self.autoencoder_cnn_channels
+                ),
+                "autoencoder_hidden_dim": (
+                    self.autoencoder_hidden_dim
+                ),
+                "autoencoder_latent_dim": (
+                    self.autoencoder_latent_dim
+                ),
+                "autoencoder_num_layers": (
+                    self.autoencoder_num_layers
+                ),
+                "autoencoder_kernel_size": (
+                    self.autoencoder_kernel_size
+                ),
+                "training_strategy": (
+                    "frozen_pretrained"
+                ),
+            })
+        history_json = {
+            "hyperparameters": hyperparameters,
+
             "summary": {
                 "best_val_loss": self.best_val_loss,
-                "best_val_accuracy": max(history["val_accuracy"]),
-                "best_val_f1": max(history["val_f1"]),
-                "best_val_precision": max(history["val_precision"]),
-                "best_val_recall": max(history["val_recall"]),
-                
-                "final_train_loss": history["train_loss"][-1],
-                "final_train_accuracy": history["train_accuracy"][-1],
-                "final_train_f1": history["train_f1"][-1],
-                "final_train_precision": history["train_precision"][-1],
-                "final_train_recall": history["train_recall"][-1],
-                "final_val_loss": history["val_loss"][-1],
-                "final_val_accuracy": history["val_accuracy"][-1],
-                "final_val_f1": history["val_f1"][-1],
-                "final_val_precision": history["val_precision"][-1],
-                "final_val_recall": history["val_recall"][-1],
-                
-                "best_epoch": history["val_loss"].index(self.best_val_loss) + 1,
-                "epochs_trained": len(history["epoch"]),
-                },
+                "best_val_accuracy": max(
+                    history["val_accuracy"]
+                ),
+                "best_val_f1": max(
+                    history["val_f1"]
+                ),
+                "best_val_precision": max(
+                    history["val_precision"]
+                ),
+                "best_val_recall": max(
+                    history["val_recall"]
+                ),
 
-            "epochs": [
-                {
-                    "epoch": int(history["epoch"][i]),
-                    "train_loss": history["train_loss"][i],
-                    "train_accuracy": history["train_accuracy"][i],
-                    "train_f1": history["train_f1"][i],
-                    "train_precision": history["train_precision"][i],
-                    "train_recall": history["train_recall"][i],
-                    "val_loss": history["val_loss"][i],
-                    "val_accuracy": history["val_accuracy"][i],
-                    "val_f1": history["val_f1"][i],
-                    "val_precision": history["val_precision"][i],
-                    "val_recall": history["val_recall"][i]
-                }
-                for i in range(len(history["epoch"])) 
-            ], 
-            "train_loss": history["train_loss"],
-            "train_scores": {
-                "train_accuracy": history["train_accuracy"],
-                "train_f1": history["train_f1"],
-                "train_precision": history["train_precision"],
-                "train_recall": history["train_recall"],
+                "final_train_loss": (
+                    history["train_loss"][-1]
+                ),
+                "final_train_accuracy": (
+                    history["train_accuracy"][-1]
+                ),
+                "final_train_f1": (
+                    history["train_f1"][-1]
+                ),
+                "final_train_precision": (
+                    history["train_precision"][-1]
+                ),
+                "final_train_recall": (
+                    history["train_recall"][-1]
+                ),
+                "final_val_loss": (
+                    history["val_loss"][-1]
+                ),
+                "final_val_accuracy": (
+                    history["val_accuracy"][-1]
+                ),
+                "final_val_f1": (
+                    history["val_f1"][-1]
+                ),
+                "final_val_precision": (
+                    history["val_precision"][-1]
+                ),
+                "final_val_recall": (
+                    history["val_recall"][-1]
+                ),
+
+                "best_epoch": (
+                    history["val_loss"]
+                    .index(self.best_val_loss)
+                    + 1
+                ),
+                "epochs_trained": len(
+                    history["epoch"]
+                ),
             },
-            "val_loss": history["val_loss"],
-            "val_scores": {
-                "val_accuracy": history["val_accuracy"],
-                "val_f1": history["val_f1"],
-                "val_precision": history["val_precision"],
-                "val_recall": history["val_recall"]
-            }
-
         }
             
         save_json(history_json, self.run_dir / "history.json")
@@ -967,21 +1040,10 @@ class EncoderPipeline:
     
 
         with torch.inference_mode():
-            for batch in tqdm(
-                test_loader,
-                desc="Test evaluation",
-            ):
-                sequences = batch["sequence"]
-
-                labels = (
-                    batch["label"]
-                    .to(self.device)
-                    .long()
-                )
-
+            for batch in tqdm(test_loader, desc="Test evaluation"):
+                labels = (batch["label"].to(self.device).long())
                 # Raw sequences -> ESM-2 residue representations.
                 embeddings = self.encode_batch(batch)
-
                 # ESM embeddings -> selected classifier head.
                 logits = self.classifier(embeddings)
 
@@ -989,8 +1051,15 @@ class EncoderPipeline:
                 total_loss += loss.item()
 
                 probabilities = torch.softmax(logits, dim =1)
-
                 confidence = torch.max(probabilities, dim=1).values
+
+                if "sequence" in batch:
+                    sequences = batch["sequence"]
+                    lengths = [len(seq) for seq in sequences]
+                else:
+                    # For CNN/Autoencoder, fallback or flag as encoded
+                    sequences = ["<encoded_sequence>"] * labels.size(0)
+                    lengths = batch["length"].cpu().tolist() if "length" in batch else [0] * labels.size(0)
 
                 all_sequences.extend(sequences)
                 all_sequence_lengths.extend(
