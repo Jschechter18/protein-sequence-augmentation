@@ -1,6 +1,7 @@
 import argparse
 import json
 import logging
+import time
 
 from pathlib import Path
 from datetime import datetime
@@ -100,7 +101,6 @@ def create_run_dir(results_dir: str, dataset: str, args) -> Path:
 def save_json(obj, path):
     with open(path, "w") as f:
         json.dump(obj, f, indent=4)
-
 
     
 class LinearHead(nn.Module): #classifier 
@@ -1387,12 +1387,25 @@ def main():
         autoencoder_kernel_size=args.autoencoder_kernel_size,
     )
 
+    start_time = time.time()
+
     pipeline.fit(
         train_loader=train_loader,
         val_loader=val_loader,
         epochs=args.epochs,
         early_stopping_patience=args.early_stopping_patience,
     )
+
+    elapsed_time = time.time() -start_time
+    logger.info(f"Training completed in {elapsed_time:.2f} seconds.")
+
+    hours, rem = divmod(elapsed_time, 3600)
+    minutes, seconds = divmod(rem, 60)
+    runtime_str = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
+
+    config["total_runtime_seconds"] = elapsed_time
+    config["total_runtime_formatted"] = runtime_str
+    save_json(config, run_dir / "config.json")
 
     if args.evaluate_test:
         if test_loader is None:
