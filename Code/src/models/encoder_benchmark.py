@@ -214,7 +214,9 @@ class ESM2Encoder(nn.Module):
 
         _, _, batch_tokens = batch_converter([(str(i), seq) for i, seq in enumerate(sequences)])
 
-        batch_tokens = batch_tokens.to(self.device)
+        model_device = next(self.model.parameters()).device
+
+        batch_tokens = batch_tokens.to(device=model_device, dtype=torch.long, non_blocking=True)
             # Run pretrained ESM-2 model
             #
             # Output shape:
@@ -374,7 +376,6 @@ class AutoencoderEncoder(nn.Module):
         )    
         
 
-
 class EncoderPipeline:
 
     def __init__(
@@ -429,7 +430,9 @@ class EncoderPipeline:
         self.encoder_type = encoder_type
 
         if encoder_type == "esm2":
-            self.encoder = ESM2Encoder(model_name=esm_model_name).to(self.device)
+            self.encoder = ESM2Encoder(model_name=esm_model_name)
+            self.encoder = self.encoder.to(self.device) 
+            logger.info(f"Using ESM-2 encoder: %s", next(self.encoder.parameters()).device)
 
             self.encoder_output_dim = 320  # ESM-2 embedding dimension
 
@@ -1179,7 +1182,7 @@ class EncoderPipeline:
         )
 
         logger.info(
-             "Test Loss: %.4f | "
+            "Test Loss: %.4f | "
             "Test Accuracy: %.4f | "
             "Test F1: %.4f | "
             "Test Precision: %.4f | "
@@ -1345,17 +1348,19 @@ def main():
         shuffle=False,
         use_cache=False,
     )
+    test_loader = None
 
-    test_loader = create_dataloader(
-        task=args.dataset,
-        split="test",
-        data_dir=args.data_dir,
-        mode="classification",
-        encoding=data_encoding,
-        batch_size=args.batch_size,
-        shuffle=False,
-        use_cache=False,
-    )
+    if args.evaluate_test:
+        test_loader = create_dataloader(
+            task=args.dataset,
+            split="test",
+            data_dir=args.data_dir,
+            mode="classification",
+            encoding=data_encoding,
+            batch_size=args.batch_size,
+            shuffle=False,
+            use_cache=False,
+        )
 
     pipeline = EncoderPipeline(
         num_classes=args.num_classes,
@@ -1390,7 +1395,12 @@ def main():
     )
 
     if args.evaluate_test:
+        if test_loader is None:
+            raise RuntimeError(
+                "Test evaluation requested, but test_loader is None."
+            )
         pipeline.load_checkpoint()
+
         pipeline.evaluate_test(test_loader)
 
 
