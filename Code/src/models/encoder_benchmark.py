@@ -470,7 +470,7 @@ class EmbeddingPipeline:
                 f"Unsupported encoder type: {embedding_type}"
             )
 
-        self.classifier = LinearHead(embedding_dim=self.encoder_output_dim,num_classes=num_classes,).to(self.device)
+        self.head = LinearHead(embedding_dim=self.encoder_output_dim,num_classes=num_classes,).to(self.device)
 
         self.checkpoint_dir = ( Path(checkpoint_dir) / "encoder_benchmark" / self.run_dir.name )
 
@@ -507,7 +507,7 @@ class EmbeddingPipeline:
 
         parameter_groups = [
             {
-                "params": self.classifier.parameters(),
+                "params": self.head.parameters(),
                 "lr": learning_rate,
             }
         ]
@@ -534,7 +534,7 @@ class EmbeddingPipeline:
 
         trainable_classifier = sum(
             p.numel()
-            for p in self.classifier.parameters()
+            for p in self.head.parameters()
             if p.requires_grad
         )
 
@@ -543,7 +543,7 @@ class EmbeddingPipeline:
         )
 
         logger.info(
-            "Trainable classifier parameters: %s", f"{trainable_classifier:,}"
+            "Trainable head parameters: %s", f"{trainable_classifier:,}"
         )
         
         self.criterion = nn.CrossEntropyLoss()
@@ -657,7 +657,7 @@ class EmbeddingPipeline:
     
     def train_epoch(self, train_loader: DataLoader) -> Dict[str, float]:
         """Train for one epoch"""
-        self.classifier.train()
+        self.head.train()
 
         if any(p.requires_grad for p in self.encoder.parameters()):
             self.encoder.train()
@@ -682,7 +682,7 @@ class EmbeddingPipeline:
             
             # Forward pass
             self.optimizer.zero_grad()
-            logits = self.classifier(embeddings)
+            logits = self.head(embeddings)
             loss = self.criterion(logits, labels)
             
             # Backward pass
@@ -690,7 +690,7 @@ class EmbeddingPipeline:
             trainable_parameters = [
                 parameter
                 for parameter in list(self.encoder.parameters())
-                + list(self.classifier.parameters())
+                + list(self.head.parameters())
                 if parameter.requires_grad
             ]
             torch.nn.utils.clip_grad_norm_(trainable_parameters, 1.0)
@@ -719,7 +719,7 @@ class EmbeddingPipeline:
     def validate(self, val_loader: DataLoader) -> Dict[str, float]:
         """Validate model"""
         self.encoder.eval()
-        self.classifier.eval()
+        self.head.eval()
 
         total_loss = 0.0
         correct = 0
@@ -735,7 +735,7 @@ class EmbeddingPipeline:
                 embeddings = self.encode_batch(batch)
                 
                 # Forward pass
-                logits = self.classifier(embeddings)
+                logits = self.head(embeddings)
                 loss = self.criterion(logits, labels)
                 
                 # Metrics
@@ -1012,14 +1012,14 @@ class EmbeddingPipeline:
 
         logger.info(f"Best encoder checkpoint loaded from {encoder_path}")
 
-        self.classifier.load_state_dict(
+        self.head.load_state_dict(
         torch.load(
             classifier_path,
             map_location=self.device,
         )
         )
 
-        logger.info(f"Best classifier checkpoint loaded from {classifier_path}")
+        logger.info(f"Best head checkpoint loaded from {classifier_path}")
 
 
 
@@ -1030,7 +1030,7 @@ class EmbeddingPipeline:
         saves: test_predictions.csv & test_metrics.json
         """
         self.encoder.eval()
-        self.classifier.eval()
+        self.head.eval()
 
         all_sequences = []
         all_true_labels = []
@@ -1048,7 +1048,7 @@ class EmbeddingPipeline:
                 # Raw sequences -> ESM-2 residue representations.
                 embeddings = self.encode_batch(batch)
                 # ESM embeddings -> selected classifier head.
-                logits = self.classifier(embeddings)
+                logits = self.head(embeddings)
 
                 loss = self.criterion(logits, labels)
                 total_loss += loss.item()
@@ -1200,14 +1200,14 @@ class EmbeddingPipeline:
     def save_checkpoint(self):
         encoder_path = (self.checkpoint_dir / "best_encoder.pt")
 
-        classifier_path = (self.checkpoint_dir/ "best_linear_head.pt")
+        head_path = (self.checkpoint_dir/ "best_linear_head.pt")
 
         torch.save(self.encoder.state_dict(), encoder_path,)
 
-        torch.save(self.classifier.state_dict(), classifier_path,)
+        torch.save(self.head.state_dict(), head_path,)
 
         logger.info(f"Best encoder checkpoint saved to {encoder_path}")
-        logger.info(f"Best classifier checkpoint saved to {classifier_path}")
+        logger.info(f"Best head checkpoint saved to {head_path}")
 
         
 
@@ -1215,13 +1215,13 @@ class EmbeddingPipeline:
         """Save final model state at end of training."""
 
         encoder_path = (self.checkpoint_dir / "final_encoder.pt")
-        classifier_path = (self.checkpoint_dir / "final_linear_head.pt")
+        head_path = (self.checkpoint_dir / "final_linear_head.pt")
 
         torch.save(self.encoder.state_dict(), encoder_path)
-        torch.save(self.classifier.state_dict(), classifier_path)
+        torch.save(self.head.state_dict(), head_path)
 
         logger.info(f"Final encoder checkpoint saved to {encoder_path}")
-        logger.info(f"Final classifier checkpoint saved to {classifier_path}")
+        logger.info(f"Final head checkpoint saved to {head_path}")
 
     def predict(self, sequences: list) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -1233,12 +1233,12 @@ class EmbeddingPipeline:
         Returns:
             predictions (class labels) and probabilities
         """
-        self.classifier.eval()
+        self.head.eval()
         
         with torch.no_grad():
             embeddings = self.encoder(sequences)
             embeddings = embeddings.to(self.device)
-            logits = self.classifier(embeddings)
+            logits = self.head(embeddings)
             probs = torch.softmax(logits, dim=1)
         
         predictions = torch.argmax(logits, dim=1).cpu().numpy()
