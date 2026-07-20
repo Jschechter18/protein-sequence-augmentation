@@ -190,11 +190,13 @@ class ESM2Encoder(nn.Module):
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             return torch.randn(len(sequences), max_len, 320, device=device)
         
-        batch_converter = self.alphabet.get_batch_converter() # type: ignore
+        # alphabet may be None if esm not installed; guard for type checkers
+        if self.alphabet is None:
+            raise RuntimeError("ESM alphabet not available. Ensure 'esm' is installed and model loaded.")
 
-        batch_labels, batch_strs, batch_tokens = batch_converter(
-                [(str(i), seq) for i, seq in enumerate(sequences)]
-            )
+        batch_converter = self.alphabet.get_batch_converter()
+
+        batch_labels, batch_strs, batch_tokens = batch_converter([(str(i), seq) for i, seq in enumerate(sequences)])
 
         batch_tokens = batch_tokens.to(next(self.model.parameters()).device)
             # Run pretrained ESM-2 model
@@ -202,7 +204,7 @@ class ESM2Encoder(nn.Module):
             # Output shape:
             #     [batch_size, seq_len, 320]
         results = self.model(batch_tokens, repr_layers=[6])
-        embeddings = results["representations"][6]
+        embeddings = results["representations"][6] #token representation
         
         return embeddings
         
