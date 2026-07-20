@@ -77,6 +77,8 @@ def _validate_autoencoder_hyperparams(hyperparams: AEParams) -> None:
         raise ValueError("dim_feedforward must be positive")
     if not 0.0 < hyperparams.scheduler_factor < 1.0:
         raise ValueError("scheduler_factor must be in the range (0, 1)")
+    if hyperparams.weight_decay < 0.0:
+        raise ValueError("weight_decay must be non-negative")
 
     uses_cnn_stem = (
         hyperparams.layer_type == "gru"
@@ -247,7 +249,7 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
         nargs='?',
         const=True,
         default=False,
-        help='Run the autoencoder latent_dim/teacher_forcing_dropout_rate sweep.',
+        help='Run the architecture-specific autoencoder hyperparameter sweep.',
     )
     args.add_argument(
         '--max_length',

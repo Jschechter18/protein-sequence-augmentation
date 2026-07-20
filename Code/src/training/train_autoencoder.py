@@ -49,6 +49,7 @@ from utils.hyperparameters import (
 from utils.utils import load_training_checkpoint, make_token_weights
 from utils.curriculum import make_length_curriculum_dataloader
 from utils.train_input_validation import (
+    _validate_autoencoder_hyperparams,
     add_and_validate_train_inputs,
     architecture_artifact_suffix,
     autoencoder_artifact_paths,
@@ -122,9 +123,16 @@ def model_definition(
     else:
         raise ValueError(f"Model type {model_type} not supported.")
     
-    optimizer = torch.optim.Adam(model.parameters(), lr=hyperparams.learning_rate)
+    if layer_type == "gru":
+        optimizer = torch.optim.Adam(model.parameters(), lr=hyperparams.learning_rate)
+        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=hyperparams.scheduler_factor, patience=hyperparams.lr_patience)
+    elif layer_type == "transformer":
+        optimizer = torch.optim.Adam(model.parameters(), lr=hyperparams.learning_rate, weight_decay=hyperparams.weight_decay, eps=1e-8)
+        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=hyperparams.scheduler_factor, patience=hyperparams.lr_patience, min_lr=1e-6)
+    else:
+        raise ValueError(f"Layer type {layer_type} not supported.")
+        
     
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=hyperparams.scheduler_factor, patience=hyperparams.lr_patience)
     
     return model, optimizer, scheduler
 # ----------------------------------------------------------------------------------------------------------------
@@ -566,6 +574,12 @@ def main():
         for run_hyperparams, artifact_suffix in training_runs
     ]
 
+    # Validate every generated configuration, not only the unswept defaults.
+    # This catches incompatible combinations such as embedding dimensions that
+    # are not divisible by the selected transformer head count before any run starts.
+    for run_hyperparams, _ in training_runs:
+        _validate_autoencoder_hyperparams(run_hyperparams)
+
     artifact_paths = [
         autoencoder_artifact_paths(
             args.model,
@@ -622,7 +636,10 @@ def main():
 
         print(f"Saved training history to: {history_path}")
 
-        if args.overfit_batches is None:
+        # A sweep selects hyperparameters using validation performance. Evaluating
+        # every candidate on the test split would leak test information into model
+        # selection; test the chosen configuration in a separate final run instead.
+        if args.overfit_batches is None and not args.sweep:
             test_results = test(model, test_dataloader)
             history["test"] = test_results
             if test_results is not None:
@@ -633,8 +650,11 @@ def main():
                 }
                 save_training_history(history, history_path)
                 print(f"Saved test results to training history: {history_path}")
-        else:
+        elif args.overfit_batches is not None:
             print("Skipping full test set evaluation in overfit debug mode.")
+
+    if args.sweep:
+        print("Sweep complete. Test-set evaluation was skipped; choose the best run by validation loss, then evaluate that checkpoint once.")
     
 
 

@@ -420,8 +420,12 @@ class ProteinSequenceAutoencoder(nn.Module):
 
     def _causal_mask(self, sequence_length: int, device: torch.device) -> torch.Tensor:
         """Return a causal attention mask for transformer decoding."""
-        mask = torch.full((sequence_length, sequence_length), float("-inf"), device=device)
-        return torch.triu(mask, diagonal=1)
+        # Keep this boolean to match the boolean key-padding mask expected by
+        # TransformerDecoder and avoid PyTorch's deprecated mixed mask types.
+        return torch.triu(
+            torch.ones(sequence_length, sequence_length, dtype=torch.bool, device=device),
+            diagonal=1,
+        )
 
     def decode(
         self,

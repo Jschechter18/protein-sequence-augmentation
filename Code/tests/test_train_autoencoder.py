@@ -298,8 +298,9 @@ def test_sweep_search_space_depends_on_layer_type() -> None:
     assert sweep_search_space_for_layer("transformer") == {
         "learning_rate": (1e-4, 3e-4),
         "num_layers": (2, 3),
-        "num_heads": (4, 8),
-        "dim_feedforward": (512, 1024),
+        "latent_dim": (128, 256),
+        "dim_feedforward": (1024, 2048),
+        "teacher_forcing_dropout_rate": (0.0, 0.1),
     }
 
     with pytest.raises(ValueError, match="Unsupported layer_type"):
@@ -580,12 +581,13 @@ def test_main_sweep_uses_transformer_search_space_and_artifact_suffixes(monkeypa
 
     train_autoencoder.main()
 
-    assert len(train_calls) == 16
+    assert len(train_calls) == 32
     assert {call["hyperparams"].layer_type for call in train_calls} == {"transformer"}
     assert {call["kwargs"]["layer_type"] for call in train_calls} == {"transformer"}
     assert all(call["kwargs"]["artifact_suffix"].startswith("transformer_") for call in train_calls)
-    assert any("num_heads4" in call["kwargs"]["artifact_suffix"] for call in train_calls)
-    assert any("dim_feedforward1024" in call["kwargs"]["artifact_suffix"] for call in train_calls)
+    assert any("latent128" in call["kwargs"]["artifact_suffix"] for call in train_calls)
+    assert any("dim_feedforward2048" in call["kwargs"]["artifact_suffix"] for call in train_calls)
+    assert any("tfd0p1" in call["kwargs"]["artifact_suffix"] for call in train_calls)
     assert calls["artifact_suffixes"] == [call["kwargs"]["artifact_suffix"] for call in train_calls]
 
 

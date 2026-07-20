@@ -17,7 +17,7 @@ class Hyperparameters:
 @dataclass
 class AutoencoderHyperparameters(Hyperparameters):
     learning_rate: float = 1e-4
-    layer_type: str = "gru" # lstm, gru(+single cnn layer), transformer
+    layer_type: str = "gru" # gru(+single cnn layer), transformer
     embedding_dim: int = 512
     cnn_out_channels: int = 256
     hidden_dim: int = 512
@@ -34,7 +34,8 @@ class AutoencoderHyperparameters(Hyperparameters):
     num_heads: int = 8
     dim_feedforward: int = 2048
     scheduler_factor: float = 0.1
-    use_cnn_before_transformer: bool = False  # TODO: experiment with adding this CNN layer to transformer
+    use_cnn_before_transformer: bool = False
+    weight_decay: float = 0.01  # for transformer
 
 
 GRU_AUTOENCODER_SWEEP_SEARCH_SPACE = {
@@ -46,8 +47,10 @@ GRU_AUTOENCODER_SWEEP_SEARCH_SPACE = {
 TRANSFORMER_AUTOENCODER_SWEEP_SEARCH_SPACE = {
     "learning_rate": (1e-4, 3e-4),
     "num_layers": (2, 3),
-    "num_heads": (4, 8),
-    "dim_feedforward": (512, 1024),
+    "latent_dim": (128, 256),
+    "dim_feedforward": (1024, 2048),
+    # "teacher_forcing_dropout_rate": (0.0, 0.1),
+    "use_cnn_before_transformer": (False, True),
 }
 
 AUTOENCODER_SWEEP_SEARCH_SPACES = {
