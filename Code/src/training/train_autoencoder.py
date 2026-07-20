@@ -373,7 +373,7 @@ def train(
         history["val_loss"].append(val_loss)
         history["val_scores"]["accuracy"].append(val_metrics["accuracy"])
 
-        if (epoch + 1) % 10 == 0:
+        if (epoch + 1) % 10 == 0 and hyperparams.layer_type != "transformer":
             autoregressive_val_metrics = validate_autoregressive(model, val_dataloader, loss_fn)
             epoch_info["autoregressive_val_loss"] = autoregressive_val_metrics["loss"]
             epoch_info["autoregressive_val_accuracy"] = autoregressive_val_metrics["accuracy"]
