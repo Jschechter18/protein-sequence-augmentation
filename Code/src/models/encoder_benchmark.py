@@ -32,7 +32,7 @@ def parse_args():
     parser.add_argument("--data_dir", type=str, default="data/processed/peer")
     parser.add_argument("--results_dir", type=str, default="Code/results/encoder_benchmark")
     parser.add_argument("--checkpoint_dir", type=str, default="checkpoints")
-    parser.add_argument("--encoder_type", type=str, default="esm2", choices=["esm2","cnn","autoencoder"], help="Feature encoder used before the common linear output head.",)
+    parser.add_argument("--embedding_type", type=str, default="esm2", choices=["esm2","cnn","autoencoder"], help="Feature embedding used before the common linear output head.",)
     parser.add_argument("--learning_rate", type=float, default=1e-3)
     parser.add_argument("--encoder_learning_rate", type=float, default=1e-3)
     parser.add_argument("--unfreeze_layers", type=int, default=0)
@@ -74,13 +74,13 @@ def create_run_dir(results_dir: str, dataset: str, args) -> Path:
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    if args.encoder_type == "esm2":
+    if args.embedding_type == "esm2":
         stage = get_stage_name(
             args.unfreeze_esm,
             args.unfreeze_all_esm,
             args.unfreeze_layers,
     )
-    elif args.encoder_type == "autoencoder":
+    elif args.embedding_type == "autoencoder":
         stage = "frozen_pretrained"
     else:
         stage = "trained_from_scratch"
@@ -89,9 +89,9 @@ def create_run_dir(results_dir: str, dataset: str, args) -> Path:
     run_dir = (
         Path(results_dir)
         / dataset
-        / args.encoder_type
+        / args.embedding_type
         / stage
-        / (f"{args.encoder_type}_{dataset}_{timestamp}")
+        / (f"{args.embedding_type}_{dataset}_{timestamp}")
     )
 
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -141,7 +141,7 @@ class ESM2Encoder(nn.Module):
                 raise ValueError(f"Unsupported ESM model name: {model_name}")
             
         except ImportError as error:
-            raise ImportError( "The 'esm' package is required for encoder_type='esm2'.") from error
+            raise ImportError( "The 'esm' package is required for embedding_type='esm2'.") from error
 
 
     def freeze_all_params(self):
@@ -376,12 +376,12 @@ class AutoencoderEncoder(nn.Module):
         )    
         
 
-class EncoderPipeline:
+class EmbeddingPipeline:
 
     def __init__(
         self,
         num_classes: int = 2,
-        encoder_type: str = "esm2",
+        embedding_type: str = "esm2",
         encoder_learning_rate: float = 1e-3,
         device: str | None = None,
         esm_model_name: str = "facebook/esm2_t6_8M",
@@ -427,16 +427,16 @@ class EncoderPipeline:
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
     
-        self.encoder_type = encoder_type
+        self.embedding_type = embedding_type
 
-        if encoder_type == "esm2":
+        if embedding_type == "esm2":
             self.encoder = ESM2Encoder(model_name=esm_model_name)
             self.encoder = self.encoder.to(self.device) 
             logger.info(f"Using ESM-2 encoder: %s", next(self.encoder.parameters()).device)
 
             self.encoder_output_dim = 320  # ESM-2 embedding dimension
 
-        elif encoder_type == "cnn":
+        elif embedding_type == "cnn":
             self.encoder = CNNEncoder(
                 embedding_dim=cnn_embedding_dim,
                 num_filters = cnn_num_filters,
@@ -445,11 +445,11 @@ class EncoderPipeline:
 
             self.encoder_output_dim = self.encoder.output_dim
 
-        elif encoder_type == "autoencoder":
+        elif embedding_type == "autoencoder":
             if autoencoder_checkpoint is None:
                 raise ValueError(
                     "--autoencoder_checkpoint is required "
-                    "when encoder_type='autoencoder'."
+                    "when embedding_type='autoencoder'."
                 )
 
             self.encoder = AutoencoderEncoder(
@@ -467,7 +467,7 @@ class EncoderPipeline:
             self.encoder_output_dim = self.encoder.output_dim
         else:
             raise ValueError(
-                f"Unsupported encoder type: {encoder_type}"
+                f"Unsupported encoder type: {embedding_type}"
             )
 
         self.classifier = LinearHead(embedding_dim=self.encoder_output_dim,num_classes=num_classes,).to(self.device)
@@ -477,7 +477,7 @@ class EncoderPipeline:
         self.checkpoint_dir.mkdir( parents=True, exist_ok=True,)
 
 
-        if self.encoder_type == "esm2":
+        if self.embedding_type == "esm2":
             # Begin with the full ESM-2 encoder frozen.
             self.encoder.freeze_all_params() # type: ignore
 
@@ -517,7 +517,7 @@ class EncoderPipeline:
                 "params": encoder_parameters,
                 "lr": (
                     esm_learning_rate
-                    if encoder_type == "esm2"
+                    if embedding_type == "esm2"
                     else encoder_learning_rate
                 ),
             })
@@ -539,7 +539,7 @@ class EncoderPipeline:
         )
 
         logger.info(
-            "Trainable %s encoder parameters: %s", self.encoder_type.upper(), f"{trainable_encoder:,}",
+            "Trainable %s encoder parameters: %s", self.embedding_type.upper(), f"{trainable_encoder:,}",
         )
 
         logger.info(
@@ -617,7 +617,7 @@ class EncoderPipeline:
         batch: Dict,
     ) -> torch.Tensor:
 
-        if self.encoder_type == "esm2":
+        if self.embedding_type == "esm2":
             sequences = batch["sequence"]
 
             return self.encoder(sequences)
@@ -628,10 +628,10 @@ class EncoderPipeline:
             .long()
         )
 
-        if self.encoder_type == "cnn":
+        if self.embedding_type == "cnn":
             return self.encoder(input_ids)
 
-        if self.encoder_type == "autoencoder":
+        if self.embedding_type == "autoencoder":
             lengths = (
                 batch["length"]
                 .to(self.device)
@@ -652,7 +652,7 @@ class EncoderPipeline:
 
         raise ValueError(
             f"Unsupported encoder type: "
-            f"{self.encoder_type}"
+            f"{self.embedding_type}"
         )
     
     def train_epoch(self, train_loader: DataLoader) -> Dict[str, float]:
@@ -839,10 +839,10 @@ class EncoderPipeline:
         
         hyperparameters = {
             "model": (
-                f"{self.encoder_type} encoder "
+                f"{self.embedding_type} encoder "
                 "linear output head"
             ),
-            "encoder_type": self.encoder_type,
+            "embedding_type": self.embedding_type,
             "device": self.device,
             "dataset": self.dataset,
             "num_classes": self.num_classes,
@@ -852,7 +852,7 @@ class EncoderPipeline:
             "encoder_output_dim": self.encoder_output_dim,
         }
 
-        if self.encoder_type == "cnn":
+        if self.embedding_type == "cnn":
             hyperparameters.update({
                 "encoder_learning_rate": (
                     self.encoder_learning_rate
@@ -869,7 +869,7 @@ class EncoderPipeline:
                 ),
             })
 
-        elif self.encoder_type == "esm2":
+        elif self.embedding_type == "esm2":
             if self.unfreeze_all_esm:
                 training_strategy = (
                     "full_backbone_unfrozen"
@@ -902,7 +902,7 @@ class EncoderPipeline:
                 "training_strategy": training_strategy,
             })
 
-        elif self.encoder_type == "autoencoder":
+        elif self.embedding_type == "autoencoder":
             hyperparameters.update({
                 "autoencoder_checkpoint": (
                     self.autoencoder_checkpoint
@@ -1270,7 +1270,7 @@ def main():
         )
 
     if (
-        args.encoder_type != "esm2"
+        args.embedding_type != "esm2"
         and (
             args.unfreeze_esm
             or args.unfreeze_all_esm
@@ -1279,10 +1279,10 @@ def main():
         raise ValueError(
             "--unfreeze_esm and --unfreeze_all_esm "
             "can only be used with "
-            "--encoder_type esm2."
+            "--embedding_type esm2."
         )
     
-    if args.encoder_type == "esm2":
+    if args.embedding_type == "esm2":
         data_encoding = "raw"
     else:
         data_encoding = "char"
@@ -1290,21 +1290,21 @@ def main():
     config = vars(args)
     config["run_dir"] = str(run_dir)
     config["device"] = device
-    config["model"] = (f"{args.encoder_type} encoder " + "linear output head")
+    config["model"] = (f"{args.embedding_type} encoder " + "linear output head")
     config["encoding"] = data_encoding
     
 
     save_json(config, run_dir / "config.json")
 
     logger.info("Protein Encoder + Linear Head Benchmark")
-    logger.info("encoder_type: %s", args.encoder_type)
+    logger.info("embedding_type: %s", args.embedding_type)
     logger.info(f"Dataset: {args.dataset}")
     logger.info(f"Device: {device}")
     logger.info(f"Run directory: {run_dir}")
     
-    
+    strategy = None
         
-    if args.encoder_type == "esm2":
+    if args.embedding_type == "esm2":
         if args.unfreeze_all_esm:
             strategy = ("Full ESM-2 backbone unfrozen")
         elif args.unfreeze_esm:
@@ -1315,12 +1315,12 @@ def main():
         else:
             strategy = "Frozen ESM-2 backbone"
 
-    elif args.encoder_type == "cnn":
+    elif args.embedding_type == "cnn":
         strategy = (
             "CNN encoder trained from scratch"
         )
 
-    else:
+    elif args.embedding_type == "autoencoder":
         strategy = (
             "Pretrained autoencoder frozen"
         )
@@ -1362,14 +1362,14 @@ def main():
             use_cache=False,
         )
 
-    pipeline = EncoderPipeline(
+    pipeline = EmbeddingPipeline(
         num_classes=args.num_classes,
         device=device,
         run_dir=run_dir,
         dataset=args.dataset,
         checkpoint_dir=args.checkpoint_dir,
         learning_rate=args.learning_rate,
-        encoder_type=args.encoder_type,
+        embedding_type=args.embedding_type,
         encoder_learning_rate=args.encoder_learning_rate,
         esm_model_name=args.esm_model_name,
         esm_learning_rate=args.esm_learning_rate,
