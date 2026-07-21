@@ -5,3 +5,4 @@ pytest
 torch
 scikit-learn
 tqdm
+gdown
