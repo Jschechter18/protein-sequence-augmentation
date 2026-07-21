@@ -189,6 +189,7 @@ class ProteinClassificationTrainingPipeline:
                     break
 
         self.save_final_checkpoint()
+        self.run_dir.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(history).to_csv(self.run_dir / "training_history.csv", index=False)
         self._save_history_json(history, epochs, early_stopping_patience)
 
