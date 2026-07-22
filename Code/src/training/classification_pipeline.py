@@ -384,6 +384,7 @@ class ProteinClassificationTrainingPipeline:
         self.model.train(training)
         total_loss = 0.0
         total_samples = 0
+        total_correct = 0
         labels_parts: list[np.ndarray] = []
         predictions_parts: list[np.ndarray] = []
         probability_parts: list[np.ndarray] = []
@@ -423,8 +424,12 @@ class ProteinClassificationTrainingPipeline:
                 predictions = probabilities.argmax(dim=1)
                 total_loss += float(loss.detach().item()) * batch_size
                 total_samples += batch_size
+                total_correct += int((predictions == labels).sum().item())
                 if self.show_progress:
-                    iterator.set_postfix(loss=f"{total_loss / total_samples:.4f}")
+                    iterator.set_postfix(
+                        loss=f"{total_loss / total_samples:.4f}",
+                        accuracy=f"{total_correct / total_samples:.4f}",
+                    )
                 labels_parts.append(labels.detach().cpu().numpy())
                 predictions_parts.append(predictions.cpu().numpy())
                 probability_parts.append(probabilities.cpu().numpy())
@@ -792,6 +797,7 @@ class ProteinClassificationTrainingPipeline:
         self.model.eval()
         total_loss = 0.0
         total_samples = 0
+        total_correct = 0
         labels_parts: list[np.ndarray] = []
         predictions_parts: list[np.ndarray] = []
         probability_parts: list[np.ndarray] = []
@@ -824,8 +830,12 @@ class ProteinClassificationTrainingPipeline:
 
                 total_loss += float(loss.item()) * batch_size
                 total_samples += batch_size
+                total_correct += int((predictions == labels).sum().item())
                 if self.show_progress:
-                    iterator.set_postfix(loss=f"{total_loss / total_samples:.4f}")
+                    iterator.set_postfix(
+                        loss=f"{total_loss / total_samples:.4f}",
+                        accuracy=f"{total_correct / total_samples:.4f}",
+                    )
                 labels_parts.append(labels.cpu().numpy())
                 predictions_parts.append(predictions.cpu().numpy())
                 probability_parts.append(probabilities.cpu().numpy())
