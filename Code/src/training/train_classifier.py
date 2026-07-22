@@ -14,6 +14,41 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+# TODO: need to implement an experimental sweep
+"""
+Stage 1: Frozen representation evaluation
+for task in ["solubility"]:  # add localization after pipeline validation
+    for representation in [
+        "direct_sequence_baseline",
+        "random_ae_frozen",
+        "trained_ae_frozen",
+        "esm2_frozen",
+        "trained_ae+esm2_frozen",
+    ]:
+        for head_type in ["linear", "mlp"]:
+            for seed in [1, 2, 3, 4, 5]:
+                tune hyperparameters on validation split
+                train with early stopping
+                evaluate selected model on clean test split
+                record overall and sequence-length-stratified metrics
+
+Stage 2: Fine-tuning ablations
+for selected high-performing representations:
+    compare:
+        frozen encoder
+        partially unfrozen encoder
+        fully unfrozen encoder where computationally reasonable
+
+Stage 3: Representation analysis
+for each learned representation:
+    evaluate:
+        linear probe
+        k-nearest-neighbor classification
+        class separation
+        performance by sequence length
+"""
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Train Protein Sequence Classifier")
     parser.add_argument("--dataset", type=str, default="solubility", choices=["solubility", "localization"])
@@ -32,7 +67,7 @@ def parse_args():
     parser.add_argument("--cnn_num_filters", type=int, default=64)
     parser.add_argument("--num_classes", type=int, default=None)
 
-    parser.add_argument("--autoencoder_checkpoint", type=str, default=None)
+    parser.add_argument("--autoencoder_checkpoint", type=str, default=None) # default to v5 for now
     parser.add_argument("--autoencoder_embedding_dim", type=int, default=128)
     parser.add_argument("--autoencoder_cnn_channels", type=int, default=128)
     parser.add_argument("--autoencoder_hidden_dim", type=int, default=256)
@@ -106,8 +141,6 @@ def main():
         embedding_type=args.embedding_type,
         num_classes=args.num_classes,
         esm_model_name=args.esm_model_name,
-        cnn_embedding_dim=args.cnn_embedding_dim,
-        cnn_num_filters=args.cnn_num_filters,
         autoencoder_checkpoint=args.autoencoder_checkpoint,
         autoencoder_embedding_dim=args.autoencoder_embedding_dim,
         autoencoder_cnn_channels=args.autoencoder_cnn_channels,
@@ -120,17 +153,14 @@ def main():
 
     pipeline = ProteinClassificationTrainingPipeline(
         model=model,
-        num_classes=args.num_classes,
         device=device,
-        run_dir=run_dir,
-        dataset=args.dataset,
-        checkpoint_dir=args.checkpoint_dir,
         learning_rate=args.learning_rate,
         encoder_learning_rate=args.encoder_learning_rate,
         esm_learning_rate=args.esm_learning_rate,
-        unfreeze_esm=args.unfreeze_esm,
         unfreeze_layers=args.unfreeze_layers,
+        unfreeze_esm=args.unfreeze_esm,
         unfreeze_all_esm=args.unfreeze_all_esm,
+        checkpoint_dir=run_dir / args.checkpoint_dir
     )
 
     # Execute training

@@ -427,16 +427,26 @@ class EmbeddingPipeline:
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
     
+<<<<<<< Updated upstream
         self.embedding_type = embedding_type
 
         if embedding_type == "esm2":
+=======
+        self.embedding_type = encoder_type
+
+        if self.embedding_type == "esm2":
+>>>>>>> Stashed changes
             self.encoder = ESM2Encoder(model_name=esm_model_name)
             self.encoder = self.encoder.to(self.device) 
             logger.info(f"Using ESM-2 encoder: %s", next(self.encoder.parameters()).device)
 
             self.encoder_output_dim = 320  # ESM-2 embedding dimension
 
+<<<<<<< Updated upstream
         elif embedding_type == "cnn":
+=======
+        elif self.embedding_type == "cnn":
+>>>>>>> Stashed changes
             self.encoder = CNNEncoder(
                 embedding_dim=cnn_embedding_dim,
                 num_filters = cnn_num_filters,
@@ -445,7 +455,11 @@ class EmbeddingPipeline:
 
             self.encoder_output_dim = self.encoder.output_dim
 
+<<<<<<< Updated upstream
         elif embedding_type == "autoencoder":
+=======
+        elif self.embedding_type == "autoencoder":
+>>>>>>> Stashed changes
             if autoencoder_checkpoint is None:
                 raise ValueError(
                     "--autoencoder_checkpoint is required "
@@ -465,6 +479,10 @@ class EmbeddingPipeline:
             ).to(self.device)
 
             self.encoder_output_dim = self.encoder.output_dim
+        elif self.embedding_type == "autoencoder+esm2":
+            pass
+        elif self.embedding_type == "autoencoder+cnn":
+            pass
         else:
             raise ValueError(
                 f"Unsupported encoder type: {embedding_type}"

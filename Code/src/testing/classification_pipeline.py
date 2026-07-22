@@ -73,17 +73,20 @@ class ProteinClassificationTrainingPipeline:
 
         # Configure fine-tuning for ESM-2
         if self.model.embedding_type == "esm2":
-            self.model.encoder.freeze_all_params() # type: ignore
+            self.model.embedded_representation.freeze_all_params() # type: ignore
             if unfreeze_all_esm:
                 logger.info("Unfreezing entire ESM-2 backbone.")
-                for param in self.model.encoder.parameters():
+                for param in self.model.embedded_representation.parameters():
                     param.requires_grad = True
+                self.model.embedded_representation.is_frozen = False
             elif unfreeze_esm:
                 logger.info("Unfreezing last %d ESM transformer layer(s).", unfreeze_layers)
-                self.model.encoder.unfreeze_last_layers(int(unfreeze_layers)) # type: ignore
+                self.model.embedded_representation.unfreeze_last_layers(int(unfreeze_layers)) # type: ignore
 
         # Optimizer setup
-        encoder_params = [p for p in self.model.encoder.parameters() if p.requires_grad]
+        encoder_params = [
+            p for p in self.model.embedded_representation.parameters() if p.requires_grad
+        ]
         parameter_groups = [{"params": self.model.head.parameters(), "lr": learning_rate}]
         if encoder_params:
             parameter_groups.append({
@@ -254,7 +257,7 @@ class ProteinClassificationTrainingPipeline:
         encoder_path = self.checkpoint_dir / "best_encoder.pt"
         head_path = self.checkpoint_dir / "best_linear_head.pt"
 
-        torch.save(self.model.encoder.state_dict(), encoder_path,)
+        torch.save(self.model.embedded_representation.state_dict(), encoder_path,)
         torch.save(self.model.head.state_dict(), head_path,)
 
         logger.info(f"Best encoder checkpoint saved to {encoder_path}")
@@ -264,7 +267,7 @@ class ProteinClassificationTrainingPipeline:
         encoder_path = (self.checkpoint_dir / "final_encoder.pt")
         head_path = (self.checkpoint_dir / "final_linear_head.pt")
 
-        torch.save(self.model.encoder.state_dict(), encoder_path)
+        torch.save(self.model.embedded_representation.state_dict(), encoder_path)
         torch.save(self.model.head.state_dict(), head_path)
 
         logger.info(f"Final encoder checkpoint saved to {encoder_path}")
@@ -280,7 +283,9 @@ class ProteinClassificationTrainingPipeline:
         if not classifier_path.exists():
             raise FileNotFoundError(f"Classifier checkpoint not found: {classifier_path}")
 
-        self.model.encoder.load_state_dict(torch.load(encoder_path,map_location=self.device,))
+        self.model.embedded_representation.load_state_dict(
+            torch.load(encoder_path, map_location=self.device)
+        )
         logger.info(f"Best encoder checkpoint loaded from {encoder_path}")
 
         self.model.head.load_state_dict(torch.load(classifier_path,map_location=self.device,))

@@ -1,17 +1,17 @@
 import logging
-from typing import List, Optional
 
+import esm
 import torch
 import torch.nn as nn
 
-from Code.src.utils.dataloader import VOCAB_SIZE, PAD_IDX
+from Code.src.utils.dataloader import BOS_IDX, EOS_IDX, PAD_IDX
 from Code.src.models.autoencoder import ProteinSequenceAutoencoder
 
 logger = logging.getLogger(__name__)
 
 class LinearHead(nn.Module): #classifier 
     """Common output head used for every encoder benchmark."""
-    def __init__(self, embedding_dim: int, num_classes: int):
+    def __init__(self, embedding_dim: int, num_classes: int = 2):
         super().__init__()    
 
         self.linear = nn.Linear(embedding_dim, num_classes)
@@ -19,6 +19,65 @@ class LinearHead(nn.Module): #classifier
     def forward(self, embeddings: torch.Tensor) -> torch.Tensor:
         # logits: [B, C]
         return self.linear(embeddings)
+
+class MLPHead(nn.Module):
+    """MLP head for protein sequence embeddings.
+
+    Parameters
+    ----------
+    embedding_dim : int
+        Dimension of the input embeddings.
+    hidden_dim : int
+        Dimension of the hidden layer.
+    num_classes : int
+        Number of output classes.
+    """
+    def __init__(self, embedding_dim: int, hidden_dim: int = 128, num_classes: int = 2):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(embedding_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, num_classes)
+        )
+
+    def forward(self, embeddings: torch.Tensor) -> torch.Tensor:
+        return self.mlp(embeddings)
+
+
+class CNNHead(nn.Module):
+    """CNN head for protein sequence embeddings.
+
+    Parameters
+    ----------
+    embedding_dim : int
+        Dimension of the input embeddings.
+    num_filters : int
+        Number of convolutional filters.
+    kernel_size : int
+        Size of the convolutional kernel.
+    num_classes : int
+        Number of output classes.
+    """
+    def __init__(self, embedding_dim: int, num_filters: int = 64, kernel_size: int = 3, num_classes: int = 2):
+        super().__init__()
+        self.conv = nn.Conv1d(
+            in_channels=embedding_dim,
+            out_channels=num_filters,
+            kernel_size=kernel_size,
+        )
+        self.pool = nn.AdaptiveMaxPool1d(1)
+        self.fc = nn.Linear(num_filters, num_classes)
+
+    def forward(self, embeddings: torch.Tensor) -> torch.Tensor:
+        if embeddings.ndim != 3:
+            raise ValueError(
+                "CNNHead expects residue-level embeddings with shape [B, L, D], "
+                f"but received shape {tuple(embeddings.shape)}."
+            )
+        embeddings = embeddings.transpose(1, 2)
+        features = torch.relu(self.conv(embeddings))
+        pooled = self.pool(features).squeeze(-1)
+        return self.fc(pooled)
     
 class ESM2Embedding(nn.Module):
         """
@@ -36,25 +95,31 @@ class ESM2Embedding(nn.Module):
         def __init__(self, model_name: str = "esm2_t6_8M_UR50D", device: str = "cpu"):
             super().__init__()
             self.device = device
-            try:
-                import esm
+            self.output_dim = 320
+            self.repr_layer = 6
+            self.is_frozen = False
 
-                if model_name == "esm2_t6_8M_UR50D":
-
-                    self.model, self.alphabet = esm.pretrained.esm2_t6_8M_UR50D()
-                else:
-                    raise ValueError(f"Unsupported ESM model name: {model_name}")
+            if model_name == "esm2_t6_8M_UR50D":
+                self.model, self.alphabet = esm.pretrained.esm2_t6_8M_UR50D()
+                self.model = self.model.to(self.device)
+            else:
+                raise ValueError(f"Unsupported ESM model name: {model_name}")
                 
-            except ImportError as error:
-                raise ImportError( "The 'esm' package is required for embedding_type='esm2'.") from error
-
         def freeze_all_params(self):
             """
             Freeze all ESM-2 parameters. 
             """
             if self.model is not None:
                 for param in self.model.parameters():
-                    param.requires_grad = False 
+                    param.requires_grad = False
+                self.model.eval()
+                self.is_frozen = True
+
+        def train(self, mode: bool = True):
+            super().train(mode)
+            if self.is_frozen:
+                self.model.eval()
+            return self
 
         def unfreeze_last_layers(self, num_layers: int = 1):
             """
@@ -96,6 +161,9 @@ class ESM2Embedding(nn.Module):
                     for layer in list(layers)[max(0, total_layers - num_layers):]:
                         for param in layer.parameters():
                             param.requires_grad = True
+                    self.is_frozen = not any(
+                        parameter.requires_grad for parameter in self.model.parameters()
+                    )
                 except Exception:
                     logger.warning("Failed to unfreeze specific layers; skipping.")
 
@@ -125,8 +193,12 @@ class ESM2Embedding(nn.Module):
                 #
                 # Output shape:
                 #     [batch_size, seq_len, 320]
-            results = self.model(batch_tokens, repr_layers=[6])
-            embeddings = results["representations"][6] #token representation
+            results = self.model(
+                batch_tokens,
+                repr_layers=[self.repr_layer],
+                return_contacts=False,
+            )
+            embeddings = results["representations"][self.repr_layer]
 
             padding_idx = self.alphabet.padding_idx
             valid_mask = batch_tokens.ne(padding_idx)
@@ -146,74 +218,74 @@ class ESM2Embedding(nn.Module):
             sequence_lengths = valid_mask.sum(dim=1).clamp(min=1)
             # [B, 1]
 
-            sequence_embeddings = (summed_embeddings / sequence_lengths)  # [B, 320]
+            sequence_embeddings = summed_embeddings / sequence_lengths  # [B, 320]
 
-            return sequence_embeddings        
+            return sequence_embeddings
 
-class CNNEmbedding(nn.Module):
-    """
-    Integer-encoded protein sequence -> CNN embedding.
+# class CNNEmbedding(nn.Module):
+#     """
+#     Integer-encoded protein sequence -> CNN embedding.
 
-    Input:
-        input_ids: [B, L]
+#     Input:
+#         input_ids: [B, L]
 
-    Output:
-        sequence embeddings: [B, output_dim]
-    """
-    def __init__(
-        self,
-        embedding_dim: int = 128,
-        num_filters: int =64,
-        kernel_sizes: Optional[List[int]] = None,):
-        super().__init__()
+#     Output:
+#         sequence embeddings: [B, output_dim]
+#     """
+#     def __init__(
+#         self,
+#         embedding_dim: int = 128,
+#         num_filters: int =64,
+#         kernel_sizes: Optional[List[int]] = None,):
+#         super().__init__()
         
-        if kernel_sizes is None: 
-            # Multiple kernel sizes let the CNN detect local residue patterns
-            # at different scales:
-            #   k=3: short motifs
-            #   k=5: medium motifs
-            #   k=7: longer local motifs
+#         if kernel_sizes is None:
+#             # Multiple kernel sizes let the CNN detect local residue patterns
+#             # at different scales:
+#             #   k=3: short motifs
+#             #   k=5: medium motifs
+#             #   k=7: longer local motifs
 
-            kernel_sizes = [3, 5, 7]
-        
-
-        self.amino_embedding = nn.Embedding(
-            num_embeddings=VOCAB_SIZE,
-            embedding_dim=embedding_dim,
-            padding_idx=PAD_IDX,
-        )
-        
-        # Convolutional layers for different kernel sizes
-        self.conv_layers = nn.ModuleList([
-            nn.Conv1d(
-                in_channels=embedding_dim,
-                out_channels=num_filters,
-                kernel_size=k,
-                padding=k // 2,
-                bias=False,
-            )
-            for k in kernel_sizes
-        ])
+#             kernel_sizes = [3, 5, 7]
         
 
-        self.output_dim = num_filters * len(kernel_sizes)
+#         self.amino_embedding = nn.Embedding(
+#             num_embeddings=VOCAB_SIZE,
+#             embedding_dim=embedding_dim,
+#             padding_idx=PAD_IDX,
+#         )
+        
+#         # Convolutional layers for different kernel sizes
+#         self.conv_layers = nn.ModuleList([
+#             nn.Conv1d(
+#                 in_channels=embedding_dim,
+#                 out_channels=num_filters,
+#                 kernel_size=k,
+#                 padding=k // 2,
+#                 bias=False,
+#             )
+#             for k in kernel_sizes
+#         ])
+        
 
-    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
-        # input_ids: [B,L]
+#         self.output_dim = num_filters * len(kernel_sizes)
 
-        embeddings = self.amino_embedding(input_ids)  # [B, L, embedding_dim]
-        embeddings = embeddings.transpose(1, 2)  # [B, embedding_dim, L]
+#     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+#         # input_ids: [B,L]
 
-        pooled_outputs = []
+#         embeddings = self.amino_embedding(input_ids)  # [B, L, embedding_dim]
+#         embeddings = embeddings.transpose(1, 2)  # [B, embedding_dim, L]
 
-        for convolution in self.conv_layers:
-            features = torch.relu(convolution(embeddings))  # [B, num_filters,, L]
-            pooled = torch.amax(features, dim=2)             # [B, num_filters,]
-            pooled_outputs.append(pooled)
+#         pooled_outputs = []
 
-        return torch.cat(pooled_outputs, dim=1)  # [B, F × kernels]
+#         for convolution in self.conv_layers:
+#             features = torch.relu(convolution(embeddings))  # [B, num_filters,, L]
+#             pooled = torch.amax(features, dim=2)             # [B, num_filters,]
+#             pooled_outputs.append(pooled)
 
-class AutoencoderEncoder(nn.Module):
+#         return torch.cat(pooled_outputs, dim=1)  # [B, F × kernels]
+
+class TrainedAutoencoderEncoder(nn.Module):
     """
     Load a trained ProteinSequenceAutoencoder and expose only its encoder.
 
@@ -240,6 +312,7 @@ class AutoencoderEncoder(nn.Module):
         super().__init__()
 
         self.output_dim = latent_dim
+        self.is_frozen = freeze
 
         self.autoencoder = ProteinSequenceAutoencoder(
             embedding_dim=embedding_dim,
@@ -266,8 +339,15 @@ class AutoencoderEncoder(nn.Module):
         if freeze:
             for parameter in self.autoencoder.parameters():
                 parameter.requires_grad = False
+            self.autoencoder.eval()
 
         self.autoencoder.to(device)
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        if self.is_frozen:
+            self.autoencoder.eval()
+        return self
 
     def forward(
         self,
@@ -276,15 +356,120 @@ class AutoencoderEncoder(nn.Module):
     ) -> torch.Tensor:
         return self.autoencoder.encode(input_ids=token_ids,lengths=lengths,)
 
+class RandomAutoencoderEncoder(nn.Module):
+    """
+    Expose a frozen, randomly initialized autoencoder encoder.
+
+    Input:
+        token_ids: [B, L]
+        lengths: [B]
+
+    Output:
+        latent embeddings: [B, latent_dim]
+    """
+
+    def __init__(
+        self,
+        embedding_dim: int,
+        cnn_out_channels: int,
+        hidden_dim: int,
+        latent_dim: int,
+        num_layers: int,
+        kernel_size: int,
+        device: str,
+    ):
+        super().__init__()
+
+        self.output_dim = latent_dim
+
+        self.autoencoder = ProteinSequenceAutoencoder(
+            embedding_dim=embedding_dim,
+            cnn_out_channels=cnn_out_channels,
+            hidden_dim=hidden_dim,
+            latent_dim=latent_dim,
+            num_layers=num_layers,
+            kernel_size=kernel_size,
+        )
+
+        for parameter in self.autoencoder.parameters():
+            parameter.requires_grad = False
+        self.autoencoder.to(device)
+        self.autoencoder.eval()
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        self.autoencoder.eval()
+        return self
+
+    def forward(
+        self,
+        token_ids: torch.Tensor,
+        lengths: torch.Tensor,
+    ) -> torch.Tensor:
+        return self.autoencoder.encode(input_ids=token_ids,lengths=lengths,)
+
+class CombinedAutoencoderESM2Encoder(nn.Module):
+    """
+    Combine embeddings from a trained autoencoder and ESM-2.
+
+    Input:
+        token_ids: [B, L]
+        lengths: [B]
+        sequences: list[str]
+
+    Output:
+        concatenated embeddings: [B, autoencoder_dim + esm_dim]
+    """
+
+    def __init__(
+        self,
+        autoencoder_encoder: nn.Module,
+        esm_encoder: nn.Module,
+    ):
+        super().__init__()
+        self.autoencoder_encoder = autoencoder_encoder
+        self.esm_encoder = esm_encoder
+        self.autoencoder_normalization = nn.LayerNorm(
+            autoencoder_encoder.output_dim, elementwise_affine=False
+        )
+        self.esm_normalization = nn.LayerNorm(
+            esm_encoder.output_dim, elementwise_affine=False
+        )
+        self.output_dim = autoencoder_encoder.output_dim + esm_encoder.output_dim
+
+    def forward(
+        self,
+        token_ids: torch.Tensor,
+        lengths: torch.Tensor,
+        sequences: list[str],
+    ) -> torch.Tensor:
+        autoencoder_embeddings = self.autoencoder_encoder(token_ids, lengths)
+        esm_embeddings = self.esm_encoder(sequences)
+        if autoencoder_embeddings.ndim != 2 or esm_embeddings.ndim != 2:
+            raise ValueError(
+                "CombinedAutoencoderESM2Encoder expects both encoders to return "
+                "sequence-level embeddings with shape [B, D]."
+            )
+        if autoencoder_embeddings.size(0) != esm_embeddings.size(0):
+            raise ValueError(
+                "Autoencoder and ESM-2 embeddings must have the same batch size."
+            )
+        return torch.cat(
+            [
+                self.autoencoder_normalization(autoencoder_embeddings),
+                self.esm_normalization(esm_embeddings),
+            ],
+            dim=-1,
+        )
+
 class ProteinSequenceClassifier(nn.Module):
     """Unified wrapper model combining specified embedding encoders with a linear head."""
     def __init__(
         self,
         embedding_type: str = "esm2",
         num_classes: int = 2,
-        esm_model_name: str = "facebook/esm2_t6_8M",
-        cnn_embedding_dim: int = 128,
-        cnn_num_filters: int = 128,
+        esm_model_name: str = "esm2_t6_8M_UR50D",
+        head_type: str = "linear",
         autoencoder_checkpoint: str | None = None,
         autoencoder_embedding_dim: int = 128,
         autoencoder_cnn_channels: int = 128,
@@ -293,35 +478,38 @@ class ProteinSequenceClassifier(nn.Module):
         autoencoder_num_layers: int = 1,
         autoencoder_kernel_size: int = 3,
         device: str = "cpu",
-        
+        pad_idx: int = PAD_IDX,
     ):
-        self.device = device
         super().__init__()
+        self.device = device
         self.embedding_type = embedding_type
 
-        if embedding_type == "esm2":
-            self.encoder = ESM2Embedding(model_name=esm_model_name)
-            self.encoder = self.encoder.to(self.device) 
-            logger.info(f"Using ESM-2 encoder: %s", next(self.encoder.parameters()).device)
-
-            self.encoder_output_dim = 320  # ESM-2 embedding dimension
-
-        elif embedding_type == "cnn":
-            self.encoder = CNNEmbedding(
-                embedding_dim=cnn_embedding_dim,
-                num_filters = cnn_num_filters,
-                kernel_sizes=[3, 5, 7],
+        if embedding_type == "random_autoencoder":
+            self.embedded_representation = RandomAutoencoderEncoder(
+                embedding_dim=autoencoder_embedding_dim,
+                cnn_out_channels=autoencoder_cnn_channels,
+                hidden_dim=autoencoder_hidden_dim,
+                latent_dim=autoencoder_latent_dim,
+                num_layers=autoencoder_num_layers,
+                kernel_size=autoencoder_kernel_size,
+                device=self.device,
             ).to(self.device)
+        elif embedding_type == "esm2":
+            # CASE 2: Baseline 2: ESM-2 Encoder
+            self.embedded_representation = ESM2Embedding(
+                model_name=esm_model_name, device=self.device
+            ).to(self.device)
+            self.embedded_representation.freeze_all_params()
+            logger.info("Using ESM-2 encoder on %s", next(self.embedded_representation.parameters()).device)
 
-            self.encoder_output_dim = self.encoder.output_dim
-
-        elif embedding_type == "autoencoder":
+        elif embedding_type == "trained_autoencoder":
+            # CASE 3: Trained Autoencoder Encoder
             if autoencoder_checkpoint is None:
                 raise ValueError(
                     "--autoencoder_checkpoint is required "
-                    "when embedding_type='autoencoder'."
+                    "when embedding_type='trained_autoencoder'."
                 )
-            self.encoder = AutoencoderEncoder(
+            self.embedded_representation = TrainedAutoencoderEncoder(
                 checkpoint_path=autoencoder_checkpoint,
                 embedding_dim=autoencoder_embedding_dim,
                 cnn_out_channels=autoencoder_cnn_channels,
@@ -332,24 +520,76 @@ class ProteinSequenceClassifier(nn.Module):
                 device=self.device,
                 freeze=True,
             ).to(self.device)
-            self.encoder_output_dim = self.encoder.output_dim
-        else:
-            raise ValueError(
-                f"Unsupported encoder type: {embedding_type}"
+            self.encoder_output_dim = self.embedded_representation.output_dim
+        elif embedding_type == "autoencoder+esm2":
+            # CASE 4: Combined Autoencoder + ESM-2 Encoder
+            if autoencoder_checkpoint is None:
+                raise ValueError(
+                    "--autoencoder_checkpoint is required "
+                    "when embedding_type='autoencoder+esm2'."
+                )
+            autoencoder_encoder = TrainedAutoencoderEncoder(
+                checkpoint_path=autoencoder_checkpoint,
+                embedding_dim=autoencoder_embedding_dim,
+                cnn_out_channels=autoencoder_cnn_channels,
+                hidden_dim=autoencoder_hidden_dim,
+                latent_dim=autoencoder_latent_dim,
+                num_layers=autoencoder_num_layers,
+                kernel_size=autoencoder_kernel_size,
+                device=self.device,
+                freeze=True,
+            ).to(self.device)
+            esm_encoder = ESM2Embedding(
+                model_name=esm_model_name, device=self.device
+            ).to(self.device)
+            esm_encoder.freeze_all_params()
+            self.embedded_representation = CombinedAutoencoderESM2Encoder(
+                autoencoder_encoder=autoencoder_encoder,
+                esm_encoder=esm_encoder,
             )
-        self.head = LinearHead(embedding_dim=self.encoder_output_dim,num_classes=num_classes,).to(self.device)
+        else:
+            raise ValueError(f"Unsupported encoder type: {embedding_type}")
+
+        self.encoder_output_dim = self.embedded_representation.output_dim
+
+        if head_type == "linear":
+            self.head = LinearHead(
+                embedding_dim=self.encoder_output_dim,
+                num_classes=num_classes,
+            ).to(self.device)
+        elif head_type == "mlp":
+            self.head = MLPHead(
+                embedding_dim=self.encoder_output_dim,
+                hidden_dim=128,
+                num_classes=num_classes,
+            ).to(self.device)
+        elif head_type == "cnn":
+            raise ValueError(
+                "head_type='cnn' is incompatible with the current sequence-level "
+                "encoder outputs [B, D]; CNNHead requires residue-level [B, L, D]."
+            )
+        else:
+            raise ValueError(f"Unsupported head type: {head_type}")
+        self.pad_idx = pad_idx
 
     def forward(self, batch: dict) -> torch.Tensor:
-        if self.embedding_type == "esm2":
-            embeddings = self.encoder(batch["sequence"])
-        elif self.embedding_type == "cnn":
-            input_ids = batch["input_ids"].to(self.device).long()
-            embeddings = self.encoder(input_ids)
-        elif self.embedding_type == "autoencoder":
+        if self.embedding_type == "random_autoencoder":
             input_ids = batch["input_ids"].to(self.device).long()
             lengths = batch["length"].to(self.device).long()
             input_ids, lengths = self._add_autoencoder_special_tokens(input_ids, lengths)
-            embeddings = self.encoder(input_ids, lengths)
+            embeddings = self.embedded_representation(input_ids, lengths)
+        elif self.embedding_type == "esm2":
+            embeddings = self.embedded_representation(batch["sequence"])
+        elif self.embedding_type == "trained_autoencoder":
+            input_ids = batch["input_ids"].to(self.device).long()
+            lengths = batch["length"].to(self.device).long()
+            input_ids, lengths = self._add_autoencoder_special_tokens(input_ids, lengths)
+            embeddings = self.embedded_representation(input_ids, lengths)
+        elif self.embedding_type == "autoencoder+esm2":
+            input_ids = batch["input_ids"].to(self.device).long()
+            lengths = batch["length"].to(self.device).long()
+            input_ids, lengths = self._add_autoencoder_special_tokens(input_ids, lengths)
+            embeddings = self.embedded_representation(input_ids, lengths, batch["sequence"])
         else:
             raise ValueError(f"Unsupported embedding type: {self.embedding_type}")
         return self.head(embeddings)
@@ -357,11 +597,10 @@ class ProteinSequenceClassifier(nn.Module):
     def _add_autoencoder_special_tokens(
         self, input_ids: torch.Tensor, lengths: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        from Code.src.utils.dataloader import BOS_IDX, EOS_IDX
         batch_size, padded_length = input_ids.shape
         framed_ids = torch.full(
             size=(batch_size, padded_length + 2),
-            fill_value=PAD_IDX,
+            fill_value=self.pad_idx,
             dtype=input_ids.dtype,
             device=input_ids.device,
         )
