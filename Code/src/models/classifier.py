@@ -222,69 +222,6 @@ class ESM2Embedding(nn.Module):
 
             return sequence_embeddings
 
-# class CNNEmbedding(nn.Module):
-#     """
-#     Integer-encoded protein sequence -> CNN embedding.
-
-#     Input:
-#         input_ids: [B, L]
-
-#     Output:
-#         sequence embeddings: [B, output_dim]
-#     """
-#     def __init__(
-#         self,
-#         embedding_dim: int = 128,
-#         num_filters: int =64,
-#         kernel_sizes: Optional[List[int]] = None,):
-#         super().__init__()
-        
-#         if kernel_sizes is None:
-#             # Multiple kernel sizes let the CNN detect local residue patterns
-#             # at different scales:
-#             #   k=3: short motifs
-#             #   k=5: medium motifs
-#             #   k=7: longer local motifs
-
-#             kernel_sizes = [3, 5, 7]
-        
-
-#         self.amino_embedding = nn.Embedding(
-#             num_embeddings=VOCAB_SIZE,
-#             embedding_dim=embedding_dim,
-#             padding_idx=PAD_IDX,
-#         )
-        
-#         # Convolutional layers for different kernel sizes
-#         self.conv_layers = nn.ModuleList([
-#             nn.Conv1d(
-#                 in_channels=embedding_dim,
-#                 out_channels=num_filters,
-#                 kernel_size=k,
-#                 padding=k // 2,
-#                 bias=False,
-#             )
-#             for k in kernel_sizes
-#         ])
-        
-
-#         self.output_dim = num_filters * len(kernel_sizes)
-
-#     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
-#         # input_ids: [B,L]
-
-#         embeddings = self.amino_embedding(input_ids)  # [B, L, embedding_dim]
-#         embeddings = embeddings.transpose(1, 2)  # [B, embedding_dim, L]
-
-#         pooled_outputs = []
-
-#         for convolution in self.conv_layers:
-#             features = torch.relu(convolution(embeddings))  # [B, num_filters,, L]
-#             pooled = torch.amax(features, dim=2)             # [B, num_filters,]
-#             pooled_outputs.append(pooled)
-
-#         return torch.cat(pooled_outputs, dim=1)  # [B, F × kernels]
-
 class TrainedAutoencoderEncoder(nn.Module):
     """
     Load a trained ProteinSequenceAutoencoder and expose only its encoder.

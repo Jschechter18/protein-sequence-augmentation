@@ -73,7 +73,6 @@ Code/results/*
 !Code/results/.gitkeep
 !Code/results/README.md
 !Code/results/autoencoder
-!Code/results/encoder_benchmark
 !Code/results/figures
 !Code/results/tables
 
