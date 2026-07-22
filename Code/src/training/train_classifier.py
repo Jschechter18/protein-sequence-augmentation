@@ -81,6 +81,8 @@ def parse_args():
     parser.add_argument("--early_stopping_patience", type=int, default=5)
     parser.add_argument("--evaluate_test", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
+    
+    parser.add_argument("--run_experiment", action="store_true", default=False, help="Run the experiment with the specified parameters.")
 
     return parser.parse_args()
 
@@ -136,48 +138,103 @@ def main():
         task=args.dataset, split="test", data_dir=args.data_dir,
         mode="classification", encoding=data_encoding, batch_size=args.batch_size, shuffle=False
     ) if args.evaluate_test else None
-
-    # Model & Pipeline Initialization
-    model = ProteinSequenceClassifier(
-        embedding_type=args.embedding_type,
-        num_classes=args.num_classes,
-        esm_model_name=args.esm_model_name,
-        autoencoder_checkpoint=args.autoencoder_checkpoint,
-        autoencoder_embedding_dim=args.autoencoder_embedding_dim,
-        autoencoder_cnn_channels=args.autoencoder_cnn_channels,
-        autoencoder_hidden_dim=args.autoencoder_hidden_dim,
-        autoencoder_latent_dim=args.autoencoder_latent_dim,
-        autoencoder_num_layers=args.autoencoder_num_layers,
-        autoencoder_kernel_size=args.autoencoder_kernel_size,
-        device=device,
-    )
-
-    pipeline = ProteinClassificationTrainingPipeline(
-        model=model,
-        device=device,
-        learning_rate=args.learning_rate,
-        encoder_learning_rate=args.encoder_learning_rate,
-        esm_learning_rate=args.esm_learning_rate,
-        unfreeze_layers=args.unfreeze_layers,
-        unfreeze_esm=args.unfreeze_esm,
-        unfreeze_all_esm=args.unfreeze_all_esm,
-        checkpoint_dir=run_dir / args.checkpoint_dir
-    )
-
-    # Execute training
-    start_time = time.time()
-    pipeline.fit(train_loader=train_loader, val_loader=val_loader, epochs=args.epochs, early_stopping_patience=args.early_stopping_patience)
     
-    elapsed_time = time.time() - start_time
-    hours, rem = divmod(elapsed_time, 3600)
-    minutes, seconds = divmod(rem, 60)
-    config["total_runtime_seconds"] = elapsed_time
-    config["total_runtime_formatted"] = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
-    save_json(config, run_dir / "config.json")
+    
 
-    if args.evaluate_test and test_loader:
-        pipeline.load_checkpoint()
-        pipeline.evaluate_test(test_loader)
+    if args.run_experiment == False:
+        # Model & Pipeline Initialization
+        model = ProteinSequenceClassifier(
+            embedding_type=args.embedding_type,
+            num_classes=args.num_classes,
+            esm_model_name=args.esm_model_name,
+            autoencoder_checkpoint=args.autoencoder_checkpoint,
+            autoencoder_embedding_dim=args.autoencoder_embedding_dim,
+            autoencoder_cnn_channels=args.autoencoder_cnn_channels,
+            autoencoder_hidden_dim=args.autoencoder_hidden_dim,
+            autoencoder_latent_dim=args.autoencoder_latent_dim,
+            autoencoder_num_layers=args.autoencoder_num_layers,
+            autoencoder_kernel_size=args.autoencoder_kernel_size,
+            device=device,
+        )
+
+        pipeline = ProteinClassificationTrainingPipeline(
+            model=model,
+            device=device,
+            learning_rate=args.learning_rate,
+            encoder_learning_rate=args.encoder_learning_rate,
+            esm_learning_rate=args.esm_learning_rate,
+            unfreeze_layers=args.unfreeze_layers,
+            unfreeze_esm=args.unfreeze_esm,
+            unfreeze_all_esm=args.unfreeze_all_esm,
+            checkpoint_dir=run_dir / args.checkpoint_dir
+        )
+        
+        # Execute training
+        start_time = time.time()
+        pipeline.fit(train_loader=train_loader, val_loader=val_loader, epochs=args.epochs, early_stopping_patience=args.early_stopping_patience)
+        
+        elapsed_time = time.time() - start_time
+        hours, rem = divmod(elapsed_time, 3600)
+        minutes, seconds = divmod(rem, 60)
+        config["total_runtime_seconds"] = elapsed_time
+        config["total_runtime_formatted"] = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
+        save_json(config, run_dir / "config.json")
+
+        if args.evaluate_test and test_loader:
+            pipeline.load_checkpoint()
+            pipeline.evaluate_test(test_loader)
+    else:
+        # tasks = ["solubility", "localization"]
+        rand_seeds = [42, 43, 44]
+        representations = ["random_autoencoder", "trained_autoencoder", "esm2", "trained_autoencoder+esm2"]
+        head_types = ["linear", "mlp", "cnn"]
+        
+        # for task in tasks:
+        for seed in rand_seeds:
+            for rep in representations:
+                for head in head_types:
+                    set_random_seed(seed)
+                    # Model & Pipeline Initialization
+                    model = ProteinSequenceClassifier(
+                        embedding_type=rep,
+                        num_classes=args.num_classes,
+                        esm_model_name=args.esm_model_name,
+                        autoencoder_checkpoint=args.autoencoder_checkpoint,
+                        autoencoder_embedding_dim=args.autoencoder_embedding_dim,
+                        autoencoder_cnn_channels=args.autoencoder_cnn_channels,
+                        autoencoder_hidden_dim=args.autoencoder_hidden_dim,
+                        autoencoder_latent_dim=args.autoencoder_latent_dim,
+                        autoencoder_num_layers=args.autoencoder_num_layers,
+                        autoencoder_kernel_size=args.autoencoder_kernel_size,
+                        device=device,
+                        head_type=head
+                    )
+
+                    pipeline = ProteinClassificationTrainingPipeline(
+                        model=model,
+                        device=device,
+                        learning_rate=args.learning_rate,
+                        encoder_learning_rate=args.encoder_learning_rate,
+                        esm_learning_rate=args.esm_learning_rate,
+                        unfreeze_layers=args.unfreeze_layers,
+                        unfreeze_esm=args.unfreeze_esm,
+                        unfreeze_all_esm=args.unfreeze_all_esm,
+                        checkpoint_dir=run_dir / args.checkpoint_dir
+                    )
+                    
+                    # Execute training
+                    start_time = time.time()
+                    pipeline.fit(train_loader=train_loader, val_loader=val_loader, epochs=args.epochs, early_stopping_patience=args.early_stopping_patience)
+                    
+                    elapsed_time = time.time() - start_time
+                    hours, rem = divmod(elapsed_time, 3600)
+                    minutes, seconds = divmod(rem, 60)
+                    config["total_runtime_seconds"] = elapsed_time
+                    config["total_runtime_formatted"] = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
+                    save_json(config, run_dir / "config.json")
+        
+
+    
 
 
 if __name__ == "__main__":
