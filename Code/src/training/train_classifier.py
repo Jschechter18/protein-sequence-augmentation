@@ -9,6 +9,7 @@ import torch
 from Code.src.utils.dataloader import create_dataloader
 from Code.src.models.classifier import ProteinSequenceClassifier
 from Code.src.testing.classification_pipeline import ProteinClassificationTrainingPipeline, save_json
+from Code.src.utils.utils import set_random_seed
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -105,7 +106,7 @@ def create_run_dir(results_dir: str, dataset: str, args) -> Path:
 
 def main():
     args = parse_args()
-    torch.manual_seed(args.seed)
+    set_random_seed(args.seed)
 
     run_dir = create_run_dir(args.results_dir, args.dataset, args)
     device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")

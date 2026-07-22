@@ -360,8 +360,10 @@ class CombinedAutoencoderESM2Encoder(nn.Module):
 
     def __init__(
         self,
-        autoencoder_encoder: nn.Module,
-        esm_encoder: nn.Module,
+        # autoencoder_encoder: nn.Module,
+        # esm_encoder: nn.Module,
+        autoencoder_encoder: TrainedAutoencoderEncoder,
+        esm_encoder: ESM2Embedding,
     ):
         super().__init__()
         self.autoencoder_encoder = autoencoder_encoder
@@ -487,16 +489,16 @@ class ProteinSequenceClassifier(nn.Module):
         else:
             raise ValueError(f"Unsupported encoder type: {embedding_type}")
 
-        self.encoder_output_dim = self.embedded_representation.output_dim
+        self.output_dim = self.embedded_representation.output_dim
 
         if head_type == "linear":
             self.head = LinearHead(
-                embedding_dim=self.encoder_output_dim,
+                embedding_dim=self.output_dim,
                 num_classes=num_classes,
             ).to(self.device)
         elif head_type == "mlp":
             self.head = MLPHead(
-                embedding_dim=self.encoder_output_dim,
+                embedding_dim=self.output_dim,
                 hidden_dim=128,
                 num_classes=num_classes,
             ).to(self.device)

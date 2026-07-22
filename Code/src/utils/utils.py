@@ -1,3 +1,5 @@
+import random
+import numpy as np
 import torch
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from pathlib import Path
@@ -67,3 +69,10 @@ def make_token_weights(device):
         weights[VOCAB[aa]] = weight
 
     return weights.to(device)
+
+def set_random_seed(seed: int = 42) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
