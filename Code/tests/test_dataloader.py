@@ -44,6 +44,7 @@ def test_create_dataloader_batches_examples(tmp_path: Path) -> None:
     assert batch["input_ids"].shape == (2, 6)
     assert batch["label"].tolist() == [1, 0]
     assert batch["sequence"] == ["ACD", "ACDEFG"]
+    assert batch["sample_id"] == [0, 1]
 
 
 def test_char_batches_pad_to_longest_sequence_in_batch(tmp_path: Path) -> None:
@@ -128,7 +129,7 @@ def test_dataloader_handles_esm2_raw_classification_case(tmp_path: Path) -> None
     )
     batch = next(iter(loader))
 
-    assert set(batch) == {"sequence", "label", "length"}
+    assert set(batch) == {"sequence", "label", "length", "sample_id"}
     assert sorted(batch["sequence"]) == ["ACD", "ACDEFG"]
     assert sorted(batch["label"].tolist()) == [0, 1]
     assert sorted(batch["length"].tolist()) == [3, 6]
@@ -149,7 +150,7 @@ def test_dataloader_handles_1d_cnn_classification_case(tmp_path: Path) -> None:
     )
     batch = next(iter(loader))
 
-    assert set(batch) == {"input_ids", "label", "length", "sequence"}
+    assert set(batch) == {"input_ids", "label", "length", "sequence", "sample_id"}
     assert batch["input_ids"].shape == (2, 6)
     assert batch["input_ids"].dtype == torch.long
     assert batch["input_ids"].tolist() == [
@@ -159,6 +160,7 @@ def test_dataloader_handles_1d_cnn_classification_case(tmp_path: Path) -> None:
     assert batch["label"].tolist() == [1, 0]
     assert batch["length"].tolist() == [3, 6]
     assert batch["sequence"] == ["ACD", "ACDEFG"]
+    assert batch["sample_id"] == [0, 1]
 
 
 def test_dataloader_handles_autoencoder_case(tmp_path: Path) -> None:
@@ -195,6 +197,87 @@ def _collect_lengths(loader) -> list[int]:
     for batch in loader:
         lengths.extend(batch["length"].tolist())
     return lengths
+
+
+def _collect_sample_ids(loader) -> list[int]:
+    sample_ids = []
+    for batch in loader:
+        sample_ids.extend(batch["sample_id"])
+    return sample_ids
+
+
+def test_generator_makes_shuffle_order_reproducible(tmp_path: Path) -> None:
+    write_csv(
+        tmp_path,
+        {
+            "idx": [10, 20, 30, 40],
+            "sequence": ["A", "AC", "ACD", "ACDE"],
+            "label": [0, 1, 0, 1],
+        },
+    )
+    first_generator = torch.Generator().manual_seed(123)
+    second_generator = torch.Generator().manual_seed(123)
+
+    first = create_dataloader(
+        task="toy",
+        split="train",
+        data_dir=tmp_path,
+        batch_size=2,
+        shuffle=True,
+        use_cache=False,
+        generator=first_generator,
+    )
+    second = create_dataloader(
+        task="toy",
+        split="train",
+        data_dir=tmp_path,
+        batch_size=2,
+        shuffle=True,
+        use_cache=False,
+        generator=second_generator,
+    )
+
+    assert _collect_sample_ids(first) == _collect_sample_ids(second)
+
+
+def test_persistent_workers_is_disabled_without_workers(tmp_path: Path) -> None:
+    write_split_csv(tmp_path)
+
+    loader = create_dataloader(
+        task="toy",
+        split="train",
+        data_dir=tmp_path,
+        use_cache=False,
+        num_workers=0,
+        persistent_workers=True,
+    )
+
+    assert loader.persistent_workers is False
+
+
+def test_filtered_loader_preserves_worker_and_generator_settings(tmp_path: Path) -> None:
+    write_split_csv(tmp_path)
+    generator = torch.Generator().manual_seed(123)
+
+    def initialize_worker(worker_id: int) -> None:
+        del worker_id
+
+    loader = create_dataloader(
+        task="toy",
+        split="train",
+        data_dir=tmp_path,
+        use_cache=False,
+        num_workers=1,
+        generator=generator,
+        worker_init_fn=initialize_worker,
+        persistent_workers=True,
+        loader_type="max_length",
+        max_length=3,
+    )
+
+    assert loader.generator is generator
+    assert loader.worker_init_fn is initialize_worker
+    assert loader.persistent_workers is True
 
 
 def test_create_dataloader_can_filter_by_max_length(tmp_path: Path) -> None:

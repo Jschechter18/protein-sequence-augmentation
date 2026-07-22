@@ -1,11 +1,17 @@
 import random
+from pathlib import Path
+
 import numpy as np
 import torch
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from pathlib import Path
-from models.autoencoder import ProteinSequenceAutoencoder as AE
-from torch.utils.data import Dataset, DataLoader, Subset
-from utils.dataloader import VOCAB, VOCAB_SIZE
+from torch.utils.data import DataLoader, Dataset, Subset
+
+if __package__ and __package__.startswith("Code.src."):
+    from ..models.autoencoder import ProteinSequenceAutoencoder as AE
+    from .dataloader import VOCAB, VOCAB_SIZE
+else:  # Support imports with Code/src placed directly on PYTHONPATH.
+    from models.autoencoder import ProteinSequenceAutoencoder as AE
+    from utils.dataloader import VOCAB, VOCAB_SIZE
 
 
 def load_training_checkpoint(
