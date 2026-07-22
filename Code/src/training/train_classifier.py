@@ -85,6 +85,7 @@ class ClassifierRunConfig:
     dataset: str
     data_dir: str
     results_dir: str
+    checkpoint_root: str
     version: str
     representation: str
     head_type: str
@@ -134,12 +135,29 @@ class ClassifierRunConfig:
             / f"seed_{self.seed}"
         )
 
+    @property
+    def checkpoint_dir(self) -> Path:
+        return (
+            Path(self.checkpoint_root).expanduser()
+            / self.dataset
+            / self.version_dir
+            / self.representation
+            / self.head_type
+            / f"seed_{self.seed}"
+        )
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train protein sequence classifiers")
     parser.add_argument("--dataset", default="solubility", choices=["solubility", "localization"])
     parser.add_argument("--data_dir", default="data/processed/peer")
     parser.add_argument("--results_dir", default="Code/results/classifier")
+    parser.add_argument(
+        "--checkpoint_dir",
+        dest="checkpoint_root",
+        default="~/checkpoints/classifier",
+        help="Root for classifier checkpoints; task/version/run components are appended.",
+    )
     parser.add_argument("--version", default="1")
     parser.add_argument(
         "--embedding_type",
@@ -303,6 +321,7 @@ def build_run_configs(args: argparse.Namespace, device: str | None = None) -> li
                         dataset=args.dataset,
                         data_dir=args.data_dir,
                         results_dir=args.results_dir,
+                        checkpoint_root=args.checkpoint_root,
                         version=str(args.version),
                         representation=representation,
                         head_type=head_type,
@@ -630,6 +649,7 @@ def _config_payload(config: ClassifierRunConfig) -> dict[str, Any]:
     payload.update(
         {
             "run_dir": str(config.run_dir),
+            "checkpoint_dir": str(config.checkpoint_dir),
             "autoencoder_checkpoint_sha256": _file_sha256(config.autoencoder_checkpoint),
             "data_sources": _data_source_metadata(config),
             "source_file_sha256": {
@@ -697,8 +717,17 @@ def _read_json(path: Path) -> dict[str, Any]:
     return result
 
 
-def _is_complete(run_dir: Path, evaluate_test: bool) -> bool:
-    required = [run_dir / "config.json", run_dir / "history.csv", run_dir / "best_model.pt"]
+def _is_complete(
+    run_dir: Path,
+    evaluate_test: bool,
+    checkpoint_dir: Path | None = None,
+) -> bool:
+    checkpoint_dir = checkpoint_dir or run_dir
+    required = [
+        run_dir / "config.json",
+        run_dir / "history.csv",
+        checkpoint_dir / "best_model.pt",
+    ]
     if evaluate_test:
         required.extend([run_dir / "metrics.json", run_dir / "test_predictions.csv"])
     status_path = _status_path(run_dir)
@@ -743,6 +772,7 @@ def _row_from_metrics(
         "seed": config.seed,
         "status": status,
         "run_dir": str(config.run_dir),
+        "checkpoint_dir": str(config.checkpoint_dir),
         "error": error,
     }
     if metrics:
@@ -758,8 +788,13 @@ def run_one(
     skip_completed: bool,
 ) -> dict[str, Any]:
     run_dir = config.run_dir
+    checkpoint_dir = config.checkpoint_dir
     payload = _config_payload(config)
-    if _is_complete(run_dir, config.evaluate_test) and skip_completed and not overwrite:
+    if (
+        _is_complete(run_dir, config.evaluate_test, checkpoint_dir)
+        and skip_completed
+        and not overwrite
+    ):
         existing_config = _read_json(run_dir / "config.json")
         try:
             _validate_existing_config(existing_config, payload, for_resume=False)
@@ -771,15 +806,23 @@ def run_one(
             metrics = _read_json(run_dir / "metrics.json") if config.evaluate_test else None
             return _row_from_metrics(config, metrics, "complete")
 
-    if run_dir.exists() and overwrite:
-        _archive_run_dir(run_dir)
-    elif run_dir.exists() and not resume:
+    existing_locations = [path for path in (run_dir, checkpoint_dir) if path.exists()]
+    if existing_locations and overwrite:
+        for path in existing_locations:
+            _archive_run_dir(path)
+    elif existing_locations and not resume:
         raise FileExistsError(
-            f"Run directory already exists but is not a validated completed run: {run_dir}. "
+            "Run artifacts already exist but do not form a validated completed run: "
+            f"{', '.join(str(path) for path in existing_locations)}. "
             "Use --resume or --overwrite."
         )
 
-    if run_dir.exists() and resume:
+    if existing_locations and resume:
+        if not run_dir.is_dir():
+            raise ValueError(
+                f"Cannot validate resume compatibility because {run_dir} is missing. "
+                "Use --overwrite to archive the orphaned checkpoint directory."
+            )
         existing_config_path = run_dir / "config.json"
         if existing_config_path.is_file():
             _validate_existing_config(
@@ -790,9 +833,9 @@ def run_one(
                 f"Cannot validate resume compatibility because {existing_config_path} "
                 "is missing. Use --overwrite to archive the incomplete directory."
             )
-        last_checkpoint = run_dir / "last_model.pt"
+        last_checkpoint = checkpoint_dir / "last_model.pt"
         prior_training_artifacts = (
-            run_dir / "best_model.pt",
+            checkpoint_dir / "best_model.pt",
             run_dir / "history.csv",
             run_dir / "history.json",
         )
@@ -827,6 +870,7 @@ def run_one(
             num_classes=config.num_classes,
             device=config.device,
             run_dir=run_dir,
+            checkpoint_dir=checkpoint_dir,
             dataset=config.dataset,
             learning_rate=config.learning_rate,
             weight_decay=config.weight_decay,
@@ -837,9 +881,10 @@ def run_one(
             unfreeze_all_esm=config.unfreeze_all_esm,
             max_grad_norm=config.max_grad_norm,
             run_config=payload,
+            show_progress=True,
         )
 
-        resume_path = run_dir / "last_model.pt" if resume else None
+        resume_path = checkpoint_dir / "last_model.pt" if resume else None
         pipeline.fit(
             train_loader=train_loader,
             val_loader=val_loader,
@@ -932,6 +977,7 @@ def save_summaries(configs: list[ClassifierRunConfig], rows: list[dict[str, Any]
         "seed",
         "status",
         "run_dir",
+        "checkpoint_dir",
         "error",
     }
     metric_columns = [

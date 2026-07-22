@@ -389,7 +389,11 @@ class ProteinClassificationTrainingPipeline:
         probability_parts: list[np.ndarray] = []
 
         iterator: Iterable[Mapping[str, Any]] = tqdm(
-            loader, desc=description, disable=not self.show_progress
+            loader,
+            desc=description,
+            disable=not self.show_progress,
+            dynamic_ncols=True,
+            leave=False,
         )
         context = torch.enable_grad() if training else torch.inference_mode()
         with context:
@@ -419,6 +423,8 @@ class ProteinClassificationTrainingPipeline:
                 predictions = probabilities.argmax(dim=1)
                 total_loss += float(loss.detach().item()) * batch_size
                 total_samples += batch_size
+                if self.show_progress:
+                    iterator.set_postfix(loss=f"{total_loss / total_samples:.4f}")
                 labels_parts.append(labels.detach().cpu().numpy())
                 predictions_parts.append(predictions.cpu().numpy())
                 probability_parts.append(probabilities.cpu().numpy())
@@ -795,7 +801,11 @@ class ProteinClassificationTrainingPipeline:
         saw_sample_id = False
 
         iterator: Iterable[Mapping[str, Any]] = tqdm(
-            test_loader, desc="Test evaluation", disable=not self.show_progress
+            test_loader,
+            desc="Test evaluation",
+            disable=not self.show_progress,
+            dynamic_ncols=True,
+            leave=False,
         )
         with torch.inference_mode():
             for raw_batch in iterator:
@@ -814,6 +824,8 @@ class ProteinClassificationTrainingPipeline:
 
                 total_loss += float(loss.item()) * batch_size
                 total_samples += batch_size
+                if self.show_progress:
+                    iterator.set_postfix(loss=f"{total_loss / total_samples:.4f}")
                 labels_parts.append(labels.cpu().numpy())
                 predictions_parts.append(predictions.cpu().numpy())
                 probability_parts.append(probabilities.cpu().numpy())

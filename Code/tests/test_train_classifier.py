@@ -97,6 +97,8 @@ def test_run_directory_uses_stable_experiment_layout(tmp_path: Path) -> None:
         [
             "--results_dir",
             str(tmp_path),
+            "--checkpoint_dir",
+            str(tmp_path / "checkpoints"),
             "--dataset",
             "localization",
             "--version",
@@ -119,6 +121,15 @@ def test_run_directory_uses_stable_experiment_layout(tmp_path: Path) -> None:
         / "mlp"
         / "seed_44"
     )
+    assert config.checkpoint_dir == (
+        tmp_path
+        / "checkpoints"
+        / "localization"
+        / "v7"
+        / "trained_autoencoder+esm2"
+        / "mlp"
+        / "seed_44"
+    )
 
 
 def test_complete_run_requires_status_and_every_expected_artifact(tmp_path: Path) -> None:
@@ -126,31 +137,33 @@ def test_complete_run_requires_status_and_every_expected_artifact(tmp_path: Path
         train.parse_args(["--results_dir", str(tmp_path)]), device="cpu"
     )[0]
     run_dir = config.run_dir
+    checkpoint_dir = tmp_path / "checkpoints"
     run_dir.mkdir(parents=True)
+    checkpoint_dir.mkdir(parents=True)
 
-    assert not train._is_complete(run_dir, evaluate_test=True)
+    assert not train._is_complete(run_dir, evaluate_test=True, checkpoint_dir=checkpoint_dir)
 
     for filename in (
         "config.json",
         "history.csv",
-        "best_model.pt",
         "metrics.json",
         "test_predictions.csv",
     ):
         (run_dir / filename).write_text("{}", encoding="utf-8")
+    (checkpoint_dir / "best_model.pt").write_text("{}", encoding="utf-8")
     (run_dir / "status.json").write_text(
         json.dumps({"status": "running"}), encoding="utf-8"
     )
-    assert not train._is_complete(run_dir, evaluate_test=True)
+    assert not train._is_complete(run_dir, evaluate_test=True, checkpoint_dir=checkpoint_dir)
 
     (run_dir / "status.json").write_text(
         json.dumps({"status": "complete"}), encoding="utf-8"
     )
-    assert train._is_complete(run_dir, evaluate_test=True)
+    assert train._is_complete(run_dir, evaluate_test=True, checkpoint_dir=checkpoint_dir)
 
     (run_dir / "test_predictions.csv").unlink()
-    assert not train._is_complete(run_dir, evaluate_test=True)
-    assert train._is_complete(run_dir, evaluate_test=False)
+    assert not train._is_complete(run_dir, evaluate_test=True, checkpoint_dir=checkpoint_dir)
+    assert train._is_complete(run_dir, evaluate_test=False, checkpoint_dir=checkpoint_dir)
 
 
 def test_overwrite_archives_existing_run_instead_of_deleting_it(tmp_path: Path) -> None:
@@ -288,6 +301,8 @@ def test_preflight_rejects_exact_sequence_leakage(tmp_path: Path) -> None:
                 str(data_dir),
                 "--results_dir",
                 str(tmp_path / "results"),
+                "--checkpoint_dir",
+                str(tmp_path / "checkpoints"),
                 "--representation",
                 "random_autoencoder",
             ]
@@ -311,6 +326,8 @@ def test_resume_refuses_training_artifacts_without_last_checkpoint(
                 str(data_dir),
                 "--results_dir",
                 str(tmp_path / "results"),
+                "--checkpoint_dir",
+                str(tmp_path / "checkpoints"),
                 "--representation",
                 "random_autoencoder",
             ]
@@ -318,10 +335,11 @@ def test_resume_refuses_training_artifacts_without_last_checkpoint(
         device="cpu",
     )[0]
     config.run_dir.mkdir(parents=True)
+    config.checkpoint_dir.mkdir(parents=True)
     (config.run_dir / "config.json").write_text(
         json.dumps(train._config_payload(config)), encoding="utf-8"
     )
-    (config.run_dir / "best_model.pt").touch()
+    (config.checkpoint_dir / "best_model.pt").touch()
 
     with pytest.raises(FileNotFoundError, match="last_model.pt is missing"):
         train.run_one(
@@ -374,6 +392,8 @@ def test_tiny_random_autoencoder_entrypoint_creates_complete_run(
             str(data_dir),
             "--results_dir",
             str(results_dir),
+            "--checkpoint_dir",
+            str(tmp_path / "checkpoints"),
             "--representation",
             "random_autoencoder",
             "--head_type",
@@ -415,9 +435,21 @@ def test_tiny_random_autoencoder_entrypoint_creates_complete_run(
         "config.json",
         "metrics.json",
         "history.csv",
-        "best_model.pt",
-        "last_model.pt",
         "test_predictions.csv",
         "run.log",
     }.issubset(path.name for path in run_dir.iterdir())
+    assert not (run_dir / "best_model.pt").exists()
+    assert not (run_dir / "last_model.pt").exists()
+    checkpoint_dir = (
+        tmp_path
+        / "checkpoints"
+        / "solubility"
+        / "v1"
+        / "random_autoencoder"
+        / "linear"
+        / "seed_42"
+    )
+    assert {"best_model.pt", "last_model.pt"}.issubset(
+        path.name for path in checkpoint_dir.iterdir()
+    )
     assert len(pd.read_csv(run_dir / "test_predictions.csv")) == 4
