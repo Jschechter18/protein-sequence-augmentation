@@ -197,10 +197,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--autoencoder_kernel_size", type=int, default=5)
 
     parser.add_argument("--batch_size", type=int, default=16)
-    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--early_stopping_patience", type=int, default=5)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--num_workers", type=int, default=0)
+    parser.add_argument("--num_workers", type=int, default=2)
     parser.add_argument(
         "--pin_memory",
         action=argparse.BooleanOptionalAction,
