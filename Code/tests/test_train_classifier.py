@@ -379,7 +379,9 @@ def test_summary_updates_merge_distinct_subset_runs(tmp_path: Path) -> None:
 
 
 def test_tiny_random_autoencoder_entrypoint_creates_complete_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     data_dir = tmp_path / "data"
     results_dir = tmp_path / "results"
@@ -421,6 +423,8 @@ def test_tiny_random_autoencoder_entrypoint_creates_complete_run(
             "--no-use_cache",
         ]
     )
+
+    assert "Device: cpu" in capsys.readouterr().out
 
     run_dir = (
         results_dir

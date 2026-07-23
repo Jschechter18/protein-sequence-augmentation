@@ -845,16 +845,19 @@ class ProteinClassificationTrainingPipeline:
                         str(sequence)
                         for sequence in _as_list(raw_batch["sequence"], batch_size)
                     ]
-                else:
-                    batch_sequences = ["<encoded_sequence>"] * batch_size
-                sequences.extend(batch_sequences)
-                if "length" in raw_batch:
+                    sequences.extend(batch_sequences)
                     sequence_lengths.extend(
-                        int(length)
-                        for length in _as_list(raw_batch["length"], batch_size)
+                        len(sequence) for sequence in batch_sequences
                     )
                 else:
-                    sequence_lengths.extend(len(sequence) for sequence in batch_sequences)
+                    sequences.extend(["<encoded_sequence>"] * batch_size)
+                    if "length" in raw_batch:
+                        sequence_lengths.extend(
+                            int(length)
+                            for length in _as_list(raw_batch["length"], batch_size)
+                        )
+                    else:
+                        sequence_lengths.extend([0] * batch_size)
 
                 id_key = next(
                     (key for key in ("sample_id", "idx", "id") if key in raw_batch),
@@ -876,6 +879,12 @@ class ProteinClassificationTrainingPipeline:
             predictions_array,
             probabilities_array,
             loss=total_loss / total_samples,
+        )
+        logger.info(
+            "Test Loss: %.4f | Test Acc: %.4f | Test F1 (Macro): %.4f",
+            metrics["loss"],
+            metrics["accuracy"],
+            metrics["macro_f1"],
         )
 
         prediction_data: dict[str, Any] = {

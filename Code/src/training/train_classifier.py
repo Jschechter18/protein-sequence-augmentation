@@ -998,6 +998,7 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     args = parse_args(argv)
     configs = build_run_configs(args)
+    print(f"Device: {configs[0].device}", flush=True)
     validate_preflight(configs)
 
     if args.run_sweep:
@@ -1037,3 +1038,12 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# TODO:
+# each sweep config needs to have hyperparameters sweeped before a fair training run is complete
+# likely good place to start:
+# 8 representation/head conditions
+# × 9 learning-rate/weight-decay candidates
+# × 1 tuning seed
+# = 72 tuning runs
