@@ -556,10 +556,6 @@ class ProteinSequenceClassifier(nn.Module):
     def _add_autoencoder_special_tokens(
         self, input_ids: torch.Tensor, lengths: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        if not isinstance(input_ids, torch.Tensor) or not isinstance(
-            lengths, torch.Tensor
-        ):
-            raise TypeError("input_ids and lengths must be torch tensors.")
         if input_ids.ndim != 2:
             raise ValueError(
                 "input_ids must have shape [batch_size, padded_sequence_length]."
