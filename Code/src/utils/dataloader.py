@@ -4,6 +4,7 @@ Supports multiple tasks (e.g., localization, solubility), encoding modes (char, 
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 import torch
 from torch.utils.data import DataLoader, Subset
@@ -149,17 +150,56 @@ def length_bin_indices(dataset, boundaries, bin_index: int, cumulative=False):
     return indices
 
 
-def make_length_bin_loader(base_loader, boundaries, bin_index: int, shuffle, cumulative=False):
-    indices = length_bin_indices(base_loader.dataset, boundaries, bin_index, cumulative)
-    subset = Subset(base_loader.dataset, indices)
+def _derived_loader(
+    base_loader: DataLoader,
+    subset: Subset,
+    shuffle: bool,
+    generator: torch.Generator | None = None,
+    worker_init_fn: Callable[[int], None] | None = None,
+    persistent_workers: bool | None = None,
+) -> DataLoader:
+    """Build a filtered loader while preserving reproducibility settings."""
+    num_workers = base_loader.num_workers
+    if generator is None:
+        generator = base_loader.generator
+    if worker_init_fn is None:
+        worker_init_fn = base_loader.worker_init_fn
+    if persistent_workers is None:
+        persistent_workers = base_loader.persistent_workers
 
     return DataLoader(
         subset,
         batch_size=base_loader.batch_size,
         shuffle=shuffle,
-        num_workers=base_loader.num_workers,
+        num_workers=num_workers,
         pin_memory=base_loader.pin_memory,
         collate_fn=base_loader.collate_fn,
+        generator=generator,
+        worker_init_fn=worker_init_fn,
+        persistent_workers=persistent_workers if num_workers > 0 else False,
+    )
+
+
+def make_length_bin_loader(
+    base_loader,
+    boundaries,
+    bin_index: int,
+    shuffle,
+    cumulative=False,
+    generator: torch.Generator | None = None,
+    worker_init_fn: Callable[[int], None] | None = None,
+    persistent_workers: bool | None = None,
+):
+    indices = length_bin_indices(base_loader.dataset, boundaries, bin_index, cumulative)
+    subset = Subset(base_loader.dataset, indices)
+
+    return _derived_loader(
+        base_loader,
+        subset,
+        shuffle,
+        generator=generator,
+        worker_init_fn=worker_init_fn,
+        persistent_workers=persistent_workers,
     )
 
 
@@ -184,30 +224,46 @@ def quartile_indices(dataset, boundaries, quartile_name, cumulative=False):
     return indices
 
 
-def make_quartile_loader(base_loader, boundaries, quartile_name, shuffle, cumulative=False):
+def make_quartile_loader(
+    base_loader,
+    boundaries,
+    quartile_name,
+    shuffle,
+    cumulative=False,
+    generator: torch.Generator | None = None,
+    worker_init_fn: Callable[[int], None] | None = None,
+    persistent_workers: bool | None = None,
+):
     indices = quartile_indices(base_loader.dataset, boundaries, quartile_name, cumulative)
     subset = Subset(base_loader.dataset, indices)
 
-    return DataLoader(
+    return _derived_loader(
+        base_loader,
         subset,
-        batch_size=base_loader.batch_size,
-        shuffle=shuffle,
-        num_workers=base_loader.num_workers,
-        pin_memory=base_loader.pin_memory,
-        collate_fn=base_loader.collate_fn,
+        shuffle,
+        generator=generator,
+        worker_init_fn=worker_init_fn,
+        persistent_workers=persistent_workers,
     )
     
-def make_max_length_loader(base_loader, max_length, shuffle):
+def make_max_length_loader(
+    base_loader,
+    max_length,
+    shuffle,
+    generator: torch.Generator | None = None,
+    worker_init_fn: Callable[[int], None] | None = None,
+    persistent_workers: bool | None = None,
+):
     indices = [i for i in range(len(base_loader.dataset)) if get_length(base_loader.dataset, i) <= max_length]
     subset = Subset(base_loader.dataset, indices)
 
-    return DataLoader(
+    return _derived_loader(
+        base_loader,
         subset,
-        batch_size=base_loader.batch_size,
-        shuffle=shuffle,
-        num_workers=base_loader.num_workers,
-        pin_memory=base_loader.pin_memory,
-        collate_fn=base_loader.collate_fn,
+        shuffle,
+        generator=generator,
+        worker_init_fn=worker_init_fn,
+        persistent_workers=persistent_workers,
     )
 
 def create_dataloader(
@@ -231,6 +287,9 @@ def create_dataloader(
     length_bin: int | None = None,
     cumulative: bool = False,
     length_boundaries: np.ndarray | None = None,
+    generator: torch.Generator | None = None,
+    worker_init_fn: Callable[[int], None] | None = None,
+    persistent_workers: bool = False,
 ) -> DataLoader[SequenceDataset]:
     """Create a DataLoader for a protein sequence dataset.
 
@@ -280,6 +339,13 @@ def create_dataloader(
     length_boundaries:
         Optional precomputed length boundaries to use for length-bin filtering.
         Pass train-set boundaries when filtering validation or test splits.
+    generator:
+        Optional PyTorch generator used by sampling and worker seeding.
+    worker_init_fn:
+        Optional function called with each DataLoader worker ID.
+    persistent_workers:
+        Keep worker processes alive between epochs when ``num_workers > 0``.
+        Ignored when ``num_workers`` is zero.
 
     Returns
     -------
@@ -327,6 +393,9 @@ def create_dataloader(
         shuffle=shuffle,
         num_workers=num_workers,
         pin_memory=pin_memory,
+        generator=generator,
+        worker_init_fn=worker_init_fn,
+        persistent_workers=persistent_workers if num_workers > 0 else False,
         collate_fn=collate_sequence_batch, # The custom collate function keeps raw strings as lists and pads variable-length token tensors.
     )
     

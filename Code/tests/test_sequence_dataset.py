@@ -4,7 +4,15 @@ import pickle
 import pytest
 import torch
 
-from utils.sequence_dataset import BOS_IDX, EOS_IDX, UNK_IDX, SequenceDataset
+from utils.sequence_dataset import (
+    BOS_IDX,
+    CACHE_SCHEMA_VERSION,
+    EOS_IDX,
+    PREPROCESSING_VERSION,
+    UNK_IDX,
+    SequenceDataset,
+    _cached_file_sha256,
+)
 from .test_utils.test_helpers import write_csv
 
 
@@ -25,6 +33,7 @@ def test_getitem_returns_classification_char_tensors(tmp_path: Path) -> None:
     assert item["length"].item() == 4
     assert item["label"].item() == 1
     assert item["label"].dtype == torch.long
+    assert item["sample_id"] == 0
 
 
 def test_encode_sequence_preserves_full_sequence_and_tracks_length(tmp_path: Path) -> None:
@@ -78,7 +87,10 @@ def test_autoencoder_encoding_adds_special_tokens_and_clones_target(
 
 
 def test_raw_encoding_returns_full_sequence_without_token_ids(tmp_path: Path) -> None:
-    write_csv(tmp_path, {"sequence": ["ACDEFG"], "label": [1]})
+    write_csv(
+        tmp_path,
+        {"idx": ["protein-17"], "sequence": ["ACDEFG"], "label": [1]},
+    )
 
     dataset = SequenceDataset(
         task="toy",
@@ -93,6 +105,7 @@ def test_raw_encoding_returns_full_sequence_without_token_ids(tmp_path: Path) ->
     assert item["label"].item() == 1
     assert item["label"].dtype == torch.long
     assert item["length"].item() == 6
+    assert item["sample_id"] == "protein-17"
     assert "input_ids" not in item
 
 
@@ -118,7 +131,10 @@ def test_cache_key_changes_with_mode(tmp_path: Path) -> None:
     assert "toy_train_classification_char_sequence_label_False" in base._cache_key()
 
 
-def test_cache_file_is_created_and_loaded(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+def test_cache_file_is_rebuilt_when_source_csv_changes(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
     write_csv(tmp_path, {"sequence": ["ACD"], "label": [1]})
     cache_dir = tmp_path / "cache"
 
@@ -135,7 +151,11 @@ def test_cache_file_is_created_and_loaded(tmp_path: Path, capsys: pytest.Capture
     with cache_path.open("rb") as handle:
         payload = pickle.load(handle)
     assert payload["metadata"]["num_examples"] == 1
+    assert payload["metadata"]["cache_schema_version"] == CACHE_SCHEMA_VERSION
+    assert payload["metadata"]["preprocessing_version"] == PREPROCESSING_VERSION
+    assert len(payload["metadata"]["source_csv"]["sha256"]) == 64
     assert payload["examples"] == first.examples
+    capsys.readouterr()
 
     write_csv(tmp_path, {"sequence": ["YYYY"], "label": [0]})
     second = SequenceDataset(
@@ -146,8 +166,31 @@ def test_cache_file_is_created_and_loaded(tmp_path: Path, capsys: pytest.Capture
         use_cache=True,
     )
 
-    assert second.examples == first.examples
-    assert "[cache] Loaded 1 examples" in capsys.readouterr().out
+    assert second.examples != first.examples
+    assert second[0]["sequence"] == "YYYY"
+    assert second._cache_key() != first._cache_key()
+    assert "[cache] Building examples" in capsys.readouterr().out
+
+
+def test_source_hash_is_reused_for_unchanged_csv(tmp_path: Path) -> None:
+    write_csv(tmp_path, {"sequence": ["ACD"], "label": [1]})
+    _cached_file_sha256.cache_clear()
+
+    first = SequenceDataset(
+        task="toy",
+        split="train",
+        data_dir=tmp_path,
+        use_cache=False,
+    )
+    second = SequenceDataset(
+        task="toy",
+        split="train",
+        data_dir=tmp_path,
+        use_cache=False,
+    )
+
+    assert first._cache_key() == second._cache_key()
+    assert _cached_file_sha256.cache_info().hits == 1
 
 
 def test_combined_csv_is_filtered_by_split(tmp_path: Path) -> None:
@@ -170,6 +213,27 @@ def test_combined_csv_is_filtered_by_split(tmp_path: Path) -> None:
 
     assert len(dataset) == 1
     assert dataset[0]["sequence"] == "CCC"
+    assert dataset[0]["sample_id"] == 1
+
+
+def test_explicit_idx_is_preserved_for_classification_examples(tmp_path: Path) -> None:
+    write_csv(
+        tmp_path,
+        {
+            "idx": [101, 205],
+            "sequence": ["AAA", "CCC"],
+            "label": [1, 0],
+        },
+    )
+
+    dataset = SequenceDataset(
+        task="toy",
+        split="train",
+        data_dir=tmp_path,
+        use_cache=False,
+    )
+
+    assert [dataset[index]["sample_id"] for index in range(2)] == [101, 205]
 
 
 def test_missing_label_column_raises_value_error(tmp_path: Path) -> None:
@@ -182,6 +246,29 @@ def test_missing_label_column_raises_value_error(tmp_path: Path) -> None:
             data_dir=tmp_path,
             use_cache=False,
         )
+
+
+@pytest.mark.parametrize("sequence", [None, "   "])
+def test_missing_or_empty_sequence_raises_value_error(
+    tmp_path: Path, sequence: str | None
+) -> None:
+    write_csv(tmp_path, {"sequence": [sequence], "label": [1]})
+
+    with pytest.raises(ValueError, match="missing sequences|empty sequences"):
+        SequenceDataset(
+            task="toy", split="train", data_dir=tmp_path, use_cache=False
+        )
+
+
+def test_fractional_label_is_preserved_instead_of_truncated(tmp_path: Path) -> None:
+    write_csv(tmp_path, {"sequence": ["ACD"], "label": [1.5]})
+
+    dataset = SequenceDataset(
+        task="toy", split="train", data_dir=tmp_path, use_cache=False
+    )
+
+    assert dataset[0]["label"].item() == pytest.approx(1.5)
+    assert dataset[0]["label"].dtype == torch.float32
 
 
 @pytest.mark.parametrize(

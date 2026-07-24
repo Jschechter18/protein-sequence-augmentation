@@ -4,17 +4,49 @@ Wraps the torch Dataset class for protein sequencing usecase.
 """
 
 import hashlib
-from pathlib import Path
-import pickle
 import logging
+import math
+import os
+import pickle
+import tempfile
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
 import pandas as pd
 import torch
 from torch.utils.data import Dataset
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path("data/processed/peer")
+
+# Increment these values whenever the serialized payload shape or sequence
+# preprocessing behavior changes. Including both values in cache identity keeps
+# old caches from being treated as compatible after a code change.
+CACHE_SCHEMA_VERSION = 2
+PREPROCESSING_VERSION = 2
+
+
+@lru_cache(maxsize=128)
+def _cached_file_sha256(
+    resolved_path: str,
+    size_bytes: int,
+    mtime_ns: int,
+    ctime_ns: int,
+) -> str:
+    """Hash a source file once for a given filesystem fingerprint.
+
+    The stat values are intentionally part of the function signature: they make
+    the LRU entry stale whenever the file is rewritten while avoiding repeated
+    reads of large, unchanged CSV files across dataset instances.
+    """
+    del size_bytes, mtime_ns, ctime_ns  # Used as cache-key components.
+    digest = hashlib.sha256()
+    with Path(resolved_path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 # ---------------------------------------------------------------------------
 # Vocabulary
@@ -133,6 +165,7 @@ class SequenceDataset(Dataset):
                     "label": label_tensor,
                     "length": length,
                     "sequence": ex["_sequence"],
+                    "sample_id": ex["_sample_id"],
                 }
             else:  # autoencoder — target is identical to input for now
                 return {
@@ -147,6 +180,7 @@ class SequenceDataset(Dataset):
                 "sequence": ex["_sequence"],
                 "label": label_tensor,
                 "length": torch.tensor(ex["_length"], dtype=torch.long),
+                "sample_id": ex["_sample_id"],
             }
 
     # ------------------------------------------------------------------
@@ -158,6 +192,7 @@ class SequenceDataset(Dataset):
 
         The filename encodes all preprocessing-relevant arguments so that different configurations never collide.
         """
+        source = self._source_fingerprint()
         parts = "_".join(
             [
                 self.task,
@@ -167,13 +202,42 @@ class SequenceDataset(Dataset):
                 self.seq_col,
                 self.label_col,
                 str(self.add_special_tokens),
+                f"schema{CACHE_SCHEMA_VERSION}",
+                f"preprocessing{PREPROCESSING_VERSION}",
+                f"source-{source['sha256']}",
             ]
         )
         # Append a short hash to guard against overly long or
         # special-character filenames.
-        digest = hashlib.md5(parts.encode()).hexdigest()[:8]
+        # The compact suffix also distinguishes identical files located in
+        # different source roots when callers share a cache directory.
+        digest_material = f"{parts}_{source['path']}"
+        digest = hashlib.sha256(digest_material.encode()).hexdigest()[:12]
         safe = parts.replace("/", "-").replace(" ", "_")
         return f"{safe}_{digest}.pkl"
+
+    def _source_fingerprint(self) -> dict[str, str | int]:
+        """Return stable provenance and content identity for the source CSV."""
+        cached = getattr(self, "_source_fingerprint_value", None)
+        if cached is not None:
+            return cached
+
+        csv_path, _ = self._find_csv()
+        resolved_path = csv_path.resolve()
+        stat = resolved_path.stat()
+        fingerprint: dict[str, str | int] = {
+            "path": str(resolved_path),
+            "size_bytes": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns,
+            "sha256": _cached_file_sha256(
+                str(resolved_path),
+                stat.st_size,
+                stat.st_mtime_ns,
+                stat.st_ctime_ns,
+            ),
+        }
+        self._source_fingerprint_value = fingerprint
+        return fingerprint
 
     def _cache_metadata(self) -> dict:
         """Return the metadata dict stored inside each cache file.
@@ -185,6 +249,8 @@ class SequenceDataset(Dataset):
         """
     
         return {
+            "cache_schema_version": CACHE_SCHEMA_VERSION,
+            "preprocessing_version": PREPROCESSING_VERSION,
             "task": self.task,
             "split": self.split,
             "mode": self.mode,
@@ -193,6 +259,7 @@ class SequenceDataset(Dataset):
             "label_col": self.label_col,
             "add_special_tokens": self.add_special_tokens,
             "vocab": self.vocab,
+            "source_csv": self._source_fingerprint(),
         }
 
     def _cache_is_valid(self, cached_meta: dict[str, Any]) -> bool:
@@ -254,7 +321,9 @@ class SequenceDataset(Dataset):
                 raise ValueError(
                     f"Combined file {csv_path} has no 'split' column to filter by."
                 )
-            df = df[df["split"] == self.split].reset_index(drop=True)
+            # Preserve the original RangeIndex: it is the stable source-row
+            # fallback when the CSV does not provide an explicit ``idx``.
+            df = df[df["split"] == self.split]
 
         # Validate required columns
         missing = {self.seq_col, self.label_col} - set(df.columns)
@@ -263,6 +332,12 @@ class SequenceDataset(Dataset):
                 f"CSV {csv_path} is missing required columns: {missing}. "
                 f"Available: {list(df.columns)}"
             )
+
+        if df[self.seq_col].isna().any():
+            raise ValueError(f"CSV {csv_path} contains missing sequences.")
+        normalized_sequences = df[self.seq_col].astype(str).str.strip()
+        if normalized_sequences.eq("").any():
+            raise ValueError(f"CSV {csv_path} contains empty sequences.")
 
         # Drop rows with missing sequences
         # before = len(df)
@@ -316,15 +391,34 @@ class SequenceDataset(Dataset):
         df = self._load_dataframe()
         examples: list[dict[str, Any]] = []
 
-        for _, row in df.iterrows():
+        for source_row_index, row in df.iterrows():
             raw_seq: str = str(row[self.seq_col]).upper().strip()
+
+            sample_id: Any = source_row_index
+            if "idx" in df.columns and pd.notna(row["idx"]):
+                sample_id = row["idx"]
+            # Convert NumPy scalar IDs to ordinary Python values so cached
+            # examples and collated batches have a portable representation.
+            if hasattr(sample_id, "item"):
+                sample_id = sample_id.item()
 
             # Convert label to int when possible; fall back to float for continuous regression targets.
             raw_label = row[self.label_col]
             try:
-                label: int | float = int(raw_label)
-            except (ValueError, TypeError):
-                label = float(raw_label)
+                numeric_label = float(raw_label)
+            except (ValueError, TypeError) as error:
+                raise ValueError(
+                    f"Invalid numeric label {raw_label!r} at source row "
+                    f"{source_row_index}."
+                ) from error
+            if not math.isfinite(numeric_label):
+                raise ValueError(
+                    f"Invalid numeric label {raw_label!r} at source row "
+                    f"{source_row_index}."
+                )
+            label: int | float = (
+                int(numeric_label) if numeric_label.is_integer() else numeric_label
+            )
 
             if self.encoding == "char":
                 token_ids, length = self._encode_sequence(raw_seq)
@@ -333,6 +427,7 @@ class SequenceDataset(Dataset):
                     "_length": length,
                     "_label": label,
                     "_sequence": raw_seq,
+                    "_sample_id": sample_id,
                 }
             else: # raw — no integer encoding -> this is the case for ESM-based models that take raw strings as input and handle this internally
                 seq = raw_seq
@@ -340,6 +435,7 @@ class SequenceDataset(Dataset):
                     "_sequence": seq,
                     "_length": len(seq),
                     "_label": label,
+                    "_sample_id": sample_id,
                 }
 
             examples.append(example)
@@ -389,12 +485,26 @@ class SequenceDataset(Dataset):
         meta["num_examples"] = len(examples)
         payload = {"metadata": meta, "examples": examples}
 
+        temporary_path: Path | None = None
         try:
-            with open(cache_path, "wb") as fh:
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{cache_path.name}.",
+                suffix=".tmp",
+                dir=self.cache_dir,
+            )
+            os.close(descriptor)
+            temporary_path = Path(temporary_name)
+            with temporary_path.open("wb") as fh:
                 pickle.dump(payload, fh, protocol=pickle.HIGHEST_PROTOCOL)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(temporary_path, cache_path)
             print(f"[cache] Saved cache: {cache_path.name}")
         except Exception as exc:  # noqa: BLE001
             logger.warning("[cache] Could not write cache: %s", exc)
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
 
         return examples
 
