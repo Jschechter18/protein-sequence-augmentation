@@ -7,6 +7,7 @@ from torch import nn
 import Code.src.models.classifier as classifier_module
 from Code.src.models.autoencoder import ProteinSequenceAutoencoder
 from Code.src.models.classifier import (
+    CachedEmbeddingClassifier,
     CombinedAutoencoderESM2Encoder,
     ESM2Embedding,
     LinearHead,
@@ -166,6 +167,22 @@ def test_mlp_head_applies_requested_dropout() -> None:
 def test_mlp_head_rejects_invalid_dropout(dropout: float) -> None:
     with pytest.raises(ValueError, match="dropout"):
         MLPHead(embedding_dim=16, dropout=dropout)
+
+
+def test_cached_embedding_classifier_trains_only_its_head() -> None:
+    classifier = CachedEmbeddingClassifier(
+        embedding_type="esm2",
+        embedding_dim=5,
+        head_type="mlp",
+        dropout=0.3,
+        device="cpu",
+    )
+
+    logits = classifier({"embedding": torch.randn(4, 5)})
+
+    assert logits.shape == (4, 2)
+    assert list(classifier.embedded_representation.parameters()) == []
+    assert all(parameter.requires_grad for parameter in classifier.head.parameters())
 
 
 def test_classifier_rejects_cnn_head_for_sequence_level_encoders():

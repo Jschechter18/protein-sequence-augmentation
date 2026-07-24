@@ -59,6 +59,177 @@ def test_classifier_checkpoints_default_to_project_checkpoint_tree() -> None:
     )
 
 
+def test_embedding_cache_identity_is_seeded_only_for_random_encoder(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    _write_trainable_tiny_splits(data_dir)
+    args = train.parse_args(
+        [
+            "--data_dir",
+            str(data_dir),
+            "--embedding_cache_dir",
+            str(tmp_path / "embeddings"),
+            "--representation",
+            "random_autoencoder",
+        ]
+    )
+    random_42 = train.build_run_configs(args, device="cpu")[0]
+    random_43 = replace(random_42, seed=43)
+    trained_42 = replace(random_42, representation="trained_autoencoder")
+    trained_43 = replace(trained_42, seed=43)
+
+    assert train._embedding_cache_path(random_42, "train")[0] != (
+        train._embedding_cache_path(random_43, "train")[0]
+    )
+    assert train._embedding_cache_path(trained_42, "train")[0] == (
+        train._embedding_cache_path(trained_43, "train")[0]
+    )
+    assert train._embedding_cache_path(random_42, "train")[0] != (
+        train._embedding_cache_path(random_42, "valid")[0]
+    )
+    original_train_path = train._embedding_cache_path(random_42, "train")[0]
+    train_csv = data_dir / "solubility" / "train.csv"
+    train_csv.write_text(
+        train_csv.read_text(encoding="utf-8") + "4,VWYAC,0\n",
+        encoding="utf-8",
+    )
+    assert train._embedding_cache_path(random_42, "train")[0] != original_train_path
+
+
+def test_embedding_cache_round_trip_preserves_examples(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = train.build_run_configs(
+        train.parse_args(
+            [
+                "--embedding_cache_dir",
+                str(tmp_path),
+                "--representation",
+                "random_autoencoder",
+            ]
+        ),
+        device="cpu",
+    )[0]
+    batch = {
+        "input_ids": pd.Series(dtype=object),  # Unused by the fake encoder.
+        "label": train.torch.tensor([0, 1]),
+        "length": train.torch.tensor([3, 4]),
+        "sequence": ["ACD", "EFGH"],
+        "sample_id": [10, 11],
+    }
+
+    class FakeEncoder:
+        def eval(self):
+            return self
+
+        def encode(self, ignored_batch):
+            assert ignored_batch is batch
+            return train.torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+
+    monkeypatch.setattr(
+        train,
+        "_create_sequence_dataloader",
+        lambda *args, **kwargs: [batch],
+    )
+    path = tmp_path / "cache.pt"
+    metadata = {"fingerprint": "test"}
+
+    train._build_embedding_cache(
+        config, "train", FakeEncoder(), path, metadata
+    )
+    payload = train._load_embedding_cache(path, metadata)
+    dataset = train.CachedEmbeddingDataset(payload)
+
+    assert len(dataset) == 2
+    assert dataset[1]["embedding"].tolist() == [3.0, 4.0]
+    assert dataset[1]["label"].item() == 1
+    assert dataset[1]["sequence"] == "EFGH"
+    assert dataset[1]["sample_id"] == 11
+
+
+def test_cached_random_autoencoder_path_builds_embeddings_and_head(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _write_trainable_tiny_splits(data_dir)
+    args = train.parse_args(
+        [
+            "--data_dir",
+            str(data_dir),
+            "--embedding_cache_dir",
+            str(tmp_path / "embeddings"),
+            "--representation",
+            "random_autoencoder",
+            "--autoencoder_embedding_dim",
+            "4",
+            "--autoencoder_cnn_channels",
+            "4",
+            "--autoencoder_hidden_dim",
+            "4",
+            "--autoencoder_latent_dim",
+            "2",
+            "--autoencoder_num_layers",
+            "1",
+            "--autoencoder_kernel_size",
+            "3",
+            "--batch_size",
+            "2",
+            "--num_workers",
+            "0",
+            "--no-evaluate_test",
+            "--no-use_cache",
+        ]
+    )
+    config = train.build_run_configs(args, device="cpu")[0]
+    train.configure_reproducibility(config.seed, config.deterministic)
+    raw_model = train.create_model(config, use_cached_embeddings=False)
+    expected_head_state = {
+        name: value.detach().clone()
+        for name, value in raw_model.head.state_dict().items()
+    }
+    raw_valid_loader = train._create_sequence_dataloader(
+        config, "valid", shuffle=False, offset=1
+    )
+    raw_model.eval()
+    with train.torch.inference_mode():
+        expected_valid_embeddings = train.torch.cat(
+            [raw_model.encode(batch).cpu() for batch in raw_valid_loader]
+        )
+    del raw_model
+    train.configure_reproducibility(config.seed, config.deterministic)
+
+    train_loader, valid_loader, test_loader = train.create_run_dataloaders(config)
+    train.configure_reproducibility(config.seed, config.deterministic)
+    model = train.create_model(config)
+    batch = next(iter(train_loader))
+
+    assert isinstance(model, train.CachedEmbeddingClassifier)
+    assert all(
+        train.torch.equal(model.head.state_dict()[name], expected)
+        for name, expected in expected_head_state.items()
+    )
+    assert model(batch).shape == (2, 2)
+    cached_valid_embeddings = train.torch.cat(
+        [cached_batch["embedding"] for cached_batch in valid_loader]
+    )
+    assert cached_valid_embeddings.shape[1] == 2
+    assert train.torch.equal(cached_valid_embeddings, expected_valid_embeddings)
+    assert test_loader is None
+    assert len(list((tmp_path / "embeddings").rglob("*.pt"))) == 2
+
+    def fail_if_encoder_is_rebuilt(*args, **kwargs):
+        raise AssertionError("A valid embedding cache should be reused.")
+
+    monkeypatch.setattr(train, "create_model", fail_if_encoder_is_rebuilt)
+    reused_train, reused_valid, reused_test = train.create_run_dataloaders(config)
+    assert next(iter(reused_train))["embedding"].shape[1] == 2
+    assert next(iter(reused_valid))["embedding"].shape[1] == 2
+    assert reused_test is None
+
+
 def test_sweep_and_hp_tune_are_mutually_exclusive() -> None:
     assert train.parse_args(["--sweep"]).run_sweep is True
     assert train.parse_args(["--hp_tune"]).hp_tune is True
@@ -138,6 +309,8 @@ def test_tuning_paths_are_versioned_and_unique(tmp_path: Path) -> None:
             str(tmp_path / "results"),
             "--checkpoint_dir",
             str(tmp_path / "checkpoints"),
+            "--embedding_cache_dir",
+            str(tmp_path / "embeddings"),
             "--version",
             "3",
             "--representations",
@@ -572,6 +745,8 @@ def test_tiny_random_autoencoder_entrypoint_creates_complete_run(
             str(results_dir),
             "--checkpoint_dir",
             str(tmp_path / "checkpoints"),
+            "--embedding_cache_dir",
+            str(tmp_path / "embeddings"),
             "--representation",
             "random_autoencoder",
             "--head_type",
@@ -592,6 +767,8 @@ def test_tiny_random_autoencoder_entrypoint_creates_complete_run(
             "3",
             "--batch_size",
             "2",
+            "--num_workers",
+            "0",
             "--epochs",
             "1",
             "--early_stopping_patience",
@@ -633,3 +810,4 @@ def test_tiny_random_autoencoder_entrypoint_creates_complete_run(
         path.name for path in checkpoint_dir.iterdir()
     )
     assert len(pd.read_csv(run_dir / "test_predictions.csv")) == 4
+    assert len(list((tmp_path / "embeddings").rglob("*.pt"))) == 3

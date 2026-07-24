@@ -52,10 +52,12 @@ if str(PROJECT_ROOT) not in sys.path:
 import numpy as np
 import pandas as pd
 import torch
+from torch.utils.data import DataLoader, Dataset
 
 from Code.src.models.autoencoder import ProteinSequenceAutoencoder
 from Code.src.models.classifier import (
     CANONICAL_EMBEDDING_TYPES,
+    CachedEmbeddingClassifier,
     ProteinSequenceClassifier,
     normalize_embedding_type,
 )
@@ -63,7 +65,7 @@ from Code.src.training.classification_pipeline import (
     ProteinClassificationTrainingPipeline,
     save_json,
 )
-from Code.src.utils.dataloader import create_dataloader
+from Code.src.utils.dataloader import collate_sequence_batch, create_dataloader
 from Code.src.utils.utils import set_random_seed
 
 logger = logging.getLogger(__name__)
@@ -141,6 +143,8 @@ class ClassifierRunConfig:
     mode: str
     dropout: float | None
     phase: str
+    cache_embeddings: bool
+    embedding_cache_root: str
 
     @property
     def version_dir(self) -> str:
@@ -262,6 +266,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--persistent_workers", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--use_cache", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--cache_embeddings",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Precompute and reuse frozen encoder outputs (enabled by default).",
+    )
+    parser.add_argument(
+        "--embedding_cache_dir",
+        dest="embedding_cache_root",
+        default=str(PROJECT_ROOT / "data" / "processed" / "embeddings"),
+        help="Root directory for fingerprinted frozen-embedding cache files.",
+    )
     parser.add_argument("--deterministic", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--evaluate_test", action=argparse.BooleanOptionalAction, default=True)
 
@@ -335,6 +351,11 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
     if not args.run_sweep and (args.unfreeze_esm or args.unfreeze_all_esm):
         if normalize_embedding_type(args.embedding_type) != "esm2":
             parser.error("ESM unfreezing options are supported only with --representation esm2")
+    if args.cache_embeddings and (args.unfreeze_esm or args.unfreeze_all_esm):
+        parser.error(
+            "Embedding caching requires frozen encoders; use --no-cache_embeddings "
+            "when fine-tuning ESM-2."
+        )
 
 
 def _unique_normalized(values: Iterable[str]) -> list[str]:
@@ -411,6 +432,8 @@ def _make_run_config(
         mode=mode,
         dropout=dropout,
         phase=phase,
+        cache_embeddings=args.cache_embeddings,
+        embedding_cache_root=args.embedding_cache_root,
     )
 
 
@@ -637,7 +660,290 @@ def configure_reproducibility(seed: int, deterministic: bool) -> None:
             torch.backends.cudnn.allow_tf32 = False
 
 
+EMBEDDING_CACHE_SCHEMA_VERSION = 1
+
+
+class CachedEmbeddingDataset(Dataset):
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.embeddings = payload["embeddings"].float()
+        self.labels = payload["labels"].long()
+        self.lengths = payload["lengths"].long()
+        self.sequences = list(payload["sequences"])
+        self.sample_ids = list(payload["sample_ids"])
+        size = len(self.labels)
+        if (
+            self.embeddings.ndim != 2
+            or len(self.embeddings) != size
+            or len(self.lengths) != size
+            or len(self.sequences) != size
+            or len(self.sample_ids) != size
+        ):
+            raise ValueError("Cached embedding payload contains inconsistent dimensions.")
+
+    def __len__(self) -> int:
+        return len(self.labels)
+
+    def __getitem__(self, index: int) -> dict[str, Any]:
+        return {
+            "embedding": self.embeddings[index],
+            "label": self.labels[index],
+            "length": self.lengths[index],
+            "sequence": self.sequences[index],
+            "sample_id": self.sample_ids[index],
+        }
+
+
+def _create_sequence_dataloader(
+    config: ClassifierRunConfig,
+    split: str,
+    *,
+    shuffle: bool,
+    offset: int,
+) -> DataLoader:
+    generator = torch.Generator()
+    generator.manual_seed(config.seed + offset)
+    return create_dataloader(
+        task=config.dataset,
+        split=split,
+        data_dir=config.data_dir,
+        mode="classification",
+        encoding="char",
+        batch_size=config.batch_size,
+        shuffle=shuffle,
+        num_workers=config.num_workers,
+        pin_memory=config.pin_memory,
+        persistent_workers=config.persistent_workers,
+        generator=generator,
+        worker_init_fn=seed_worker,
+        use_cache=config.use_cache,
+    )
+
+
+def _embedding_cache_metadata(
+    config: ClassifierRunConfig,
+    split: str,
+) -> dict[str, Any]:
+    uses_trained_autoencoder = config.representation in {
+        "trained_autoencoder",
+        "trained_autoencoder+esm2",
+    }
+    try:
+        fair_esm_version = importlib.metadata.version("fair-esm")
+    except importlib.metadata.PackageNotFoundError:
+        fair_esm_version = None
+    return {
+        "schema_version": EMBEDDING_CACHE_SCHEMA_VERSION,
+        "embedding_dtype": "float32",
+        "encoder_evaluation_mode": True,
+        "dataset": config.dataset,
+        "split": split,
+        "representation": config.representation,
+        "encoder_seed": config.seed
+        if config.representation == "random_autoencoder"
+        else None,
+        "source": _data_source_metadata(config)[split],
+        "autoencoder_checkpoint_sha256": (
+            _file_sha256(config.autoencoder_checkpoint)
+            if uses_trained_autoencoder
+            else None
+        ),
+        "autoencoder_architecture": {
+            "embedding_dim": config.autoencoder_embedding_dim,
+            "cnn_channels": config.autoencoder_cnn_channels,
+            "hidden_dim": config.autoencoder_hidden_dim,
+            "latent_dim": config.autoencoder_latent_dim,
+            "num_layers": config.autoencoder_num_layers,
+            "kernel_size": config.autoencoder_kernel_size,
+        }
+        if "autoencoder" in config.representation
+        else None,
+        "esm_model_name": config.esm_model_name
+        if "esm2" in config.representation
+        else None,
+        "esm_max_sequence_length": config.esm_max_sequence_length
+        if "esm2" in config.representation
+        else None,
+        "encoder_source_sha256": {
+            "autoencoder": _file_sha256(PROJECT_ROOT / "Code/src/models/autoencoder.py"),
+            "classifier": _file_sha256(PROJECT_ROOT / "Code/src/models/classifier.py"),
+            "dataloader": _file_sha256(PROJECT_ROOT / "Code/src/utils/dataloader.py"),
+            "sequence_dataset": _file_sha256(
+                PROJECT_ROOT / "Code/src/utils/sequence_dataset.py"
+            ),
+            "cache_pipeline": _file_sha256(
+                PROJECT_ROOT / "Code/src/training/train_classifier.py"
+            ),
+        },
+        "library_versions": {
+            "torch": str(torch.__version__),
+            "fair_esm": fair_esm_version if "esm2" in config.representation else None,
+        },
+    }
+
+
+def _embedding_cache_path(
+    config: ClassifierRunConfig,
+    split: str,
+) -> tuple[Path, dict[str, Any]]:
+    metadata = _embedding_cache_metadata(config, split)
+    material = json.dumps(metadata, sort_keys=True, separators=(",", ":"))
+    fingerprint = hashlib.sha256(material.encode("utf-8")).hexdigest()
+    seed_dir = (
+        f"seed_{config.seed}"
+        if config.representation == "random_autoencoder"
+        else "shared"
+    )
+    path = (
+        Path(config.embedding_cache_root)
+        / config.dataset
+        / config.representation
+        / seed_dir
+        / f"{split}_{fingerprint[:16]}.pt"
+    )
+    metadata["fingerprint"] = fingerprint
+    return path, metadata
+
+
+def _atomic_torch_save(payload: dict[str, Any], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        torch.save(payload, temporary)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _build_embedding_cache(
+    config: ClassifierRunConfig,
+    split: str,
+    model: ProteinSequenceClassifier,
+    path: Path,
+    metadata: dict[str, Any],
+) -> None:
+    split_offset = {"train": 0, "valid": 1, "test": 2}[split]
+    loader = _create_sequence_dataloader(
+        config, split, shuffle=False, offset=split_offset
+    )
+    embeddings: list[torch.Tensor] = []
+    labels: list[torch.Tensor] = []
+    lengths: list[torch.Tensor] = []
+    sequences: list[str] = []
+    sample_ids: list[Any] = []
+    model.eval()
+    with torch.inference_mode():
+        for batch in loader:
+            embeddings.append(model.encode(batch).detach().cpu())
+            labels.append(batch["label"].detach().cpu().long().reshape(-1))
+            lengths.append(batch["length"].detach().cpu().long().reshape(-1))
+            sequences.extend(str(value) for value in batch["sequence"])
+            sample_ids.extend(list(batch["sample_id"]))
+    if not embeddings:
+        raise ValueError(f"Cannot cache an empty {config.dataset} {split} split.")
+    payload = {
+        "metadata": metadata,
+        "embeddings": torch.cat(embeddings),
+        "labels": torch.cat(labels),
+        "lengths": torch.cat(lengths),
+        "sequences": sequences,
+        "sample_ids": sample_ids,
+    }
+    _atomic_torch_save(payload, path)
+    logger.info("Saved frozen embeddings: %s", path)
+
+
+def _load_embedding_cache(
+    path: Path,
+    expected_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        payload = torch.load(path, map_location="cpu", weights_only=True)
+    except TypeError:  # PyTorch versions predating the weights_only argument.
+        payload = torch.load(path, map_location="cpu")
+    if not isinstance(payload, dict) or payload.get("metadata") != expected_metadata:
+        raise ValueError(f"Embedding cache metadata mismatch: {path}")
+    return payload
+
+
+def _ensure_embedding_caches(
+    config: ClassifierRunConfig,
+    splits: list[str],
+) -> dict[str, dict[str, Any]]:
+    cache_specs = {
+        split: _embedding_cache_path(config, split) for split in splits
+    }
+    payloads: dict[str, dict[str, Any]] = {}
+    missing: list[str] = []
+    for split, (path, metadata) in cache_specs.items():
+        if not path.is_file():
+            missing.append(split)
+            continue
+        try:
+            payloads[split] = _load_embedding_cache(path, metadata)
+            logger.info("Using cached frozen embeddings: %s", path)
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            logger.warning("Rebuilding invalid embedding cache %s: %s", path, error)
+            missing.append(split)
+    if missing:
+        encoder_model = create_model(config, use_cached_embeddings=False)
+        for split in missing:
+            path, metadata = cache_specs[split]
+            _build_embedding_cache(config, split, encoder_model, path, metadata)
+            payloads[split] = _load_embedding_cache(path, metadata)
+        del encoder_model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    return payloads
+
+
+def _cached_embedding_dataloader(
+    config: ClassifierRunConfig,
+    payload: dict[str, Any],
+    *,
+    shuffle: bool,
+    offset: int,
+) -> DataLoader:
+    generator = torch.Generator()
+    generator.manual_seed(config.seed + offset)
+    return DataLoader(
+        CachedEmbeddingDataset(payload),
+        batch_size=config.batch_size,
+        shuffle=shuffle,
+        # Cached tensors are already memory-resident. Worker processes add
+        # serialization overhead and can duplicate the entire cache on spawn-based
+        # platforms such as macOS.
+        num_workers=0,
+        pin_memory=config.pin_memory,
+        persistent_workers=False,
+        generator=generator,
+        collate_fn=collate_sequence_batch,
+    )
+
+
 def create_run_dataloaders(config: ClassifierRunConfig):
+    if config.cache_embeddings:
+        splits = ["train", "valid"]
+        if config.evaluate_test:
+            splits.append("test")
+        payloads = _ensure_embedding_caches(config, splits)
+        return (
+            _cached_embedding_dataloader(
+                config, payloads["train"], shuffle=True, offset=0
+            ),
+            _cached_embedding_dataloader(
+                config, payloads["valid"], shuffle=False, offset=1
+            ),
+            _cached_embedding_dataloader(
+                config, payloads["test"], shuffle=False, offset=2
+            )
+            if config.evaluate_test
+            else None,
+        )
+
     loaders = []
     for offset, (split, shuffle) in enumerate(
         (("train", True), ("valid", False), ("test", False))
@@ -645,29 +951,41 @@ def create_run_dataloaders(config: ClassifierRunConfig):
         if split == "test" and not config.evaluate_test:
             loaders.append(None)
             continue
-        generator = torch.Generator()
-        generator.manual_seed(config.seed + offset)
         loaders.append(
-            create_dataloader(
-                task=config.dataset,
-                split=split,
-                data_dir=config.data_dir,
-                mode="classification",
-                encoding="char",
-                batch_size=config.batch_size,
-                shuffle=shuffle,
-                num_workers=config.num_workers,
-                pin_memory=config.pin_memory,
-                persistent_workers=config.persistent_workers,
-                generator=generator,
-                worker_init_fn=seed_worker,
-                use_cache=config.use_cache,
+            _create_sequence_dataloader(
+                config, split, shuffle=shuffle, offset=offset
             )
         )
     return tuple(loaders)
 
 
-def create_model(config: ClassifierRunConfig) -> ProteinSequenceClassifier:
+def create_model(
+    config: ClassifierRunConfig,
+    *,
+    use_cached_embeddings: bool | None = None,
+) -> ProteinSequenceClassifier | CachedEmbeddingClassifier:
+    use_cached_embeddings = (
+        config.cache_embeddings
+        if use_cached_embeddings is None
+        else use_cached_embeddings
+    )
+    if use_cached_embeddings:
+        embedding_dim = (
+            config.autoencoder_latent_dim
+            if config.representation in {"random_autoencoder", "trained_autoencoder"}
+            else 320
+        )
+        if config.representation == "trained_autoencoder+esm2":
+            embedding_dim = config.autoencoder_latent_dim + 320
+        return CachedEmbeddingClassifier(
+            embedding_type=config.representation,
+            embedding_dim=embedding_dim,
+            num_classes=config.num_classes,
+            head_type=config.head_type,
+            dropout=config.dropout if config.dropout is not None else 0.0,
+            head_seed=config.seed,
+            device=config.device,
+        )
     return ProteinSequenceClassifier(
         embedding_type=config.representation,
         num_classes=config.num_classes,
@@ -675,6 +993,7 @@ def create_model(config: ClassifierRunConfig) -> ProteinSequenceClassifier:
         esm_max_sequence_length=config.esm_max_sequence_length,
         head_type=config.head_type,
         dropout=config.dropout if config.dropout is not None else 0.0,
+        head_seed=config.seed,
         autoencoder_checkpoint=config.autoencoder_checkpoint,
         autoencoder_embedding_dim=config.autoencoder_embedding_dim,
         autoencoder_cnn_channels=config.autoencoder_cnn_channels,
@@ -801,6 +1120,21 @@ def _config_payload(config: ClassifierRunConfig) -> dict[str, Any]:
                 "autoencoder_special_tokens": "BOS+residues+EOS",
                 "esm_long_sequence_policy": "truncate_right",
                 "esm_max_sequence_length": config.esm_max_sequence_length,
+                "embedding_cache": {
+                    "enabled": config.cache_embeddings,
+                    "root": config.embedding_cache_root,
+                    "schema_version": EMBEDDING_CACHE_SCHEMA_VERSION,
+                    "files": {
+                        split: str(_embedding_cache_path(config, split)[0])
+                        for split in (
+                            ["train", "valid", "test"]
+                            if config.evaluate_test
+                            else ["train", "valid"]
+                        )
+                    }
+                    if config.cache_embeddings
+                    else {},
+                },
             },
             "runtime": _runtime_metadata(),
             **_git_metadata(),
@@ -1036,6 +1370,9 @@ def run_one(
     try:
         configure_reproducibility(config.seed, config.deterministic)
         train_loader, val_loader, test_loader = create_run_dataloaders(config)
+        # Cache construction initializes the frozen encoder only on a cache miss.
+        # Reset before head creation so cache hits and misses produce identical heads.
+        configure_reproducibility(config.seed, config.deterministic)
         model = create_model(config)
         pipeline = ProteinClassificationTrainingPipeline(
             model=model,

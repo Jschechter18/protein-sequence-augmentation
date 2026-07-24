@@ -81,6 +81,41 @@ class MLPHead(nn.Module):
         return self.mlp(embeddings)
 
 
+def _build_classification_head(
+    head_type: str,
+    embedding_dim: int,
+    num_classes: int,
+    dropout: float,
+    device: str,
+    head_seed: int | None,
+) -> nn.Module:
+    def build() -> nn.Module:
+        if head_type == "linear":
+            return LinearHead(embedding_dim, num_classes=num_classes)
+        if head_type == "mlp":
+            return MLPHead(
+                embedding_dim,
+                hidden_dim=128,
+                dropout=dropout,
+                num_classes=num_classes,
+            )
+        if head_type == "cnn":
+            raise ValueError(
+                "head_type='cnn' is incompatible with the current sequence-level "
+                "encoder outputs [B, D]; CNNHead requires residue-level [B, L, D]."
+            )
+        raise ValueError(f"Unsupported head type: {head_type}")
+
+    if head_seed is None:
+        return build().to(device)
+    # Heads are initialized on CPU before being moved to the target device.
+    # Forking preserves the caller's RNG state while making head initialization
+    # independent of whether an encoder was constructed first.
+    with torch.random.fork_rng(devices=[]):
+        torch.default_generator.manual_seed(head_seed)
+        return build().to(device)
+
+
 class CNNHead(nn.Module):
     """CNN head for protein sequence embeddings.
 
@@ -431,6 +466,7 @@ class ProteinSequenceClassifier(nn.Module):
         esm_max_sequence_length: int = 1022,
         head_type: str = "linear",
         dropout: float = 0.1,
+        head_seed: int | None = None,
         autoencoder_checkpoint: str | None = None,
         autoencoder_embedding_dim: int = 128,
         autoencoder_cnn_channels: int = 128,
@@ -521,28 +557,18 @@ class ProteinSequenceClassifier(nn.Module):
         self.encoder_output_dim = self.embedded_representation.output_dim
         self.output_dim = self.encoder_output_dim
 
-        if head_type == "linear":
-            self.head = LinearHead(
-                embedding_dim=self.output_dim,
-                num_classes=num_classes,
-            ).to(self.device)
-        elif head_type == "mlp":
-            self.head = MLPHead(
-                embedding_dim=self.output_dim,
-                hidden_dim=128,
-                dropout=dropout,
-                num_classes=num_classes,
-            ).to(self.device)
-        elif head_type == "cnn":
-            raise ValueError(
-                "head_type='cnn' is incompatible with the current sequence-level "
-                "encoder outputs [B, D]; CNNHead requires residue-level [B, L, D]."
-            )
-        else:
-            raise ValueError(f"Unsupported head type: {head_type}")
+        self.head = _build_classification_head(
+            head_type=head_type,
+            embedding_dim=self.output_dim,
+            num_classes=num_classes,
+            dropout=dropout,
+            device=self.device,
+            head_seed=head_seed,
+        )
         self.pad_idx = pad_idx
 
-    def forward(self, batch: dict) -> torch.Tensor:
+    def encode(self, batch: dict) -> torch.Tensor:
+        """Return sequence representations before applying the classifier head."""
         if self.embedding_type == "random_autoencoder":
             input_ids = batch["input_ids"].to(self.device).long()
             lengths = batch["length"].to(self.device).long()
@@ -562,7 +588,10 @@ class ProteinSequenceClassifier(nn.Module):
             embeddings = self.embedded_representation(input_ids, lengths, batch["sequence"])
         else:
             raise ValueError(f"Unsupported embedding type: {self.embedding_type}")
-        return self.head(embeddings)
+        return embeddings
+
+    def forward(self, batch: dict) -> torch.Tensor:
+        return self.head(self.encode(batch))
     
     def _add_autoencoder_special_tokens(
         self, input_ids: torch.Tensor, lengths: torch.Tensor
@@ -611,3 +640,47 @@ class ProteinSequenceClassifier(nn.Module):
             framed_ids[i, 1 : length + 1] = input_ids[i, :length]
             framed_ids[i, length + 1] = EOS_IDX
         return framed_ids, lengths + 2
+
+
+class CachedEmbeddingClassifier(nn.Module):
+    """Train a classifier head over precomputed frozen representations."""
+
+    def __init__(
+        self,
+        embedding_type: str,
+        embedding_dim: int,
+        num_classes: int = 2,
+        head_type: str = "linear",
+        dropout: float = 0.1,
+        head_seed: int | None = None,
+        device: str = "cpu",
+    ) -> None:
+        super().__init__()
+        self.embedding_type = normalize_embedding_type(embedding_type)
+        self.head_type = head_type
+        self.device = device
+        self.encoder_output_dim = int(embedding_dim)
+        self.output_dim = self.encoder_output_dim
+        self.embedded_representation = nn.Identity()
+        self.head = _build_classification_head(
+            head_type=head_type,
+            embedding_dim=self.output_dim,
+            num_classes=num_classes,
+            dropout=dropout,
+            device=device,
+            head_seed=head_seed,
+        )
+        self.to(device)
+
+    def forward(self, batch: dict) -> torch.Tensor:
+        embeddings = batch.get("embedding")
+        if not torch.is_tensor(embeddings) or embeddings.ndim != 2:
+            raise ValueError(
+                "CachedEmbeddingClassifier requires 'embedding' with shape [B, D]."
+            )
+        if embeddings.shape[1] != self.output_dim:
+            raise ValueError(
+                f"Expected cached embedding dimension {self.output_dim}, "
+                f"got {embeddings.shape[1]}."
+            )
+        return self.head(embeddings.to(self.device))
