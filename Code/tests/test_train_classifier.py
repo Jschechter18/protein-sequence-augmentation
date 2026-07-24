@@ -43,6 +43,182 @@ def _write_trainable_tiny_splits(data_dir: Path) -> None:
         (task_dir / f"{split}.csv").write_text(contents, encoding="utf-8")
 
 
+def test_classifier_tuning_search_space_constants() -> None:
+    assert train.TUNING_SEED == 42
+    assert train.TUNING_REPRESENTATIONS == train.STAGE1_REPRESENTATIONS
+    assert train.TUNING_LEARNING_RATES == (1e-4, 3e-4, 1e-3)
+    assert train.TUNING_WEIGHT_DECAYS == (0.0, 1e-4)
+    assert train.TUNING_MLP_DROPOUTS == (0.1, 0.3)
+
+
+def test_classifier_checkpoints_default_to_project_checkpoint_tree() -> None:
+    args = train.parse_args([])
+
+    assert Path(args.checkpoint_root) == (
+        train.PROJECT_ROOT / "checkpoints" / "classifier"
+    )
+
+
+def test_sweep_and_hp_tune_are_mutually_exclusive() -> None:
+    assert train.parse_args(["--sweep"]).run_sweep is True
+    assert train.parse_args(["--hp_tune"]).hp_tune is True
+
+    with pytest.raises(SystemExit):
+        train.parse_args(["--sweep", "--hp_tune"])
+
+
+def test_default_tuning_grid_matches_declared_search_space(tmp_path: Path) -> None:
+    args = train.parse_args(["--hp_tune", "--results_dir", str(tmp_path)])
+    configs = train.build_run_configs(args, device="cpu")
+
+    linear = [config for config in configs if config.head_type == "linear"]
+    mlp = [config for config in configs if config.head_type == "mlp"]
+
+    assert len(configs) == 72
+    assert len(linear) == 24
+    assert len(mlp) == 48
+    assert {config.representation for config in configs} == set(
+        train.TUNING_REPRESENTATIONS
+    )
+    assert {
+        (config.learning_rate, config.weight_decay, config.dropout)
+        for config in linear
+    } == {
+        (learning_rate, weight_decay, None)
+        for learning_rate in train.TUNING_LEARNING_RATES
+        for weight_decay in train.TUNING_WEIGHT_DECAYS
+    }
+    assert {
+        (config.learning_rate, config.weight_decay, config.dropout)
+        for config in mlp
+    } == {
+        (learning_rate, weight_decay, dropout)
+        for learning_rate in train.TUNING_LEARNING_RATES
+        for weight_decay in train.TUNING_WEIGHT_DECAYS
+        for dropout in train.TUNING_MLP_DROPOUTS
+    }
+    assert all(config.seed == train.TUNING_SEED for config in configs)
+    assert all(config.mode == "hp_tune" for config in configs)
+    assert all(config.phase == "tuning" for config in configs)
+    assert all(config.evaluate_test is False for config in configs)
+
+
+def test_tuning_grid_respects_requested_heads_and_representations(
+    tmp_path: Path,
+) -> None:
+    args = train.parse_args(
+        [
+            "--hp_tune",
+            "--results_dir",
+            str(tmp_path),
+            "--representations",
+            "trained_autoencoder",
+            "esm2",
+            "--head_types",
+            "mlp",
+        ]
+    )
+
+    configs = train.build_tuning_configs(args, device="cpu")
+
+    assert len(configs) == 24
+    assert {config.representation for config in configs} == {
+        "trained_autoencoder",
+        "esm2",
+    }
+    assert {config.head_type for config in configs} == {"mlp"}
+    assert {config.dropout for config in configs} == {0.1, 0.3}
+
+
+def test_tuning_paths_are_versioned_and_unique(tmp_path: Path) -> None:
+    args = train.parse_args(
+        [
+            "--hp_tune",
+            "--results_dir",
+            str(tmp_path / "results"),
+            "--checkpoint_dir",
+            str(tmp_path / "checkpoints"),
+            "--version",
+            "3",
+            "--representations",
+            "esm2",
+            "--head_types",
+            "mlp",
+        ]
+    )
+    config = train.build_tuning_configs(args, device="cpu")[0]
+
+    relative = (
+        Path("solubility")
+        / "v3"
+        / "tuning"
+        / "mlp"
+        / "esm2"
+        / "lr_1e-4_wd_0_do_0.1_seed_42"
+    )
+    assert config.run_dir == tmp_path / "results" / relative
+    assert config.checkpoint_dir == tmp_path / "checkpoints" / relative
+    assert len({candidate.run_dir for candidate in train.build_tuning_configs(args)}) == 12
+
+
+def test_tuning_summaries_and_selected_hyperparameters_are_saved_separately(
+    tmp_path: Path,
+) -> None:
+    args = train.parse_args(
+        [
+            "--hp_tune",
+            "--results_dir",
+            str(tmp_path),
+            "--representations",
+            "esm2",
+            "--head_types",
+            "mlp",
+        ]
+    )
+    configs = train.build_tuning_configs(args, device="cpu")[:2]
+    rows = [
+        train._row_from_metrics(
+            configs[0],
+            {
+                "selection_epoch": 2,
+                "best_val_f1": 0.7,
+                "val_loss_at_selection": 0.5,
+                "val_accuracy_at_selection": 0.75,
+            },
+            "complete",
+        ),
+        train._row_from_metrics(
+            configs[1],
+            {
+                "selection_epoch": 3,
+                "best_val_f1": 0.8,
+                "val_loss_at_selection": 0.4,
+                "val_accuracy_at_selection": 0.8,
+            },
+            "complete",
+        ),
+    ]
+
+    train.save_summaries(configs, rows)
+
+    tuning_root = tmp_path / "solubility" / "v1" / "tuning"
+    results = pd.read_csv(tuning_root / "tuning_results.csv")
+    selected = json.loads(
+        (tuning_root / "selected_hyperparameters.json").read_text()
+    )
+    assert len(results) == 2
+    assert not (tmp_path / "solubility" / "v1" / "summary.csv").exists()
+    assert selected["mlp"]["esm2"] == {
+        "learning_rate": configs[1].learning_rate,
+        "weight_decay": configs[1].weight_decay,
+        "dropout": configs[1].dropout,
+        "selection_seed": 42,
+        "selection_epoch": 3,
+        "best_val_f1": 0.8,
+        "val_loss_at_selection": 0.4,
+    }
+
+
 def test_default_stage1_sweep_has_24_unique_balanced_configs(tmp_path: Path) -> None:
     configs = train.build_run_configs(_sweep_args(tmp_path), device="cpu")
     identities = {

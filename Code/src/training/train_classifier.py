@@ -5,6 +5,21 @@ the repository root with either of these equivalent commands::
 
     python -m Code.src.training.train_classifier --help
     python Code/src/training/train_classifier.py --help
+
+Pipeline going forward:
+1. Stage 1: Hyperparameter tuning for the best representation/head combination
+python -m Code.src.training.train_classifier \
+  --hp_tune \
+  --version <number>
+
+2. Stage 2: Run the experiment using the from the best configuration (for each representation/head combination)
+The final experiment should:
+    1. Freeze the selected hyperparameters.
+    2. Retrain each representation/head condition from scratch.
+    3. Use seeds 42, 43, and 44.
+    4. Continue using validation data for early stopping.
+    5. Evaluate the clean test split once per final seeded run.
+    6. Aggregate test metrics across the three seeds.
 """
 
 from __future__ import annotations
@@ -25,7 +40,7 @@ import traceback
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
-from itertools import combinations
+from itertools import combinations, product
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -60,6 +75,11 @@ STAGE1_REPRESENTATIONS = (
     "esm2",
     "trained_autoencoder+esm2",
 )
+TUNING_SEED = 42
+TUNING_REPRESENTATIONS = STAGE1_REPRESENTATIONS
+TUNING_LEARNING_RATES = (1e-4, 3e-4, 1e-3)
+TUNING_WEIGHT_DECAYS = (0.0, 1e-4)
+TUNING_MLP_DROPOUTS = (0.1, 0.3)
 HEAD_TYPES = ("linear", "mlp")
 LEGACY_REPRESENTATIONS = ("autoencoder+esm2",)
 DEFAULT_AE_CHECKPOINT = (
@@ -119,17 +139,41 @@ class ClassifierRunConfig:
     evaluate_test: bool
     device: str
     mode: str
+    dropout: float | None
+    phase: str
 
     @property
     def version_dir(self) -> str:
         return self.version if self.version.startswith("v") else f"v{self.version}"
 
+    @staticmethod
+    def _format_trial_value(value: float) -> str:
+        if value == 0:
+            return "0"
+        formatted = f"{value:.0e}"
+        return formatted.replace("e-0", "e-").replace("e+0", "e").replace("e+", "e")
+
+    @property
+    def trial_name(self) -> str:
+        parts = [
+            f"lr_{self._format_trial_value(self.learning_rate)}",
+            f"wd_{self._format_trial_value(self.weight_decay)}",
+        ]
+        if self.head_type == "mlp":
+            if self.dropout is None:
+                raise ValueError("MLP runs require an explicit dropout value.")
+            parts.append(f"do_{self.dropout:g}")
+        parts.append(f"seed_{self.seed}")
+        return "_".join(parts)
+
     @property
     def run_dir(self) -> Path:
+        root = Path(self.results_dir) / self.dataset / self.version_dir
+        if self.phase in {"tuning", "final"}:
+            leaf = self.trial_name if self.phase == "tuning" else f"seed_{self.seed}"
+            return root / self.phase / self.head_type / self.representation / leaf
         return (
-            Path(self.results_dir)
-            / self.dataset
-            / self.version_dir
+            root
             / self.representation
             / self.head_type
             / f"seed_{self.seed}"
@@ -137,10 +181,16 @@ class ClassifierRunConfig:
 
     @property
     def checkpoint_dir(self) -> Path:
-        return (
+        root = (
             Path(self.checkpoint_root).expanduser()
             / self.dataset
             / self.version_dir
+        )
+        if self.phase in {"tuning", "final"}:
+            leaf = self.trial_name if self.phase == "tuning" else f"seed_{self.seed}"
+            return root / self.phase / self.head_type / self.representation / leaf
+        return (
+            root
             / self.representation
             / self.head_type
             / f"seed_{self.seed}"
@@ -155,8 +205,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--checkpoint_dir",
         dest="checkpoint_root",
-        default="~/checkpoints/classifier",
-        help="Root for classifier checkpoints; task/version/run components are appended.",
+        default=str(PROJECT_ROOT / "checkpoints" / "classifier"),
+        help=(
+            "Root for classifier model checkpoints; defaults to "
+            "<project>/checkpoints/classifier. Task/version/run components are appended."
+        ),
     )
     parser.add_argument("--version", default="1")
     parser.add_argument(
@@ -212,12 +265,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--deterministic", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--evaluate_test", action=argparse.BooleanOptionalAction, default=True)
 
-    parser.add_argument(
+    experiment_mode = parser.add_mutually_exclusive_group()
+    experiment_mode.add_argument(
         "--sweep",
         "--run_experiment",
         dest="run_sweep",
         action="store_true",
         help="Run the Stage 1 representation/head/seed sweep.",
+    )
+    experiment_mode.add_argument(
+        "--hp_tune",
+        action="store_true",
+        help="Run hyperparameter tuning for the classifier.",
     )
     parser.add_argument("--seeds", type=int, nargs="+", default=None)
     parser.add_argument(
@@ -295,68 +354,148 @@ def select_device() -> str:
     return "cpu"
 
 
-def build_run_configs(args: argparse.Namespace, device: str | None = None) -> list[ClassifierRunConfig]:
-    device = device or select_device()
+def _make_run_config(
+    args: argparse.Namespace,
+    *,
+    device: str,
+    representation: str,
+    head_type: str,
+    seed: int,
+    learning_rate: float,
+    weight_decay: float,
+    dropout: float | None,
+    evaluate_test: bool,
+    mode: str,
+    phase: str,
+) -> ClassifierRunConfig:
     num_classes = args.num_classes or (10 if args.dataset == "localization" else 2)
     pin_memory = args.pin_memory if args.pin_memory is not None else device == "cuda"
     persistent_workers = bool(args.persistent_workers and args.num_workers > 0)
+    return ClassifierRunConfig(
+        dataset=args.dataset,
+        data_dir=args.data_dir,
+        results_dir=args.results_dir,
+        checkpoint_root=args.checkpoint_root,
+        version=str(args.version),
+        representation=representation,
+        head_type=head_type,
+        seed=seed,
+        num_classes=num_classes,
+        batch_size=args.batch_size,
+        epochs=args.epochs,
+        early_stopping_patience=args.early_stopping_patience,
+        learning_rate=learning_rate,
+        weight_decay=weight_decay,
+        encoder_learning_rate=args.encoder_learning_rate,
+        esm_learning_rate=args.esm_learning_rate,
+        esm_model_name=args.esm_model_name,
+        esm_max_sequence_length=args.esm_max_sequence_length,
+        autoencoder_checkpoint=args.autoencoder_checkpoint,
+        autoencoder_embedding_dim=args.autoencoder_embedding_dim,
+        autoencoder_cnn_channels=args.autoencoder_cnn_channels,
+        autoencoder_hidden_dim=args.autoencoder_hidden_dim,
+        autoencoder_latent_dim=args.autoencoder_latent_dim,
+        autoencoder_num_layers=args.autoencoder_num_layers,
+        autoencoder_kernel_size=args.autoencoder_kernel_size,
+        unfreeze_esm=args.unfreeze_esm,
+        unfreeze_all_esm=args.unfreeze_all_esm,
+        unfreeze_layers=args.unfreeze_layers,
+        max_grad_norm=args.max_grad_norm,
+        num_workers=args.num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
+        use_cache=args.use_cache,
+        deterministic=args.deterministic,
+        evaluate_test=evaluate_test,
+        device=device,
+        mode=mode,
+        dropout=dropout,
+        phase=phase,
+    )
+
+
+def build_tuning_configs(
+    args: argparse.Namespace,
+    device: str | None = None,
+) -> list[ClassifierRunConfig]:
+    """Build the tuning grid without evaluating any candidate on the test set."""
+
+    device = device or select_device()
+    representations = _unique_normalized(
+        args.representations or TUNING_REPRESENTATIONS
+    )
+    heads = list(dict.fromkeys(args.head_types or HEAD_TYPES))
+    configs: list[ClassifierRunConfig] = []
+
+    for head_type, representation in product(heads, representations):
+        dropouts: tuple[float | None, ...]
+        if head_type == "mlp":
+            dropouts = TUNING_MLP_DROPOUTS
+        else:
+            dropouts = (None,)
+        for learning_rate, weight_decay, dropout in product(
+            TUNING_LEARNING_RATES,
+            TUNING_WEIGHT_DECAYS,
+            dropouts,
+        ):
+            configs.append(
+                _make_run_config(
+                    args,
+                    device=device,
+                    representation=representation,
+                    head_type=head_type,
+                    seed=TUNING_SEED,
+                    learning_rate=learning_rate,
+                    weight_decay=weight_decay,
+                    dropout=dropout,
+                    evaluate_test=False,
+                    mode="hp_tune",
+                    phase="tuning",
+                )
+            )
+    return configs
+
+
+def build_run_configs(
+    args: argparse.Namespace,
+    device: str | None = None,
+) -> list[ClassifierRunConfig]:
+    device = device or select_device()
+    if args.hp_tune:
+        return build_tuning_configs(args, device=device)
 
     if args.run_sweep:
         seeds = list(dict.fromkeys(args.seeds or STAGE1_SEEDS))
-        representations = _unique_normalized(args.representations or STAGE1_REPRESENTATIONS)
+        representations = _unique_normalized(
+            args.representations or STAGE1_REPRESENTATIONS
+        )
         heads = list(dict.fromkeys(args.head_types or HEAD_TYPES))
         mode = "stage1_sweep"
+        phase = "final"
     else:
         seeds = [args.seed]
         representations = [normalize_embedding_type(args.embedding_type)]
         heads = [args.head_type]
         mode = "single"
+        phase = "single"
 
     configs: list[ClassifierRunConfig] = []
-    for seed in seeds:
-        for representation in representations:
-            for head_type in heads:
-                configs.append(
-                    ClassifierRunConfig(
-                        dataset=args.dataset,
-                        data_dir=args.data_dir,
-                        results_dir=args.results_dir,
-                        checkpoint_root=args.checkpoint_root,
-                        version=str(args.version),
-                        representation=representation,
-                        head_type=head_type,
-                        seed=seed,
-                        num_classes=num_classes,
-                        batch_size=args.batch_size,
-                        epochs=args.epochs,
-                        early_stopping_patience=args.early_stopping_patience,
-                        learning_rate=args.learning_rate,
-                        weight_decay=args.weight_decay,
-                        encoder_learning_rate=args.encoder_learning_rate,
-                        esm_learning_rate=args.esm_learning_rate,
-                        esm_model_name=args.esm_model_name,
-                        esm_max_sequence_length=args.esm_max_sequence_length,
-                        autoencoder_checkpoint=args.autoencoder_checkpoint,
-                        autoencoder_embedding_dim=args.autoencoder_embedding_dim,
-                        autoencoder_cnn_channels=args.autoencoder_cnn_channels,
-                        autoencoder_hidden_dim=args.autoencoder_hidden_dim,
-                        autoencoder_latent_dim=args.autoencoder_latent_dim,
-                        autoencoder_num_layers=args.autoencoder_num_layers,
-                        autoencoder_kernel_size=args.autoencoder_kernel_size,
-                        unfreeze_esm=args.unfreeze_esm,
-                        unfreeze_all_esm=args.unfreeze_all_esm,
-                        unfreeze_layers=args.unfreeze_layers,
-                        max_grad_norm=args.max_grad_norm,
-                        num_workers=args.num_workers,
-                        pin_memory=pin_memory,
-                        persistent_workers=persistent_workers,
-                        use_cache=args.use_cache,
-                        deterministic=args.deterministic,
-                        evaluate_test=args.evaluate_test,
-                        device=device,
-                        mode=mode,
-                    )
-                )
+    for seed, representation, head_type in product(seeds, representations, heads):
+        configs.append(
+            _make_run_config(
+                args,
+                device=device,
+                representation=representation,
+                head_type=head_type,
+                seed=seed,
+                learning_rate=args.learning_rate,
+                weight_decay=args.weight_decay,
+                dropout=0.1 if head_type == "mlp" else None,
+                evaluate_test=args.evaluate_test,
+                mode=mode,
+                phase=phase,
+            )
+        )
     return configs
 
 
@@ -535,6 +674,7 @@ def create_model(config: ClassifierRunConfig) -> ProteinSequenceClassifier:
         esm_model_name=config.esm_model_name,
         esm_max_sequence_length=config.esm_max_sequence_length,
         head_type=config.head_type,
+        dropout=config.dropout if config.dropout is not None else 0.0,
         autoencoder_checkpoint=config.autoencoder_checkpoint,
         autoencoder_embedding_dim=config.autoencoder_embedding_dim,
         autoencoder_cnn_channels=config.autoencoder_cnn_channels,
@@ -770,6 +910,10 @@ def _row_from_metrics(
         "representation": config.representation,
         "head_type": config.head_type,
         "seed": config.seed,
+        "phase": config.phase,
+        "learning_rate": config.learning_rate,
+        "weight_decay": config.weight_decay,
+        "dropout": config.dropout,
         "status": status,
         "run_dir": str(config.run_dir),
         "checkpoint_dir": str(config.checkpoint_dir),
@@ -778,6 +922,31 @@ def _row_from_metrics(
     if metrics:
         row.update(metrics)
     return row
+
+
+def _tuning_metrics_from_history(
+    history: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not history:
+        raise ValueError("A completed tuning run must contain training history.")
+    selection_record = max(
+        history,
+        key=lambda record: (
+            float(record.get("val_f1", float("-inf"))),
+            -float(record.get("val_loss", float("inf"))),
+        ),
+    )
+    return {
+        "selection_epoch": int(selection_record["epoch"]),
+        "best_val_f1": float(selection_record["val_f1"]),
+        "val_loss_at_selection": float(selection_record["val_loss"]),
+        "val_accuracy_at_selection": float(selection_record["val_accuracy"]),
+    }
+
+
+def _read_tuning_metrics(run_dir: Path) -> dict[str, Any]:
+    history = pd.read_csv(run_dir / "history.csv").to_dict(orient="records")
+    return _tuning_metrics_from_history(history)
 
 
 def run_one(
@@ -803,7 +972,10 @@ def run_one(
                 raise
         else:
             logger.info("Skipping completed run: %s", run_dir)
-            metrics = _read_json(run_dir / "metrics.json") if config.evaluate_test else None
+            if config.phase == "tuning":
+                metrics = _read_tuning_metrics(run_dir)
+            else:
+                metrics = _read_json(run_dir / "metrics.json") if config.evaluate_test else None
             return _row_from_metrics(config, metrics, "complete")
 
     existing_locations = [path for path in (run_dir, checkpoint_dir) if path.exists()]
@@ -885,7 +1057,7 @@ def run_one(
         )
 
         resume_path = checkpoint_dir / "last_model.pt" if resume else None
-        pipeline.fit(
+        history = pipeline.fit(
             train_loader=train_loader,
             val_loader=val_loader,
             epochs=config.epochs,
@@ -894,7 +1066,9 @@ def run_one(
         )
 
         metrics: dict[str, Any] = {}
-        if config.evaluate_test:
+        if config.phase == "tuning":
+            metrics = _tuning_metrics_from_history(history)
+        elif config.evaluate_test:
             if test_loader is None:
                 raise RuntimeError("Test evaluation requested but no test loader was created")
             metrics = pipeline.evaluate_test(test_loader)
@@ -951,7 +1125,12 @@ def save_summaries(configs: list[ClassifierRunConfig], rows: list[dict[str, Any]
     if not configs:
         return
     summary_root = Path(configs[0].results_dir) / configs[0].dataset / configs[0].version_dir
-    summary_path = summary_root / "summary.csv"
+    is_tuning = all(config.phase == "tuning" for config in configs)
+    if is_tuning:
+        summary_root = summary_root / "tuning"
+        summary_path = summary_root / "tuning_results.csv"
+    else:
+        summary_path = summary_root / "summary.csv"
     summary = pd.DataFrame(rows)
     if summary_path.is_file():
         try:
@@ -960,12 +1139,51 @@ def save_summaries(configs: list[ClassifierRunConfig], rows: list[dict[str, Any]
         except (OSError, ValueError, pd.errors.ParserError) as error:
             logger.warning("Could not merge existing summary %s: %s", summary_path, error)
     identity_columns = ["dataset", "version", "representation", "head_type", "seed"]
+    if is_tuning:
+        identity_columns.extend(["learning_rate", "weight_decay", "dropout"])
     if not summary.empty and set(identity_columns).issubset(summary.columns):
         summary = summary.drop_duplicates(identity_columns, keep="last")
         summary = summary.sort_values(identity_columns, kind="stable").reset_index(drop=True)
     _atomic_dataframe_csv(summary, summary_path)
 
     completed = summary[summary["status"] == "complete"].copy()
+    if is_tuning:
+        selected: dict[str, dict[str, dict[str, Any]]] = {}
+        if not completed.empty and "best_val_f1" in completed:
+            ranked = completed.sort_values(
+                [
+                    "head_type",
+                    "representation",
+                    "best_val_f1",
+                    "val_loss_at_selection",
+                    "learning_rate",
+                    "weight_decay",
+                    "dropout",
+                ],
+                ascending=[True, True, False, True, True, True, True],
+                na_position="first",
+                kind="stable",
+            )
+            winners = ranked.drop_duplicates(
+                ["head_type", "representation"], keep="first"
+            )
+            for row in winners.to_dict(orient="records"):
+                parameters: dict[str, Any] = {
+                    "learning_rate": float(row["learning_rate"]),
+                    "weight_decay": float(row["weight_decay"]),
+                    "selection_seed": int(row["seed"]),
+                    "selection_epoch": int(row["selection_epoch"]),
+                    "best_val_f1": float(row["best_val_f1"]),
+                    "val_loss_at_selection": float(row["val_loss_at_selection"]),
+                }
+                if row["head_type"] == "mlp":
+                    parameters["dropout"] = float(row["dropout"])
+                selected.setdefault(str(row["head_type"]), {})[
+                    str(row["representation"])
+                ] = parameters
+        save_json(selected, summary_root / "selected_hyperparameters.json")
+        return
+
     if completed.empty:
         _atomic_dataframe_csv(completed, summary_root / "aggregated_summary.csv")
         return
@@ -1001,7 +1219,9 @@ def main(argv: list[str] | None = None) -> None:
     print(f"Device: {configs[0].device}", flush=True)
     validate_preflight(configs)
 
-    if args.run_sweep:
+    if args.hp_tune:
+        logger.info("Starting hyperparameter tuning with %d unique runs", len(configs))
+    elif args.run_sweep:
         logger.info("Starting Stage 1 sweep with %d unique runs", len(configs))
 
     rows: list[dict[str, Any]] = []
@@ -1027,7 +1247,7 @@ def main(argv: list[str] | None = None) -> None:
         except Exception as error:
             failures += 1
             rows.append(_row_from_metrics(config, None, "failed", str(error)))
-            if not args.run_sweep or args.fail_fast:
+            if (not args.run_sweep and not args.hp_tune) or args.fail_fast:
                 save_summaries(configs, rows)
                 raise
 
@@ -1041,9 +1261,31 @@ if __name__ == "__main__":
 
 
 # TODO:
-# each sweep config needs to have hyperparameters sweeped before a fair training run is complete
-# likely good place to start:
-# 8 representation/head conditions
-# × 9 learning-rate/weight-decay candidates
-# × 1 tuning seed
-# = 72 tuning runs
+# Load the selected tuning parameters into the final multi-seed experiment.
+# Current tuning scope:
+# 4 representations × (6 linear + 12 MLP candidates) × 1 tuning seed
+# = 72 tuning runs.
+
+
+# results/
+# └── classifier/
+#     └── solubility/
+#         ├── tuning/
+#         │   ├── linear/
+#         │   │   ├── trained_autoencoder_ae/
+#         │   │   │   ├── lr_1e-4_wd_0_seed_42/
+#         │   │   │   ├── lr_1e-4_wd_1e-4_seed_42/
+#         │   │   │   └── ...
+#         │   │   └── esm2/
+#         │   │       └── ...
+#         │   ├── mlp/
+#         │   │   ├── trained_autoencoder_ae/
+#         │   │   │   ├── lr_1e-4_wd_0_do_0.1_seed_42/
+#         │   │   │   └── ...
+#         │   │   └── esm2/
+#         │   │       └── ...
+#         │   ├── tuning_results.csv
+#         │   └── selected_hyperparameters.json
+#         └── final/
+#             ├── linear/
+#             └── mlp/

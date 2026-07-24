@@ -152,6 +152,22 @@ def test_sequence_level_heads_accept_two_dimensional_embeddings(head_class):
     assert head(torch.randn(4, 5)).shape == (4, 2)
 
 
+def test_mlp_head_applies_requested_dropout() -> None:
+    head = MLPHead(embedding_dim=16, dropout=0.3)
+
+    dropout_layers = [
+        layer for layer in head.modules() if isinstance(layer, torch.nn.Dropout)
+    ]
+    assert len(dropout_layers) == 1
+    assert dropout_layers[0].p == pytest.approx(0.3)
+
+
+@pytest.mark.parametrize("dropout", [-0.1, 1.0])
+def test_mlp_head_rejects_invalid_dropout(dropout: float) -> None:
+    with pytest.raises(ValueError, match="dropout"):
+        MLPHead(embedding_dim=16, dropout=dropout)
+
+
 def test_classifier_rejects_cnn_head_for_sequence_level_encoders():
     with pytest.raises(ValueError, match="residue-level"):
         ProteinSequenceClassifier(

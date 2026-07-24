@@ -60,12 +60,21 @@ class MLPHead(nn.Module):
     num_classes : int
         Number of output classes.
     """
-    def __init__(self, embedding_dim: int, hidden_dim: int = 128, num_classes: int = 2):
+    def __init__(
+        self,
+        embedding_dim: int,
+        hidden_dim: int = 128,
+        dropout: float = 0.1,
+        num_classes: int = 2,
+    ):
         super().__init__()
+        if not 0.0 <= dropout < 1.0:
+            raise ValueError("dropout must be in the range [0, 1).")
         self.mlp = nn.Sequential(
             nn.Linear(embedding_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, num_classes)
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, num_classes),
         )
 
     def forward(self, embeddings: torch.Tensor) -> torch.Tensor:
@@ -421,6 +430,7 @@ class ProteinSequenceClassifier(nn.Module):
         esm_model_name: str = "esm2_t6_8M_UR50D",
         esm_max_sequence_length: int = 1022,
         head_type: str = "linear",
+        dropout: float = 0.1,
         autoencoder_checkpoint: str | None = None,
         autoencoder_embedding_dim: int = 128,
         autoencoder_cnn_channels: int = 128,
@@ -520,6 +530,7 @@ class ProteinSequenceClassifier(nn.Module):
             self.head = MLPHead(
                 embedding_dim=self.output_dim,
                 hidden_dim=128,
+                dropout=dropout,
                 num_classes=num_classes,
             ).to(self.device)
         elif head_type == "cnn":
