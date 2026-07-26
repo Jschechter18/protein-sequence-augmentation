@@ -302,6 +302,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
     )
     parser.add_argument("--head_types", nargs="+", choices=HEAD_TYPES, default=None)
+    parser.add_argument(
+        "--selected_hyperparameters",
+        default=None,
+        help=(
+            "JSON file containing per-head/per-representation tuning winners. "
+            "With --sweep, defaults to "
+            "<results_dir>/<dataset>/v<version>/tuning/selected_hyperparameters.json "
+            "when that file exists."
+        ),
+    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--skip_completed", action=argparse.BooleanOptionalAction, default=True)
@@ -479,6 +489,84 @@ def build_tuning_configs(
     return configs
 
 
+def _selected_hyperparameters_path(args: argparse.Namespace) -> Path:
+    if args.selected_hyperparameters is not None:
+        return Path(args.selected_hyperparameters).expanduser()
+    version_dir = (
+        str(args.version)
+        if str(args.version).startswith("v")
+        else f"v{args.version}"
+    )
+    return (
+        Path(args.results_dir)
+        / args.dataset
+        / version_dir
+        / "tuning"
+        / "selected_hyperparameters.json"
+    )
+
+
+def _load_selected_hyperparameters(
+    args: argparse.Namespace,
+) -> dict[str, dict[str, dict[str, float]]]:
+    path = _selected_hyperparameters_path(args)
+    if not path.is_file():
+        raise FileNotFoundError(
+            "Final sweeps require selected tuning hyperparameters; file not found: "
+            f"{path}. Run --hp_tune first or pass --selected_hyperparameters."
+        )
+
+    with path.open(encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Selected hyperparameters must be a JSON object: {path}")
+    return payload
+
+
+def _hyperparameters_for_condition(
+    selected: dict[str, Any],
+    *,
+    head_type: str,
+    representation: str,
+) -> tuple[float, float, float | None]:
+    head_parameters = selected.get(head_type)
+    if not isinstance(head_parameters, dict):
+        raise ValueError(
+            f"Selected hyperparameters have no valid {head_type!r} section."
+        )
+    parameters = head_parameters.get(representation)
+    if parameters is None:
+        raise ValueError(
+            "Selected hyperparameters are missing the requested condition: "
+            f"{head_type}/{representation}."
+        )
+    if not isinstance(parameters, dict):
+        raise ValueError(
+            "Selected hyperparameters for "
+            f"{head_type}/{representation} must be a JSON object."
+        )
+
+    try:
+        learning_rate = float(parameters["learning_rate"])
+        weight_decay = float(parameters["weight_decay"])
+        dropout = (
+            float(parameters["dropout"]) if head_type == "mlp" else None
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(
+            f"Invalid selected hyperparameters for {head_type}/{representation}."
+        ) from error
+    if learning_rate <= 0 or weight_decay < 0:
+        raise ValueError(
+            f"Invalid selected hyperparameters for {head_type}/{representation}."
+        )
+    if dropout is not None and not 0.0 <= dropout < 1.0:
+        raise ValueError(
+            f"Invalid selected hyperparameters for {head_type}/{representation}."
+        )
+    return learning_rate, weight_decay, dropout
+
+
 def build_run_configs(
     args: argparse.Namespace,
     device: str | None = None,
@@ -495,15 +583,27 @@ def build_run_configs(
         heads = list(dict.fromkeys(args.head_types or HEAD_TYPES))
         mode = "stage1_sweep"
         phase = "final"
+        selected = _load_selected_hyperparameters(args)
     else:
         seeds = [args.seed]
         representations = [normalize_embedding_type(args.embedding_type)]
         heads = [args.head_type]
         mode = "single"
         phase = "single"
+        selected = {}
 
     configs: list[ClassifierRunConfig] = []
     for seed, representation, head_type in product(seeds, representations, heads):
+        if args.run_sweep:
+            learning_rate, weight_decay, dropout = _hyperparameters_for_condition(
+                selected,
+                head_type=head_type,
+                representation=representation,
+            )
+        else:
+            learning_rate = args.learning_rate
+            weight_decay = args.weight_decay
+            dropout = 0.1 if head_type == "mlp" else None
         configs.append(
             _make_run_config(
                 args,
@@ -511,9 +611,9 @@ def build_run_configs(
                 representation=representation,
                 head_type=head_type,
                 seed=seed,
-                learning_rate=args.learning_rate,
-                weight_decay=args.weight_decay,
-                dropout=0.1 if head_type == "mlp" else None,
+                learning_rate=learning_rate,
+                weight_decay=weight_decay,
+                dropout=dropout,
                 evaluate_test=args.evaluate_test,
                 mode=mode,
                 phase=phase,
@@ -1597,8 +1697,6 @@ if __name__ == "__main__":
     main()
 
 
-# TODO:
-# Load the selected tuning parameters into the final multi-seed experiment.
 # Current tuning scope:
 # 4 representations × (6 linear + 12 MLP candidates) × 1 tuning seed
 # = 72 tuning runs.

@@ -14,6 +14,26 @@ from Code.src.training import train_classifier as train
 
 
 def _sweep_args(results_dir: Path, *extra: str):
+    tuning_root = results_dir / "solubility" / "v1" / "tuning"
+    tuning_root.mkdir(parents=True, exist_ok=True)
+    selected_path = tuning_root / "selected_hyperparameters.json"
+    if not selected_path.exists():
+        selected_path.write_text(
+            json.dumps(
+                {
+                    head: {
+                        representation: {
+                            "learning_rate": 1e-3,
+                            "weight_decay": 0.0,
+                            **({"dropout": 0.1} if head == "mlp" else {}),
+                        }
+                        for representation in train.STAGE1_REPRESENTATIONS
+                    }
+                    for head in train.HEAD_TYPES
+                }
+            ),
+            encoding="utf-8",
+        )
     return train.parse_args(
         ["--sweep", "--results_dir", str(results_dir), *extra]
     )
@@ -413,6 +433,111 @@ def test_default_stage1_sweep_has_24_unique_balanced_configs(tmp_path: Path) -> 
     assert all(seeds == set(train.STAGE1_SEEDS) for seeds in seeds_by_condition.values())
 
 
+def test_sweep_uses_selected_hyperparameters_for_each_condition(
+    tmp_path: Path,
+) -> None:
+    tuning_root = tmp_path / "solubility" / "v1" / "tuning"
+    tuning_root.mkdir(parents=True)
+    selected = {
+        "linear": {
+            "esm2": {
+                "learning_rate": 3e-4,
+                "weight_decay": 1e-4,
+            },
+            "trained_autoencoder": {
+                "learning_rate": 1e-3,
+                "weight_decay": 0.0,
+            },
+        },
+        "mlp": {
+            "trained_autoencoder": {
+                "learning_rate": 1e-4,
+                "weight_decay": 0.0,
+                "dropout": 0.3,
+            },
+            "esm2": {
+                "learning_rate": 1e-3,
+                "weight_decay": 0.0,
+                "dropout": 0.1,
+            },
+        },
+    }
+    (tuning_root / "selected_hyperparameters.json").write_text(
+        json.dumps(selected), encoding="utf-8"
+    )
+    args = _sweep_args(
+        tmp_path,
+        "--representations",
+        "esm2",
+        "trained_autoencoder",
+        "--head_types",
+        "linear",
+        "mlp",
+        "--seeds",
+        "42",
+    )
+
+    configs = train.build_run_configs(args, device="cpu")
+    by_condition = {
+        (config.head_type, config.representation): config for config in configs
+    }
+
+    esm2_linear = by_condition[("linear", "esm2")]
+    assert esm2_linear.learning_rate == pytest.approx(3e-4)
+    assert esm2_linear.weight_decay == pytest.approx(1e-4)
+    assert esm2_linear.dropout is None
+
+    trained_mlp = by_condition[("mlp", "trained_autoencoder")]
+    assert trained_mlp.learning_rate == pytest.approx(1e-4)
+    assert trained_mlp.weight_decay == pytest.approx(0.0)
+    assert trained_mlp.dropout == pytest.approx(0.3)
+
+    assert by_condition[("linear", "trained_autoencoder")].learning_rate == pytest.approx(
+        args.learning_rate
+    )
+    assert by_condition[("mlp", "esm2")].dropout == pytest.approx(0.1)
+
+
+def test_explicit_selected_hyperparameter_path_must_exist(tmp_path: Path) -> None:
+    args = _sweep_args(
+        tmp_path,
+        "--selected_hyperparameters",
+        str(tmp_path / "missing.json"),
+    )
+
+    with pytest.raises(FileNotFoundError, match="Final sweeps require selected"):
+        train.build_run_configs(args, device="cpu")
+
+
+def test_sweep_rejects_a_missing_selected_condition(tmp_path: Path) -> None:
+    selected_path = tmp_path / "selected.json"
+    selected_path.write_text(
+        json.dumps(
+            {
+                "linear": {
+                    "esm2": {
+                        "learning_rate": 1e-3,
+                        "weight_decay": 0.0,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    args = _sweep_args(
+        tmp_path,
+        "--representations",
+        "esm2",
+        "--head_types",
+        "mlp",
+        "--selected_hyperparameters",
+        str(selected_path),
+    )
+
+    with pytest.raises(ValueError, match="no valid 'mlp' section"):
+        train.build_run_configs(args, device="cpu")
+
+
 def test_sweep_normalizes_aliases_and_removes_duplicate_axes(tmp_path: Path) -> None:
     args = _sweep_args(
         tmp_path,
@@ -568,6 +693,7 @@ def test_aggregate_summary_reports_completed_seed_mean_and_sample_std(
 def test_sweep_continues_after_a_run_failure_and_saves_all_rows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _sweep_args(tmp_path)
     attempted_seeds: list[int] = []
     saved_rows: list[dict[str, object]] = []
 
