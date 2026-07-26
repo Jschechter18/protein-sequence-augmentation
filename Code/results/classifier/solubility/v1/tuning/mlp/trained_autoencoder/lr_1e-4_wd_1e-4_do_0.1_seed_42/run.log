@@ -1,0 +1,35 @@
+2026-07-25 11:03:05,124 INFO __main__: Using cached frozen embeddings: /home/ubuntu/research/protein-sequence-augmentation/data/processed/embeddings/solubility/trained_autoencoder/shared/train_aca2e7f82ea59e5f.pt
+2026-07-25 11:03:05,165 INFO __main__: Using cached frozen embeddings: /home/ubuntu/research/protein-sequence-augmentation/data/processed/embeddings/solubility/trained_autoencoder/shared/valid_04c5b7b88272c605.pt
+2026-07-25 11:03:05,176 INFO Code.src.training.classification_pipeline: Epoch 1/30
+2026-07-25 11:04:05,549 INFO Code.src.training.classification_pipeline: Epoch 1: train loss 0.6058, val loss 0.5772, val accuracy 0.6788
+2026-07-25 11:04:05,549 INFO Code.src.training.classification_pipeline: Epoch 2/30
+2026-07-25 11:05:05,745 INFO Code.src.training.classification_pipeline: Epoch 2: train loss 0.5674, val loss 0.5569, val accuracy 0.6984
+2026-07-25 11:05:05,745 INFO Code.src.training.classification_pipeline: Epoch 3/30
+2026-07-25 11:06:01,254 INFO Code.src.training.classification_pipeline: Epoch 3: train loss 0.5439, val loss 0.5426, val accuracy 0.7073
+2026-07-25 11:06:01,254 INFO Code.src.training.classification_pipeline: Epoch 4/30
+2026-07-25 11:06:49,346 INFO Code.src.training.classification_pipeline: Epoch 4: train loss 0.5263, val loss 0.5351, val accuracy 0.7151
+2026-07-25 11:06:49,346 INFO Code.src.training.classification_pipeline: Epoch 5/30
+2026-07-25 11:07:49,707 INFO Code.src.training.classification_pipeline: Epoch 5: train loss 0.5139, val loss 0.5316, val accuracy 0.7190
+2026-07-25 11:07:49,707 INFO Code.src.training.classification_pipeline: Epoch 6/30
+2026-07-25 11:08:50,078 INFO Code.src.training.classification_pipeline: Epoch 6: train loss 0.5043, val loss 0.5276, val accuracy 0.7241
+2026-07-25 11:08:50,078 INFO Code.src.training.classification_pipeline: Epoch 7/30
+2026-07-25 11:09:35,828 INFO Code.src.training.classification_pipeline: Epoch 7: train loss 0.4954, val loss 0.5260, val accuracy 0.7240
+2026-07-25 11:09:35,828 INFO Code.src.training.classification_pipeline: Epoch 8/30
+2026-07-25 11:10:36,172 INFO Code.src.training.classification_pipeline: Epoch 8: train loss 0.4873, val loss 0.5271, val accuracy 0.7241
+2026-07-25 11:10:36,172 INFO Code.src.training.classification_pipeline: Epoch 9/30
+2026-07-25 11:11:36,445 INFO Code.src.training.classification_pipeline: Epoch 9: train loss 0.4798, val loss 0.5268, val accuracy 0.7270
+2026-07-25 11:11:36,445 INFO Code.src.training.classification_pipeline: Epoch 10/30
+2026-07-25 11:12:21,972 INFO Code.src.training.classification_pipeline: Epoch 10: train loss 0.4731, val loss 0.5291, val accuracy 0.7290
+2026-07-25 11:12:21,972 INFO Code.src.training.classification_pipeline: Epoch 11/30
+2026-07-25 11:13:22,257 INFO Code.src.training.classification_pipeline: Epoch 11: train loss 0.4657, val loss 0.5251, val accuracy 0.7315
+2026-07-25 11:13:22,257 INFO Code.src.training.classification_pipeline: Epoch 12/30
+2026-07-25 11:14:22,642 INFO Code.src.training.classification_pipeline: Epoch 12: train loss 0.4593, val loss 0.5287, val accuracy 0.7311
+2026-07-25 11:14:22,642 INFO Code.src.training.classification_pipeline: Epoch 13/30
+2026-07-25 11:15:13,792 INFO Code.src.training.classification_pipeline: Epoch 13: train loss 0.4515, val loss 0.5285, val accuracy 0.7276
+2026-07-25 11:15:13,792 INFO Code.src.training.classification_pipeline: Epoch 14/30
+2026-07-25 11:16:11,827 INFO Code.src.training.classification_pipeline: Epoch 14: train loss 0.4452, val loss 0.5308, val accuracy 0.7298
+2026-07-25 11:16:11,827 INFO Code.src.training.classification_pipeline: Epoch 15/30
+2026-07-25 11:17:12,277 INFO Code.src.training.classification_pipeline: Epoch 15: train loss 0.4397, val loss 0.5354, val accuracy 0.7267
+2026-07-25 11:17:12,277 INFO Code.src.training.classification_pipeline: Epoch 16/30
+2026-07-25 11:18:12,621 INFO Code.src.training.classification_pipeline: Epoch 16: train loss 0.4344, val loss 0.5351, val accuracy 0.7299
+2026-07-25 11:18:12,621 INFO Code.src.training.classification_pipeline: Early stopping at epoch 16.

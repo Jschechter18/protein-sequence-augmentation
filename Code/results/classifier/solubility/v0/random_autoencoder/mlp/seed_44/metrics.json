@@ -1,0 +1,15 @@
+{
+  "accuracy": 0.607303651825913,
+  "auprc": 0.6580331498902885,
+  "auroc": 0.6787587587587587,
+  "balanced_accuracy": 0.6073973973973974,
+  "f1": 0.5169230769230769,
+  "loss": 0.6578371053847627,
+  "macro_f1": 0.5930590942980323,
+  "num_samples": 1999,
+  "positive_f1": 0.5169230769230769,
+  "positive_precision": 0.672,
+  "positive_recall": 0.42,
+  "precision": 0.672,
+  "recall": 0.42
+}

@@ -1,0 +1,8 @@
+2026-07-24 13:52:33,498 INFO Code.src.models.classifier: Using ESM-2 encoder on cuda:0
+2026-07-24 13:52:33,503 INFO Code.src.training.classification_pipeline: Epoch 1/30
+2026-07-24 14:11:27,265 INFO Code.src.training.classification_pipeline: Epoch 1: train loss 0.6260, val loss 0.6127, val accuracy 0.6564
+2026-07-24 14:11:27,265 INFO Code.src.training.classification_pipeline: Epoch 2/30
+2026-07-24 14:30:29,876 INFO Code.src.training.classification_pipeline: Epoch 2: train loss 0.6135, val loss 0.6085, val accuracy 0.6567
+2026-07-24 14:30:29,876 INFO Code.src.training.classification_pipeline: Epoch 3/30
+2026-07-24 14:49:25,589 INFO Code.src.training.classification_pipeline: Epoch 3: train loss 0.6096, val loss 0.6076, val accuracy 0.6642
+2026-07-24 14:49:25,589 INFO Code.src.training.classification_pipeline: Epoch 4/30
