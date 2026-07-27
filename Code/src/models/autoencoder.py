@@ -3,7 +3,7 @@
 import torch
 from torch import nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-from utils.dataloader import EOS_IDX, VOCAB_SIZE
+from Code.src.utils.dataloader import EOS_IDX, VOCAB_SIZE
 import warnings
 
 

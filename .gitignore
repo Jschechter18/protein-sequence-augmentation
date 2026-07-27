@@ -54,10 +54,11 @@ outputs/
 # =========================================================
 # Data Files
 # =========================================================
-data/raw/
-data/processed/
-!data/
-!data/.gitkeep
+# Ignore everything inside the data directory
+data/*
+
+# Keep .gitkeep tracked so empty folder structure stays in git
+!data/**/.gitkeep
 
 # =========================================================
 # External Repositories
@@ -73,16 +74,9 @@ Code/results/*
 !Code/results/.gitkeep
 !Code/results/README.md
 !Code/results/autoencoder
-!Code/results/esm2
+!Code/results/classifier
 !Code/results/figures
 !Code/results/tables
-<<<<<<< HEAD
-=======
-
-# =========================================================
-# Models
-# =========================================================
->>>>>>> origin/main
 
 # =========================================================
 # Models
@@ -90,6 +84,7 @@ Code/results/*
 Code/src/models/*
 !Code/src/models/.gitkeep
 !Code/src/models/README.md
+!Code/src/models/*.py
 
 # =========================================================
 # Pytest

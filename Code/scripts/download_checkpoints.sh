@@ -5,8 +5,11 @@ set -euo pipefail
 DRIVE_FOLDER_ID="1vE6wXgCHVCZ-yhsc2QH8Vlw9u1hd8eda"
 DRIVE_FOLDER_URL="https://drive.google.com/drive/folders/${DRIVE_FOLDER_ID}"
 
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(cd "${script_dir}/../.." && pwd)
+
 # Local destination, relative to repo root
-DEST_DIR="Code/results/autoencoder/solubility/checkpoints"
+DEST_DIR="${repo_root}/checkpoints/autoencoder/solubility"
 
 mkdir -p "$DEST_DIR"
 
