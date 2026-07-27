@@ -300,7 +300,7 @@ def test_sweep_search_space_depends_on_layer_type() -> None:
         "num_layers": (2, 3),
         "latent_dim": (128, 256),
         "dim_feedforward": (1024, 2048),
-        "teacher_forcing_dropout_rate": (0.0, 0.1),
+        "use_cnn_before_transformer": (False, True),
     }
 
     with pytest.raises(ValueError, match="Unsupported layer_type"):
@@ -587,7 +587,7 @@ def test_main_sweep_uses_transformer_search_space_and_artifact_suffixes(monkeypa
     assert all(call["kwargs"]["artifact_suffix"].startswith("transformer_") for call in train_calls)
     assert any("latent128" in call["kwargs"]["artifact_suffix"] for call in train_calls)
     assert any("dim_feedforward2048" in call["kwargs"]["artifact_suffix"] for call in train_calls)
-    assert any("tfd0p1" in call["kwargs"]["artifact_suffix"] for call in train_calls)
+    assert any("use_cnn_before_transformerTrue" in call["kwargs"]["artifact_suffix"] for call in train_calls)
     assert calls["artifact_suffixes"] == [call["kwargs"]["artifact_suffix"] for call in train_calls]
 
 
