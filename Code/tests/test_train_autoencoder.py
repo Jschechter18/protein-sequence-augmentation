@@ -7,7 +7,12 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
 from training import train_autoencoder
-from utils.dataloader import VOCAB_SIZE, collate_sequence_batch
+from utils.dataloader import (
+    LengthAwareBatchSampler,
+    VOCAB_SIZE,
+    collate_sequence_batch,
+    make_length_aware_dataloader,
+)
 from utils.hyperparameters import (
     AutoencoderHyperparameters as Params,
     sweep_search_space_for_layer,
@@ -341,6 +346,10 @@ def test_train_uses_shifted_decoder_inputs_and_validation_loss(monkeypatch):
     assert len(scheduler.metrics) == 1
     assert scheduler.metrics[0] == pytest.approx(history["val_loss"][0])
     assert history["autoregressive_val"] == []
+    assert history["batching"] == {
+        "length_aware": False,
+        "pool_size_multiplier": None,
+    }
 
 
 def test_train_runs_autoregressive_validation_every_10_epochs(monkeypatch):
@@ -401,6 +410,32 @@ def test_length_curriculum_uses_shortest_examples_first():
     assert sorted(batch["length"].tolist()) == [3, 4]
 
 
+def test_length_curriculum_preserves_length_aware_batching():
+    dataloader = DataLoader(
+        _LengthDataset([8, 3, 6, 4, 9, 5]),
+        batch_size=2,
+        shuffle=False,
+        collate_fn=collate_sequence_batch,
+    )
+    dataloader = make_length_aware_dataloader(dataloader)
+
+    curriculum_loader, subset_size, _ = train_autoencoder.make_length_curriculum_dataloader(
+        dataloader,
+        epoch=0,
+        curriculum_epochs=2,
+        start_fraction=0.5,
+        num_workers=0,
+    )
+
+    assert subset_size == 3
+    assert isinstance(curriculum_loader.batch_sampler, LengthAwareBatchSampler)
+    assert sorted(
+        length
+        for batch in curriculum_loader
+        for length in batch["length"].tolist()
+    ) == [3, 4, 5]
+
+
 def test_make_overfit_dataloaders_uses_same_training_subset():
     dataloader = DataLoader(
         _LengthDataset([3, 4, 5, 6, 7]),
@@ -419,6 +454,25 @@ def test_make_overfit_dataloaders_uses_same_training_subset():
     assert train_loader.batch_size == dataloader.batch_size
     assert val_loader.batch_size == dataloader.batch_size
     assert sorted(val_loader.dataset[i]["length"].item() for i in range(len(val_loader.dataset))) == [3, 4, 5, 6]
+
+
+def test_make_overfit_dataloaders_preserves_length_aware_training():
+    dataloader = DataLoader(
+        _LengthDataset([3, 4, 5, 6, 7]),
+        batch_size=2,
+        shuffle=False,
+        collate_fn=collate_sequence_batch,
+    )
+    dataloader = make_length_aware_dataloader(dataloader)
+
+    train_loader, val_loader = train_autoencoder.make_overfit_dataloaders(
+        dataloader,
+        num_batches=2,
+    )
+
+    assert isinstance(train_loader.batch_sampler, LengthAwareBatchSampler)
+    assert not isinstance(val_loader.batch_sampler, LengthAwareBatchSampler)
+    assert len(train_loader.dataset) == len(val_loader.dataset) == 4
 
 
 def test_make_overfit_dataloaders_rejects_invalid_batch_count():
@@ -469,6 +523,7 @@ def test_main_validates_args_and_starts_gru_autoencoder_training(monkeypatch, tm
     assert calls["artifact_suffixes"] == [None, None]
     assert calls["train"]["kwargs"]["curriculum_epochs"] == 3
     assert calls["train"]["kwargs"]["curriculum_start_fraction"] == pytest.approx(0.4)
+    assert calls["dataloader_kwargs"][1]["length_aware_batching"] is False
 
 
 def test_main_cli_layer_type_override_starts_transformer_pipeline(monkeypatch, tmp_path):
@@ -493,6 +548,33 @@ def test_main_cli_layer_type_override_starts_transformer_pipeline(monkeypatch, t
     assert calls["train"]["kwargs"]["layer_type"] == "transformer"
     assert calls["train"]["kwargs"]["artifact_suffix"] == "transformer"
     assert calls["artifact_suffixes"] == ["transformer", "transformer"]
+    assert calls["dataloader_kwargs"][1]["length_aware_batching"] is False
+
+
+def test_main_enables_requested_length_aware_gru_batching(monkeypatch, tmp_path):
+    calls = _configure_mock_main_pipeline(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "train_autoencoder.py",
+            "--task",
+            "solubility",
+            "--version",
+            "999999",
+            "--length_aware_batching",
+            "--length_pool_size_multiplier",
+            "8",
+        ],
+    )
+
+    train_autoencoder.main()
+
+    train_loader_call = calls["dataloader_kwargs"][1]
+    assert train_loader_call["length_aware_batching"] is True
+    assert train_loader_call["length_pool_size_multiplier"] == 8
+    assert calls["train"]["kwargs"]["length_aware_batching"] is True
+    assert calls["train"]["kwargs"]["length_pool_size_multiplier"] == 8
 
 
 def test_main_uses_hyperparameter_layer_type_when_cli_omits_it(monkeypatch, tmp_path):

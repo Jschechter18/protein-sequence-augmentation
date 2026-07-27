@@ -1,6 +1,12 @@
 import torch
 from torch.utils.data import Dataset, DataLoader, Subset
 
+from .dataloader import (
+    LengthAwareBatchSampler,
+    dataloader_batch_size,
+    make_length_aware_dataloader,
+)
+
 
 def _example_length(dataset: Dataset, index: int) -> int:
     """Return sequence length for a dataset item without assuming one dataset type."""
@@ -53,16 +59,35 @@ def make_length_curriculum_dataloader(
     subset_size = max(1, int(round(num_examples * fraction)))
     sorted_indices = sorted(range(num_examples), key=lambda idx: _example_length(dataset, idx))
     subset = Subset(dataset, sorted_indices[:subset_size])
+    length_aware_sampler = train_dataloader.batch_sampler
+    generator = train_dataloader.generator
+    if isinstance(length_aware_sampler, LengthAwareBatchSampler):
+        generator = length_aware_sampler.generator
 
-    return (
-        DataLoader(
+    curriculum_loader = DataLoader(
             subset,
-            batch_size=train_dataloader.batch_size,
+            batch_size=dataloader_batch_size(train_dataloader),
             shuffle=True,
             num_workers=num_workers,
             pin_memory=train_dataloader.pin_memory,
             collate_fn=train_dataloader.collate_fn,
-        ),
+            generator=generator,
+            worker_init_fn=train_dataloader.worker_init_fn,
+            persistent_workers=(
+                train_dataloader.persistent_workers if num_workers > 0 else False
+            ),
+        )
+    if isinstance(length_aware_sampler, LengthAwareBatchSampler):
+        curriculum_loader = make_length_aware_dataloader(
+            curriculum_loader,
+            pool_size_multiplier=(
+                length_aware_sampler.pool_size
+                // length_aware_sampler.batch_size
+            ),
+        )
+
+    return (
+        curriculum_loader,
         subset_size,
         fraction,
     )

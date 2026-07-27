@@ -8,7 +8,7 @@ from typing import Any, Mapping
 @dataclass
 class Hyperparameters:
     batch_size: int = 32
-    num_epochs: int = 100 # 100 starting to seem too short
+    num_epochs: int = 100 # for final run, move up to 200
     shuffle: bool = True
     dropout: float = 0.1
     patience: int = 10

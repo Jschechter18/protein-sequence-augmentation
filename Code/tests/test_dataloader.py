@@ -5,6 +5,7 @@ import torch
 from utils.dataloader import (
     BOS_IDX,
     EOS_IDX,
+    LengthAwareBatchSampler,
     PAD_IDX,
     SequenceDataset,
     create_dataloader,
@@ -238,6 +239,95 @@ def test_generator_makes_shuffle_order_reproducible(tmp_path: Path) -> None:
     )
 
     assert _collect_sample_ids(first) == _collect_sample_ids(second)
+
+
+def test_length_aware_batching_is_reproducible_and_covers_dataset(
+    tmp_path: Path,
+) -> None:
+    sequences = ["A" * length for length in range(1, 41)]
+    write_csv(
+        tmp_path,
+        {
+            "idx": list(range(len(sequences))),
+            "sequence": sequences,
+            "label": [0] * len(sequences),
+        },
+    )
+
+    def make_loader(seed: int):
+        return create_dataloader(
+            task="toy",
+            split="train",
+            data_dir=tmp_path,
+            batch_size=4,
+            shuffle=True,
+            use_cache=False,
+            generator=torch.Generator().manual_seed(seed),
+            length_aware_batching=True,
+            length_pool_size_multiplier=5,
+        )
+
+    first = make_loader(123)
+    second = make_loader(123)
+
+    assert isinstance(first.batch_sampler, LengthAwareBatchSampler)
+    assert _collect_sample_ids(first) == _collect_sample_ids(second)
+    assert sorted(_collect_sample_ids(make_loader(123))) == list(range(40))
+
+
+def test_length_aware_batching_reduces_within_batch_length_spread(
+    tmp_path: Path,
+) -> None:
+    sequences = ["A" * length for length in range(1, 65)]
+    write_csv(
+        tmp_path,
+        {
+            "idx": list(range(len(sequences))),
+            "sequence": sequences,
+            "label": [0] * len(sequences),
+        },
+    )
+    loader = create_dataloader(
+        task="toy",
+        split="train",
+        data_dir=tmp_path,
+        batch_size=4,
+        use_cache=False,
+        generator=torch.Generator().manual_seed(123),
+        length_aware_batching=True,
+        length_pool_size_multiplier=16,
+    )
+
+    batch_spreads = [
+        max(batch["length"].tolist()) - min(batch["length"].tolist())
+        for batch in loader
+    ]
+
+    assert max(batch_spreads) <= 3
+
+
+def test_length_aware_batching_supports_filtered_subset(tmp_path: Path) -> None:
+    write_csv(
+        tmp_path,
+        {
+            "idx": list(range(8)),
+            "sequence": ["A" * length for length in range(1, 9)],
+            "label": [0] * 8,
+        },
+    )
+    loader = create_dataloader(
+        task="toy",
+        split="train",
+        data_dir=tmp_path,
+        batch_size=2,
+        use_cache=False,
+        loader_type="max_length",
+        max_length=4,
+        length_aware_batching=True,
+    )
+
+    assert isinstance(loader.batch_sampler, LengthAwareBatchSampler)
+    assert sorted(_collect_sample_ids(loader)) == [0, 1, 2, 3]
 
 
 def test_persistent_workers_is_disabled_without_workers(tmp_path: Path) -> None:
