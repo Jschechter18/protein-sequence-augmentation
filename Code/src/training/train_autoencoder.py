@@ -27,6 +27,11 @@ from torch.nn.utils import clip_grad_norm_
 from sklearn.metrics import accuracy_score
 from tqdm import tqdm
 
+# Support both the trainer's existing top-level imports and Code.src imports
+# used by the model modules during direct script execution.
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 SRC_DIR = Path(__file__).resolve().parents[1]
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
