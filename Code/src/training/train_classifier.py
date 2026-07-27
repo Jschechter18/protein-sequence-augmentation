@@ -10,6 +10,10 @@ Pipeline going forward:
 1. Stage 1: Hyperparameter tuning for the best representation/head combination
 python -m Code.src.training.train_classifier \
   --hp_tune \
+  --representations \
+    random_autoencoder \
+    trained_autoencoder \
+    trained_autoencoder+esm2
   --version <number>
 
 2. Stage 2: Run the experiment using the from the best configuration (for each representation/head combination)
