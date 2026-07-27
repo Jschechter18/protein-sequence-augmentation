@@ -83,6 +83,59 @@ TUNING_LEARNING_RATES = (1e-4, 3e-4, 1e-3)
 TUNING_WEIGHT_DECAYS = (0.0, 1e-4)
 TUNING_MLP_DROPOUTS = (0.1, 0.3)
 HEAD_TYPES = ("linear", "mlp")
+# Tuning starts with these known winners so a partial --representations run still
+# produces a complete selection file. Results from requested conditions replace
+# their defaults below.
+DEFAULT_SELECTED_HYPERPARAMETERS = {
+    "linear": {
+        "random_autoencoder": {
+            "learning_rate": 1e-3,
+            "weight_decay": 0.0,
+            "selection_source": "hardcoded_reuse",
+        },
+        "esm2": {
+            "learning_rate": 1e-3,
+            "weight_decay": 0.0,
+            "selection_source": "hardcoded_reuse",
+        },
+        "trained_autoencoder": {
+            "learning_rate": 1e-3,
+            "weight_decay": 0.0,
+            "selection_source": "hardcoded_default",
+        },
+        "trained_autoencoder+esm2": {
+            "learning_rate": 3e-4,
+            "weight_decay": 0.0,
+            "selection_source": "hardcoded_default",
+        },
+    },
+    "mlp": {
+        "random_autoencoder": {
+            "learning_rate": 1e-3,
+            "weight_decay": 0.0,
+            "dropout": 0.1,
+            "selection_source": "hardcoded_reuse",
+        },
+        "esm2": {
+            "learning_rate": 3e-4,
+            "weight_decay": 0.0,
+            "dropout": 0.3,
+            "selection_source": "hardcoded_reuse",
+        },
+        "trained_autoencoder": {
+            "learning_rate": 1e-4,
+            "weight_decay": 0.0,
+            "dropout": 0.1,
+            "selection_source": "hardcoded_default",
+        },
+        "trained_autoencoder+esm2": {
+            "learning_rate": 1e-3,
+            "weight_decay": 0.0,
+            "dropout": 0.1,
+            "selection_source": "hardcoded_default",
+        },
+    },
+}
 LEGACY_REPRESENTATIONS = ("autoencoder+esm2",)
 DEFAULT_AE_CHECKPOINT = (
     PROJECT_ROOT
@@ -1585,7 +1638,17 @@ def save_summaries(configs: list[ClassifierRunConfig], rows: list[dict[str, Any]
 
     completed = summary[summary["status"] == "complete"].copy()
     if is_tuning:
-        selected: dict[str, dict[str, dict[str, Any]]] = {}
+        selected: dict[str, dict[str, dict[str, Any]]] = json.loads(
+            json.dumps(DEFAULT_SELECTED_HYPERPARAMETERS)
+        )
+        # A requested condition must earn its selection from a completed trial.
+        # Removing its fallback prevents a failed retune from silently reusing a
+        # checkpoint-incompatible default.
+        requested_conditions = {
+            (config.head_type, config.representation) for config in configs
+        }
+        for head_type, representation in requested_conditions:
+            selected.get(head_type, {}).pop(representation, None)
         if not completed.empty and "best_val_f1" in completed:
             ranked = completed.sort_values(
                 [

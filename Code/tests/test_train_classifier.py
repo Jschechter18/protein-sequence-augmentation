@@ -412,6 +412,105 @@ def test_tuning_summaries_and_selected_hyperparameters_are_saved_separately(
     }
 
 
+def test_partial_tuning_output_includes_hardcoded_unselected_conditions(
+    tmp_path: Path,
+) -> None:
+    args = train.parse_args(
+        [
+            "--hp_tune",
+            "--results_dir",
+            str(tmp_path),
+            "--representations",
+            "trained_autoencoder",
+            "--head_types",
+            "linear",
+        ]
+    )
+    config = train.build_tuning_configs(args, device="cpu")[0]
+    row = train._row_from_metrics(
+        config,
+        {
+            "selection_epoch": 2,
+            "best_val_f1": 0.7,
+            "val_loss_at_selection": 0.5,
+            "val_accuracy_at_selection": 0.75,
+        },
+        "complete",
+    )
+
+    train.save_summaries([config], [row])
+
+    selected = json.loads(
+        (
+            tmp_path
+            / "solubility"
+            / "v1"
+            / "tuning"
+            / "selected_hyperparameters.json"
+        ).read_text()
+    )
+    assert selected["linear"]["random_autoencoder"] == {
+        "learning_rate": 1e-3,
+        "weight_decay": 0.0,
+        "selection_source": "hardcoded_reuse",
+    }
+    assert selected["mlp"]["esm2"] == {
+        "learning_rate": 3e-4,
+        "weight_decay": 0.0,
+        "dropout": 0.3,
+        "selection_source": "hardcoded_reuse",
+    }
+    assert "trained_autoencoder" in selected["linear"]
+    assert "selection_source" not in selected["linear"]["trained_autoencoder"]
+
+    final_configs = train.build_run_configs(_sweep_args(tmp_path), device="cpu")
+    final_by_condition = {
+        (config.head_type, config.representation, config.seed): config
+        for config in final_configs
+    }
+    assert len(final_configs) == 24
+    assert final_by_condition[("linear", "random_autoencoder", 42)].learning_rate == (
+        pytest.approx(1e-3)
+    )
+    assert final_by_condition[("mlp", "esm2", 42)].dropout == pytest.approx(0.3)
+    assert final_by_condition[("linear", "trained_autoencoder", 42)].learning_rate == (
+        pytest.approx(config.learning_rate)
+    )
+
+
+def test_failed_requested_tuning_condition_does_not_use_hardcoded_default(
+    tmp_path: Path,
+) -> None:
+    args = train.parse_args(
+        [
+            "--hp_tune",
+            "--results_dir",
+            str(tmp_path),
+            "--representations",
+            "trained_autoencoder",
+            "--head_types",
+            "linear",
+        ]
+    )
+    config = train.build_tuning_configs(args, device="cpu")[0]
+    failed_row = train._row_from_metrics(config, None, "failed", "test failure")
+
+    train.save_summaries([config], [failed_row])
+
+    selected = json.loads(
+        (
+            tmp_path
+            / "solubility"
+            / "v1"
+            / "tuning"
+            / "selected_hyperparameters.json"
+        ).read_text()
+    )
+    assert "trained_autoencoder" not in selected["linear"]
+    assert "random_autoencoder" in selected["linear"]
+    assert "trained_autoencoder" in selected["mlp"]
+
+
 def test_default_stage1_sweep_has_24_unique_balanced_configs(tmp_path: Path) -> None:
     configs = train.build_run_configs(_sweep_args(tmp_path), device="cpu")
     identities = {
