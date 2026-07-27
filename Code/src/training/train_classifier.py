@@ -25,22 +25,15 @@ The final experiment should:
 from __future__ import annotations
 
 import argparse
-import hashlib
-import importlib.metadata
 import json
 import logging
 import os
-import platform
-import random
-import subprocess
 import sys
 import tempfile
 import time
 import traceback
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
-from functools import lru_cache
-from itertools import combinations, product
+from dataclasses import dataclass
+from itertools import product
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -49,12 +42,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 
-from Code.src.models.autoencoder import ProteinSequenceAutoencoder
 from Code.src.models.classifier import (
     CANONICAL_EMBEDDING_TYPES,
     CachedEmbeddingClassifier,
@@ -65,8 +56,43 @@ from Code.src.training.classification_pipeline import (
     ProteinClassificationTrainingPipeline,
     save_json,
 )
-from Code.src.utils.dataloader import collate_sequence_batch, create_dataloader
-from Code.src.utils.utils import set_random_seed
+from Code.src.utils.classifier_data import (
+    configure_reproducibility,
+    create_sequence_dataloader as _create_sequence_dataloader_impl,
+    load_state_dict as _load_state_dict,
+    read_classification_split as _read_classification_split,
+    resolve_split_source as _resolve_split_source,
+    seed_worker,
+    validate_dataset_integrity,
+    validate_preflight,
+)
+from Code.src.utils.embedding_cache import (
+    EMBEDDING_CACHE_SCHEMA_VERSION,
+    CachedEmbeddingDataset,
+    atomic_torch_save as _atomic_torch_save,
+    build_embedding_cache as _build_embedding_cache_impl,
+    cached_embedding_dataloader as _cached_embedding_dataloader,
+    create_run_dataloaders as _create_run_dataloaders_impl,
+    embedding_cache_metadata as _embedding_cache_metadata_impl,
+    embedding_cache_path as _embedding_cache_path_impl,
+    ensure_embedding_caches as _ensure_embedding_caches_impl,
+    load_embedding_cache as _load_embedding_cache,
+)
+from Code.src.utils.experiment_artifacts import (
+    archive_run_dir as _archive_run_dir,
+    attach_run_log as _attach_run_log,
+    _cached_file_sha256,
+    config_payload as _config_payload_impl,
+    data_source_metadata as _data_source_metadata_impl,
+    file_sha256 as _file_sha256,
+    git_metadata as _git_metadata_impl,
+    is_complete as _is_complete,
+    read_json as _read_json,
+    runtime_metadata as _runtime_metadata,
+    status_path as _status_path,
+    utc_now as _utc_now,
+    validate_existing_config as _validate_existing_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +176,10 @@ FINGERPRINTED_SOURCE_FILES = (
     "Code/src/models/classifier.py",
     "Code/src/training/classification_pipeline.py",
     "Code/src/training/train_classifier.py",
+    "Code/src/utils/classifier_data.py",
     "Code/src/utils/dataloader.py",
+    "Code/src/utils/embedding_cache.py",
+    "Code/src/utils/experiment_artifacts.py",
     "Code/src/utils/sequence_dataset.py",
 )
 
@@ -675,177 +704,6 @@ def build_run_configs(
     return configs
 
 
-def _load_state_dict(path: Path) -> dict[str, torch.Tensor]:
-    try:
-        checkpoint = torch.load(path, map_location="cpu", weights_only=True)
-    except TypeError:  # PyTorch before weights_only support.
-        checkpoint = torch.load(path, map_location="cpu")
-    if not isinstance(checkpoint, dict):
-        raise TypeError(f"Autoencoder checkpoint must be a mapping: {path}")
-    state_dict = checkpoint.get("model_state_dict", checkpoint)
-    if not isinstance(state_dict, dict):
-        raise TypeError(f"Autoencoder checkpoint has no valid model state: {path}")
-    return state_dict
-
-
-def _read_classification_split(
-    config: ClassifierRunConfig, split: str
-) -> pd.DataFrame:
-    path, is_combined = _resolve_split_source(config, split)
-    frame = pd.read_csv(path)
-    if is_combined:
-        if "split" not in frame.columns:
-            raise ValueError(f"Combined data file {path} has no 'split' column.")
-        frame = frame.loc[frame["split"] == split]
-    required = {"sequence", "label"}
-    missing = required.difference(frame.columns)
-    if missing:
-        raise ValueError(f"Data file {path} is missing columns: {sorted(missing)}")
-    if frame.empty:
-        raise ValueError(f"The {config.dataset} {split} split is empty.")
-    return frame
-
-
-def validate_dataset_integrity(config: ClassifierRunConfig) -> None:
-    """Reject malformed labels and exact sequence leakage before any run starts."""
-
-    sequences_by_split: dict[str, set[str]] = {}
-    for split in ("train", "valid", "test"):
-        frame = _read_classification_split(config, split)
-        if frame["sequence"].isna().any():
-            raise ValueError(f"The {config.dataset} {split} split has missing sequences.")
-        normalized_sequences = frame["sequence"].astype(str).str.upper().str.strip()
-        if normalized_sequences.eq("").any():
-            raise ValueError(f"The {config.dataset} {split} split has empty sequences.")
-
-        labels = pd.to_numeric(frame["label"], errors="coerce")
-        if labels.isna().any() or not np.isfinite(labels.to_numpy(dtype=float)).all():
-            raise ValueError(f"The {config.dataset} {split} split has invalid labels.")
-        label_values = labels.to_numpy(dtype=float)
-        if not np.equal(label_values, np.floor(label_values)).all():
-            raise ValueError(
-                f"The {config.dataset} {split} split has non-integer class labels."
-            )
-        if ((label_values < 0) | (label_values >= config.num_classes)).any():
-            raise ValueError(
-                f"The {config.dataset} {split} split has labels outside "
-                f"[0, {config.num_classes - 1}]."
-            )
-        if "idx" in frame.columns and (
-            frame["idx"].isna().any() or frame["idx"].duplicated().any()
-        ):
-            raise ValueError(
-                f"The {config.dataset} {split} split must have unique, non-null idx values."
-            )
-        sequences_by_split[split] = set(normalized_sequences)
-
-    for left, right in combinations(("train", "valid", "test"), 2):
-        overlap = sequences_by_split[left].intersection(sequences_by_split[right])
-        if overlap:
-            raise ValueError(
-                f"Detected {len(overlap)} exact normalized sequence(s) shared by the "
-                f"{left} and {right} splits for {config.dataset}; refusing a leaky run."
-            )
-
-
-def validate_preflight(configs: list[ClassifierRunConfig]) -> None:
-    if not configs:
-        raise ValueError("At least one classifier run configuration is required.")
-    validate_dataset_integrity(configs[0])
-    representations = {config.representation for config in configs}
-    uses_autoencoder_checkpoint = bool(
-        representations & {"trained_autoencoder", "trained_autoencoder+esm2"}
-    )
-    if uses_autoencoder_checkpoint:
-        checkpoint_values = {config.autoencoder_checkpoint for config in configs}
-        if len(checkpoint_values) != 1 or None in checkpoint_values:
-            raise ValueError("Trained-autoencoder runs require one explicit checkpoint")
-        checkpoint_path = Path(next(iter(checkpoint_values)))  # type: ignore[arg-type]
-        if not checkpoint_path.is_file():
-            raise FileNotFoundError(f"Autoencoder checkpoint not found: {checkpoint_path}")
-        exemplar = configs[0]
-        model = ProteinSequenceAutoencoder(
-            embedding_dim=exemplar.autoencoder_embedding_dim,
-            cnn_out_channels=exemplar.autoencoder_cnn_channels,
-            hidden_dim=exemplar.autoencoder_hidden_dim,
-            latent_dim=exemplar.autoencoder_latent_dim,
-            num_layers=exemplar.autoencoder_num_layers,
-            kernel_size=exemplar.autoencoder_kernel_size,
-        )
-        try:
-            model.load_state_dict(_load_state_dict(checkpoint_path), strict=True)
-        except RuntimeError as error:
-            raise ValueError(
-                "Autoencoder architecture arguments do not match checkpoint "
-                f"{checkpoint_path}: {error}"
-            ) from error
-
-    if representations & {"esm2", "trained_autoencoder+esm2"}:
-        import esm
-
-        if not hasattr(esm, "pretrained") or not hasattr(
-            esm.pretrained, "esm2_t6_8M_UR50D"
-        ):
-            raise ImportError(
-                "ESM-2 runs require the 'fair-esm' distribution. Remove the conflicting "
-                "'esm' package and install the pinned requirements."
-            )
-
-
-def seed_worker(worker_id: int) -> None:
-    del worker_id
-    worker_seed = torch.initial_seed() % (2**32)
-    np.random.seed(worker_seed)
-    random.seed(worker_seed)
-
-
-def configure_reproducibility(seed: int, deterministic: bool) -> None:
-    set_random_seed(seed)
-    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
-    torch.use_deterministic_algorithms(deterministic, warn_only=False)
-    if torch.backends.cudnn.is_available():
-        torch.backends.cudnn.deterministic = deterministic
-        torch.backends.cudnn.benchmark = False
-    if deterministic:
-        if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
-            torch.backends.cuda.matmul.allow_tf32 = False
-        if hasattr(torch.backends, "cudnn"):
-            torch.backends.cudnn.allow_tf32 = False
-
-
-EMBEDDING_CACHE_SCHEMA_VERSION = 1
-
-
-class CachedEmbeddingDataset(Dataset):
-    def __init__(self, payload: dict[str, Any]) -> None:
-        self.embeddings = payload["embeddings"].float()
-        self.labels = payload["labels"].long()
-        self.lengths = payload["lengths"].long()
-        self.sequences = list(payload["sequences"])
-        self.sample_ids = list(payload["sample_ids"])
-        size = len(self.labels)
-        if (
-            self.embeddings.ndim != 2
-            or len(self.embeddings) != size
-            or len(self.lengths) != size
-            or len(self.sequences) != size
-            or len(self.sample_ids) != size
-        ):
-            raise ValueError("Cached embedding payload contains inconsistent dimensions.")
-
-    def __len__(self) -> int:
-        return len(self.labels)
-
-    def __getitem__(self, index: int) -> dict[str, Any]:
-        return {
-            "embedding": self.embeddings[index],
-            "label": self.labels[index],
-            "length": self.lengths[index],
-            "sequence": self.sequences[index],
-            "sample_id": self.sample_ids[index],
-        }
-
-
 def _create_sequence_dataloader(
     config: ClassifierRunConfig,
     split: str,
@@ -853,22 +711,8 @@ def _create_sequence_dataloader(
     shuffle: bool,
     offset: int,
 ) -> DataLoader:
-    generator = torch.Generator()
-    generator.manual_seed(config.seed + offset)
-    return create_dataloader(
-        task=config.dataset,
-        split=split,
-        data_dir=config.data_dir,
-        mode="classification",
-        encoding="char",
-        batch_size=config.batch_size,
-        shuffle=shuffle,
-        num_workers=config.num_workers,
-        pin_memory=config.pin_memory,
-        persistent_workers=config.persistent_workers,
-        generator=generator,
-        worker_init_fn=seed_worker,
-        use_cache=config.use_cache,
+    return _create_sequence_dataloader_impl(
+        config, split, shuffle=shuffle, offset=offset
     )
 
 
@@ -876,99 +720,24 @@ def _embedding_cache_metadata(
     config: ClassifierRunConfig,
     split: str,
 ) -> dict[str, Any]:
-    uses_trained_autoencoder = config.representation in {
-        "trained_autoencoder",
-        "trained_autoencoder+esm2",
-    }
-    try:
-        fair_esm_version = importlib.metadata.version("fair-esm")
-    except importlib.metadata.PackageNotFoundError:
-        fair_esm_version = None
-    return {
-        "schema_version": EMBEDDING_CACHE_SCHEMA_VERSION,
-        "embedding_dtype": "float32",
-        "encoder_evaluation_mode": True,
-        "dataset": config.dataset,
-        "split": split,
-        "representation": config.representation,
-        "encoder_seed": config.seed
-        if config.representation == "random_autoencoder"
-        else None,
-        "source": _data_source_metadata(config)[split],
-        "autoencoder_checkpoint_sha256": (
-            _file_sha256(config.autoencoder_checkpoint)
-            if uses_trained_autoencoder
-            else None
-        ),
-        "autoencoder_architecture": {
-            "embedding_dim": config.autoencoder_embedding_dim,
-            "cnn_channels": config.autoencoder_cnn_channels,
-            "hidden_dim": config.autoencoder_hidden_dim,
-            "latent_dim": config.autoencoder_latent_dim,
-            "num_layers": config.autoencoder_num_layers,
-            "kernel_size": config.autoencoder_kernel_size,
-        }
-        if "autoencoder" in config.representation
-        else None,
-        "esm_model_name": config.esm_model_name
-        if "esm2" in config.representation
-        else None,
-        "esm_max_sequence_length": config.esm_max_sequence_length
-        if "esm2" in config.representation
-        else None,
-        "encoder_source_sha256": {
-            "autoencoder": _file_sha256(PROJECT_ROOT / "Code/src/models/autoencoder.py"),
-            "classifier": _file_sha256(PROJECT_ROOT / "Code/src/models/classifier.py"),
-            "dataloader": _file_sha256(PROJECT_ROOT / "Code/src/utils/dataloader.py"),
-            "sequence_dataset": _file_sha256(
-                PROJECT_ROOT / "Code/src/utils/sequence_dataset.py"
-            ),
-            "cache_pipeline": _file_sha256(
-                PROJECT_ROOT / "Code/src/training/train_classifier.py"
-            ),
-        },
-        "library_versions": {
-            "torch": str(torch.__version__),
-            "fair_esm": fair_esm_version if "esm2" in config.representation else None,
-        },
-    }
+    return _embedding_cache_metadata_impl(
+        config,
+        split,
+        project_root=PROJECT_ROOT,
+        resolve_split_source=_resolve_split_source,
+    )
 
 
 def _embedding_cache_path(
     config: ClassifierRunConfig,
     split: str,
 ) -> tuple[Path, dict[str, Any]]:
-    metadata = _embedding_cache_metadata(config, split)
-    material = json.dumps(metadata, sort_keys=True, separators=(",", ":"))
-    fingerprint = hashlib.sha256(material.encode("utf-8")).hexdigest()
-    seed_dir = (
-        f"seed_{config.seed}"
-        if config.representation == "random_autoencoder"
-        else "shared"
+    return _embedding_cache_path_impl(
+        config,
+        split,
+        project_root=PROJECT_ROOT,
+        resolve_split_source=_resolve_split_source,
     )
-    path = (
-        Path(config.embedding_cache_root)
-        / config.dataset
-        / config.representation
-        / seed_dir
-        / f"{split}_{fingerprint[:16]}.pt"
-    )
-    metadata["fingerprint"] = fingerprint
-    return path, metadata
-
-
-def _atomic_torch_save(payload: dict[str, Any], path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    os.close(descriptor)
-    temporary = Path(temporary_name)
-    try:
-        torch.save(payload, temporary)
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 def _build_embedding_cache(
@@ -978,138 +747,35 @@ def _build_embedding_cache(
     path: Path,
     metadata: dict[str, Any],
 ) -> None:
-    split_offset = {"train": 0, "valid": 1, "test": 2}[split]
-    loader = _create_sequence_dataloader(
-        config, split, shuffle=False, offset=split_offset
+    _build_embedding_cache_impl(
+        config,
+        split,
+        model,
+        path,
+        metadata,
+        sequence_dataloader=_create_sequence_dataloader,
     )
-    embeddings: list[torch.Tensor] = []
-    labels: list[torch.Tensor] = []
-    lengths: list[torch.Tensor] = []
-    sequences: list[str] = []
-    sample_ids: list[Any] = []
-    model.eval()
-    with torch.inference_mode():
-        for batch in loader:
-            embeddings.append(model.encode(batch).detach().cpu())
-            labels.append(batch["label"].detach().cpu().long().reshape(-1))
-            lengths.append(batch["length"].detach().cpu().long().reshape(-1))
-            sequences.extend(str(value) for value in batch["sequence"])
-            sample_ids.extend(list(batch["sample_id"]))
-    if not embeddings:
-        raise ValueError(f"Cannot cache an empty {config.dataset} {split} split.")
-    payload = {
-        "metadata": metadata,
-        "embeddings": torch.cat(embeddings),
-        "labels": torch.cat(labels),
-        "lengths": torch.cat(lengths),
-        "sequences": sequences,
-        "sample_ids": sample_ids,
-    }
-    _atomic_torch_save(payload, path)
-    logger.info("Saved frozen embeddings: %s", path)
-
-
-def _load_embedding_cache(
-    path: Path,
-    expected_metadata: dict[str, Any],
-) -> dict[str, Any]:
-    try:
-        payload = torch.load(path, map_location="cpu", weights_only=True)
-    except TypeError:  # PyTorch versions predating the weights_only argument.
-        payload = torch.load(path, map_location="cpu")
-    if not isinstance(payload, dict) or payload.get("metadata") != expected_metadata:
-        raise ValueError(f"Embedding cache metadata mismatch: {path}")
-    return payload
 
 
 def _ensure_embedding_caches(
     config: ClassifierRunConfig,
     splits: list[str],
 ) -> dict[str, dict[str, Any]]:
-    cache_specs = {
-        split: _embedding_cache_path(config, split) for split in splits
-    }
-    payloads: dict[str, dict[str, Any]] = {}
-    missing: list[str] = []
-    for split, (path, metadata) in cache_specs.items():
-        if not path.is_file():
-            missing.append(split)
-            continue
-        try:
-            payloads[split] = _load_embedding_cache(path, metadata)
-            logger.info("Using cached frozen embeddings: %s", path)
-        except (OSError, RuntimeError, TypeError, ValueError) as error:
-            logger.warning("Rebuilding invalid embedding cache %s: %s", path, error)
-            missing.append(split)
-    if missing:
-        encoder_model = create_model(config, use_cached_embeddings=False)
-        for split in missing:
-            path, metadata = cache_specs[split]
-            _build_embedding_cache(config, split, encoder_model, path, metadata)
-            payloads[split] = _load_embedding_cache(path, metadata)
-        del encoder_model
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    return payloads
-
-
-def _cached_embedding_dataloader(
-    config: ClassifierRunConfig,
-    payload: dict[str, Any],
-    *,
-    shuffle: bool,
-    offset: int,
-) -> DataLoader:
-    generator = torch.Generator()
-    generator.manual_seed(config.seed + offset)
-    return DataLoader(
-        CachedEmbeddingDataset(payload),
-        batch_size=config.batch_size,
-        shuffle=shuffle,
-        # Cached tensors are already memory-resident. Worker processes add
-        # serialization overhead and can duplicate the entire cache on spawn-based
-        # platforms such as macOS.
-        num_workers=0,
-        pin_memory=config.pin_memory,
-        persistent_workers=False,
-        generator=generator,
-        collate_fn=collate_sequence_batch,
+    return _ensure_embedding_caches_impl(
+        config,
+        splits,
+        cache_path=_embedding_cache_path,
+        build_cache=_build_embedding_cache,
+        model_factory=create_model,
     )
 
 
 def create_run_dataloaders(config: ClassifierRunConfig):
-    if config.cache_embeddings:
-        splits = ["train", "valid"]
-        if config.evaluate_test:
-            splits.append("test")
-        payloads = _ensure_embedding_caches(config, splits)
-        return (
-            _cached_embedding_dataloader(
-                config, payloads["train"], shuffle=True, offset=0
-            ),
-            _cached_embedding_dataloader(
-                config, payloads["valid"], shuffle=False, offset=1
-            ),
-            _cached_embedding_dataloader(
-                config, payloads["test"], shuffle=False, offset=2
-            )
-            if config.evaluate_test
-            else None,
-        )
-
-    loaders = []
-    for offset, (split, shuffle) in enumerate(
-        (("train", True), ("valid", False), ("test", False))
-    ):
-        if split == "test" and not config.evaluate_test:
-            loaders.append(None)
-            continue
-        loaders.append(
-            _create_sequence_dataloader(
-                config, split, shuffle=shuffle, offset=offset
-            )
-        )
-    return tuple(loaders)
+    return _create_run_dataloaders_impl(
+        config,
+        ensure_caches=_ensure_embedding_caches,
+        sequence_dataloader=_create_sequence_dataloader,
+    )
 
 
 def create_model(
@@ -1158,231 +824,23 @@ def create_model(
     )
 
 
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-@lru_cache(maxsize=64)
-def _cached_file_sha256(
-    resolved_path: str,
-    size_bytes: int,
-    mtime_ns: int,
-    ctime_ns: int,
-) -> str:
-    del size_bytes, mtime_ns, ctime_ns  # These values invalidate the cache key.
-    digest = hashlib.sha256()
-    with Path(resolved_path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _file_sha256(path: str | Path | None) -> str | None:
-    if path is None:
-        return None
-    file_path = Path(path)
-    if not file_path.is_file():
-        return None
-    resolved = file_path.resolve()
-    stat = resolved.stat()
-    return _cached_file_sha256(
-        str(resolved), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
-    )
-
-
-def _resolve_split_source(config: ClassifierRunConfig, split: str) -> tuple[Path, bool]:
-    task_dir = Path(config.data_dir) / config.dataset
-    split_path = task_dir / f"{split}.csv"
-    if split_path.is_file():
-        return split_path, False
-    combined_path = task_dir / f"{config.dataset}.csv"
-    if combined_path.is_file():
-        return combined_path, True
-    raise FileNotFoundError(
-        f"No data source found for {config.dataset!r} split {split!r}; looked for "
-        f"{split_path} and {combined_path}."
-    )
-
-
 def _data_source_metadata(config: ClassifierRunConfig) -> dict[str, Any]:
-    metadata: dict[str, Any] = {}
-    for split in ("train", "valid", "test"):
-        path, is_combined = _resolve_split_source(config, split)
-        resolved = path.resolve()
-        metadata[split] = {
-            "path": str(resolved),
-            "sha256": _file_sha256(resolved),
-            "combined_file": is_combined,
-            "combined_split_value": split if is_combined else None,
-        }
-    return metadata
+    return _data_source_metadata_impl(config, _resolve_split_source)
 
 
 def _git_metadata() -> dict[str, Any]:
-    try:
-        commit = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=PROJECT_ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        dirty = bool(
-            subprocess.run(
-                ["git", "status", "--porcelain"],
-                cwd=PROJECT_ROOT,
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout.strip()
-        )
-        return {"git_commit": commit, "git_dirty": dirty}
-    except (OSError, subprocess.CalledProcessError):
-        return {"git_commit": None, "git_dirty": None}
-
-
-def _runtime_metadata() -> dict[str, Any]:
-    packages: dict[str, str | None] = {}
-    for distribution in ("fair-esm", "numpy", "pandas", "scikit-learn", "torch"):
-        try:
-            packages[distribution] = importlib.metadata.version(distribution)
-        except importlib.metadata.PackageNotFoundError:
-            packages[distribution] = None
-    return {
-        "python": platform.python_version(),
-        "platform": platform.platform(),
-        "packages": packages,
-        "torch_cuda_version": torch.version.cuda,
-    }
+    return _git_metadata_impl(PROJECT_ROOT)
 
 
 def _config_payload(config: ClassifierRunConfig) -> dict[str, Any]:
-    payload = asdict(config)
-    payload.update(
-        {
-            "run_dir": str(config.run_dir),
-            "checkpoint_dir": str(config.checkpoint_dir),
-            "autoencoder_checkpoint_sha256": _file_sha256(config.autoencoder_checkpoint),
-            "data_sources": _data_source_metadata(config),
-            "source_file_sha256": {
-                relative_path: _file_sha256(PROJECT_ROOT / relative_path)
-                for relative_path in FINGERPRINTED_SOURCE_FILES
-            },
-            "preprocessing": {
-                "classification_encoding": "char",
-                "autoencoder_special_tokens": "BOS+residues+EOS",
-                "esm_long_sequence_policy": "truncate_right",
-                "esm_max_sequence_length": config.esm_max_sequence_length,
-                "embedding_cache": {
-                    "enabled": config.cache_embeddings,
-                    "root": config.embedding_cache_root,
-                    "schema_version": EMBEDDING_CACHE_SCHEMA_VERSION,
-                    "files": {
-                        split: str(_embedding_cache_path(config, split)[0])
-                        for split in (
-                            ["train", "valid", "test"]
-                            if config.evaluate_test
-                            else ["train", "valid"]
-                        )
-                    }
-                    if config.cache_embeddings
-                    else {},
-                },
-            },
-            "runtime": _runtime_metadata(),
-            **_git_metadata(),
-        }
+    return _config_payload_impl(
+        config,
+        project_root=PROJECT_ROOT,
+        fingerprinted_source_files=FINGERPRINTED_SOURCE_FILES,
+        embedding_cache_schema_version=EMBEDDING_CACHE_SCHEMA_VERSION,
+        embedding_cache_path=_embedding_cache_path,
+        resolve_split_source=_resolve_split_source,
     )
-    exact_material = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    payload["configuration_fingerprint"] = hashlib.sha256(
-        exact_material.encode("utf-8")
-    ).hexdigest()
-    resume_payload = {
-        key: value
-        for key, value in payload.items()
-        if key not in {"epochs", "evaluate_test", "configuration_fingerprint"}
-    }
-    resume_material = json.dumps(resume_payload, sort_keys=True, separators=(",", ":"))
-    payload["resume_fingerprint"] = hashlib.sha256(
-        resume_material.encode("utf-8")
-    ).hexdigest()
-    return payload
-
-
-def _validate_existing_config(
-    existing: dict[str, Any],
-    requested: dict[str, Any],
-    *,
-    for_resume: bool,
-) -> None:
-    fingerprint_name = "resume_fingerprint" if for_resume else "configuration_fingerprint"
-    existing_fingerprint = existing.get(fingerprint_name)
-    requested_fingerprint = requested[fingerprint_name]
-    if existing_fingerprint != requested_fingerprint:
-        action = "resume" if for_resume else "reuse"
-        raise ValueError(
-            f"Refusing to {action} {requested['run_dir']}: its saved configuration "
-            "does not match the requested code, data, checkpoint, preprocessing, or "
-            "hyperparameters. Use --overwrite to archive it and start a new run."
-        )
-    if for_resume and int(requested["epochs"]) < int(existing.get("epochs", 0)):
-        raise ValueError(
-            "A resumed run may preserve or extend its epoch budget, but may not "
-            "reduce it. Use --overwrite for a shorter run."
-        )
-
-
-def _status_path(run_dir: Path) -> Path:
-    return run_dir / "status.json"
-
-
-def _read_json(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as handle:
-        result = json.load(handle)
-    if not isinstance(result, dict):
-        raise TypeError(f"Expected a JSON object in {path}")
-    return result
-
-
-def _is_complete(
-    run_dir: Path,
-    evaluate_test: bool,
-    checkpoint_dir: Path | None = None,
-) -> bool:
-    checkpoint_dir = checkpoint_dir or run_dir
-    required = [
-        run_dir / "config.json",
-        run_dir / "history.csv",
-        checkpoint_dir / "best_model.pt",
-    ]
-    if evaluate_test:
-        required.extend([run_dir / "metrics.json", run_dir / "test_predictions.csv"])
-    status_path = _status_path(run_dir)
-    if not status_path.is_file() or not all(path.is_file() for path in required):
-        return False
-    try:
-        return _read_json(status_path).get("status") == "complete"
-    except (OSError, ValueError, TypeError):
-        return False
-
-
-def _archive_run_dir(run_dir: Path) -> None:
-    if not run_dir.exists():
-        return
-    suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
-    archive = run_dir.with_name(f"{run_dir.name}.backup_{suffix}")
-    counter = 1
-    while archive.exists():
-        archive = run_dir.with_name(f"{run_dir.name}.backup_{suffix}_{counter}")
-        counter += 1
-    run_dir.rename(archive)
-
-
-def _attach_run_log(run_dir: Path) -> logging.Handler:
-    handler = logging.FileHandler(run_dir / "run.log", encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    logging.getLogger().addHandler(handler)
-    return handler
 
 
 def _row_from_metrics(
@@ -1758,32 +1216,3 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
-
-
-# Current tuning scope:
-# 4 representations × (6 linear + 12 MLP candidates) × 1 tuning seed
-# = 72 tuning runs.
-
-
-# results/
-# └── classifier/
-#     └── solubility/
-#         ├── tuning/
-#         │   ├── linear/
-#         │   │   ├── trained_autoencoder_ae/
-#         │   │   │   ├── lr_1e-4_wd_0_seed_42/
-#         │   │   │   ├── lr_1e-4_wd_1e-4_seed_42/
-#         │   │   │   └── ...
-#         │   │   └── esm2/
-#         │   │       └── ...
-#         │   ├── mlp/
-#         │   │   ├── trained_autoencoder_ae/
-#         │   │   │   ├── lr_1e-4_wd_0_do_0.1_seed_42/
-#         │   │   │   └── ...
-#         │   │   └── esm2/
-#         │   │       └── ...
-#         │   ├── tuning_results.csv
-#         │   └── selected_hyperparameters.json
-#         └── final/
-#             ├── linear/
-#             └── mlp/
