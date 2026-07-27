@@ -6,3 +6,4 @@ torch
 scikit-learn
 tqdm
 gdown
+fair-esm==2.0.0
