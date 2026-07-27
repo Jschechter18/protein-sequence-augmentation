@@ -20,7 +20,7 @@ class AutoencoderHyperparameters(Hyperparameters):
     layer_type: str = "gru" # gru(+single cnn layer), transformer
     embedding_dim: int = 512
     cnn_out_channels: int = 256
-    hidden_dim: int = 512
+    hidden_dim: int = 1024
     latent_dim: int = 256
     kernel_size: int = 5
     num_layers: int = 3
