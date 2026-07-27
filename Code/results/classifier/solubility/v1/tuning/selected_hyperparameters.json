@@ -1,0 +1,74 @@
+{
+  "linear": {
+    "esm2": {
+      "best_val_f1": 0.5990073592332705,
+      "learning_rate": 0.001,
+      "selection_epoch": 20,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.6043723931026815,
+      "weight_decay": 0.0
+    },
+    "random_autoencoder": {
+      "best_val_f1": 0.5164406464796581,
+      "learning_rate": 0.001,
+      "selection_epoch": 15,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.6512672372422071,
+      "weight_decay": 0.0
+    },
+    "trained_autoencoder": {
+      "best_val_f1": 0.6281747375550288,
+      "learning_rate": 0.001,
+      "selection_epoch": 25,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.5744987910812508,
+      "weight_decay": 0.0
+    },
+    "trained_autoencoder+esm2": {
+      "best_val_f1": 0.6768184027215293,
+      "learning_rate": 0.0003,
+      "selection_epoch": 20,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.5472869129491381,
+      "weight_decay": 0.0
+    }
+  },
+  "mlp": {
+    "esm2": {
+      "best_val_f1": 0.6454878687379997,
+      "dropout": 0.3,
+      "learning_rate": 0.0003,
+      "selection_epoch": 20,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.5581964964792454,
+      "weight_decay": 0.0
+    },
+    "random_autoencoder": {
+      "best_val_f1": 0.59456,
+      "dropout": 0.1,
+      "learning_rate": 0.001,
+      "selection_epoch": 29,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.6366382995107888,
+      "weight_decay": 0.0
+    },
+    "trained_autoencoder": {
+      "best_val_f1": 0.6791814645695924,
+      "dropout": 0.1,
+      "learning_rate": 0.0001,
+      "selection_epoch": 15,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.5393034053600958,
+      "weight_decay": 0.0
+    },
+    "trained_autoencoder+esm2": {
+      "best_val_f1": 0.6980431848852902,
+      "dropout": 0.1,
+      "learning_rate": 0.001,
+      "selection_epoch": 2,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.5024662457000828,
+      "weight_decay": 0.0
+    }
+  }
+}
