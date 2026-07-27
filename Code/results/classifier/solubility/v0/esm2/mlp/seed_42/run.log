@@ -1,2 +1,0 @@
-2026-07-22 15:44:38,338 INFO Code.src.models.classifier: Using ESM-2 encoder on cuda:0
-2026-07-22 15:44:38,348 INFO Code.src.training.classification_pipeline: Epoch 1/30
