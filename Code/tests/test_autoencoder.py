@@ -17,6 +17,26 @@ def _make_model() -> AE:
     )
 
 
+def _make_transformer_model() -> AE:
+    return AE(
+        layer_type="transformer",
+        embedding_dim=32,
+        cnn_out_channels=32,
+        hidden_dim=64,
+        latent_dim=16,
+        kernel_size=3,
+        num_layers=1,
+        dropout=0.0,
+        pad_idx=0,
+        bos_idx=2,
+        max_encoder_positions=16,
+        max_decoder_positions=16,
+        num_heads=4,
+        dim_feedforward=64,
+        use_cnn_before_transformer=True,
+    )
+
+
 def test_autoencoder_forward_pass():
     model = _make_model()
     batch_size = 4
@@ -61,6 +81,91 @@ def test_autoencoder_decoder() -> None:
     
     # Check the output shape
     assert output_logits.shape == (batch_size, sequence_length, model.vocab_size), f"Expected output shape {(batch_size, sequence_length, model.vocab_size)}, but got {output_logits.shape}"
+
+
+def test_transformer_autoencoder_forward_pass() -> None:
+    model = _make_transformer_model()
+    batch_size = 4
+    sequence_length = 10
+    input_ids = torch.randint(0, model.vocab_size, (batch_size, sequence_length))
+    lengths = torch.full((batch_size,), sequence_length, dtype=torch.long)
+
+    logits = model(input_ids, decoder_input_ids=input_ids[:, :-1], lengths=lengths)
+
+    assert logits.shape == (batch_size, sequence_length - 1, model.vocab_size)
+
+
+def test_transformer_autoencoder_forward_pass_with_cnn_stem() -> None:
+    model = AE(
+        layer_type="transformer",
+        embedding_dim=32,
+        cnn_out_channels=16,
+        hidden_dim=64,
+        latent_dim=16,
+        kernel_size=3,
+        num_layers=1,
+        dropout=0.0,
+        pad_idx=0,
+        bos_idx=2,
+        max_encoder_positions=16,
+        max_decoder_positions=16,
+        num_heads=4,
+        dim_feedforward=64,
+        use_cnn_before_transformer=True,
+    )
+    batch_size = 4
+    sequence_length = 10
+    input_ids = torch.randint(0, model.vocab_size, (batch_size, sequence_length))
+    lengths = torch.full((batch_size,), sequence_length, dtype=torch.long)
+
+    logits = model(input_ids, decoder_input_ids=input_ids[:, :-1], lengths=lengths)
+    latent = model.encode(input_ids, lengths=lengths)
+
+    assert model.cnn.out_channels == model.embedding_dim
+    assert logits.shape == (batch_size, sequence_length - 1, model.vocab_size)
+    assert latent.shape == (batch_size, model.latent_dim)
+
+
+def test_transformer_autoencoder_forward_pass_without_cnn_stem() -> None:
+    model = AE(
+        layer_type="transformer",
+        embedding_dim=32,
+        cnn_out_channels=16,
+        hidden_dim=64,
+        latent_dim=16,
+        kernel_size=3,
+        num_layers=1,
+        dropout=0.0,
+        pad_idx=0,
+        bos_idx=2,
+        max_encoder_positions=16,
+        max_decoder_positions=16,
+        num_heads=4,
+        dim_feedforward=64,
+        use_cnn_before_transformer=False,
+    )
+    batch_size = 4
+    sequence_length = 10
+    input_ids = torch.randint(0, model.vocab_size, (batch_size, sequence_length))
+    lengths = torch.full((batch_size,), sequence_length, dtype=torch.long)
+
+    logits = model(input_ids, decoder_input_ids=input_ids[:, :-1], lengths=lengths)
+    latent = model.encode(input_ids, lengths=lengths)
+
+    assert not hasattr(model, "cnn")
+    assert logits.shape == (batch_size, sequence_length - 1, model.vocab_size)
+    assert latent.shape == (batch_size, model.latent_dim)
+
+
+def test_transformer_autoencoder_autoregressive_decode() -> None:
+    model = _make_transformer_model()
+    batch_size = 4
+    sequence_length = 10
+    latent_vectors = torch.randn(batch_size, model.latent_dim)
+
+    output_logits = model.decode_autoregressive(latent_vectors, max_length=sequence_length)
+
+    assert output_logits.shape == (batch_size, sequence_length, model.vocab_size)
 
 def test_autoencoder_decoder_positional_embeddings_forward_pass() -> None:
     model = AE(

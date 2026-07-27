@@ -1,0 +1,128 @@
+{
+  "hyperparameters": {
+    "batch_size": 32,
+    "num_epochs": 100,
+    "shuffle": true,
+    "dropout": 0.1,
+    "patience": 10,
+    "lr_patience": 3,
+    "learning_rate": 0.0001,
+    "layer_type": "transformer",
+    "embedding_dim": 512,
+    "cnn_out_channels": 256,
+    "hidden_dim": 512,
+    "latent_dim": 256,
+    "kernel_size": 5,
+    "num_layers": 3,
+    "bidirectional": true,
+    "grad_clip": true,
+    "condition_decoder_on_latent": true,
+    "teacher_forcing_dropout_rate": 0.0,
+    "use_decoder_positional_embeddings": false,
+    "max_decoder_positions": 1024,
+    "max_encoder_positions": 1024,
+    "num_heads": 8,
+    "dim_feedforward": 2048,
+    "scheduler_factor": 0.1,
+    "use_cnn_before_transformer": false
+  },
+  "curriculum": {
+    "type": "none",
+    "epochs": 0,
+    "start_fraction": 0.2
+  },
+  "artifact_suffix": "transformer",
+  "epochs": [
+    {
+      "epoch": 1,
+      "train_loss": 2.800324973135474,
+      "train_accuracy": 0.13080382813919308,
+      "train_f1": 0.1299817497634594,
+      "curriculum_fraction": 1.0,
+      "curriculum_examples": 41746,
+      "learning_rate": 0.0001,
+      "grad_norm_pre_clip_mean": 0.0,
+      "grad_norm_pre_clip_max": 0.0,
+      "learning_rate_after_scheduler": 0.0001,
+      "val_loss": 2.7264750929315618,
+      "val_accuracy": 0.1424069190845298
+    },
+    {
+      "epoch": 2,
+      "train_loss": 2.697148892066302,
+      "train_accuracy": 0.15127625920650092,
+      "train_f1": 0.15391674049334564,
+      "curriculum_fraction": 1.0,
+      "curriculum_examples": 41746,
+      "learning_rate": 0.0001,
+      "grad_norm_pre_clip_mean": 0.0,
+      "grad_norm_pre_clip_max": 0.0,
+      "learning_rate_after_scheduler": 0.0001,
+      "val_loss": 2.6552704648187753,
+      "val_accuracy": 0.161928678855383
+    },
+    {
+      "epoch": 3,
+      "train_loss": 2.605353784180129,
+      "train_accuracy": 0.1693960329302585,
+      "train_f1": 0.17167844684991618,
+      "curriculum_fraction": 1.0,
+      "curriculum_examples": 41746,
+      "learning_rate": 0.0001,
+      "grad_norm_pre_clip_mean": 0.0,
+      "grad_norm_pre_clip_max": 0.0,
+      "learning_rate_after_scheduler": 0.0001,
+      "val_loss": 2.5516371263223956,
+      "val_accuracy": 0.18539288863002604
+    },
+    {
+      "epoch": 4,
+      "train_loss": 2.5342912833959677,
+      "train_accuracy": 0.1825981311802757,
+      "train_f1": 0.1847752169795648,
+      "curriculum_fraction": 1.0,
+      "curriculum_examples": 41746,
+      "learning_rate": 0.0001,
+      "grad_norm_pre_clip_mean": 0.0,
+      "grad_norm_pre_clip_max": 0.0,
+      "learning_rate_after_scheduler": 0.0001,
+      "val_loss": 2.49135678671898,
+      "val_accuracy": 0.18867410808675983
+    }
+  ],
+  "train_loss": [
+    2.800324973135474,
+    2.697148892066302,
+    2.605353784180129,
+    2.5342912833959677
+  ],
+  "train_scores": {
+    "accuracy": [
+      0.13080382813919308,
+      0.15127625920650092,
+      0.1693960329302585,
+      0.1825981311802757
+    ],
+    "f1": [
+      0.1299817497634594,
+      0.15391674049334564,
+      0.17167844684991618,
+      0.1847752169795648
+    ]
+  },
+  "val_loss": [
+    2.7264750929315618,
+    2.6552704648187753,
+    2.5516371263223956,
+    2.49135678671898
+  ],
+  "val_scores": {
+    "accuracy": [
+      0.1424069190845298,
+      0.161928678855383,
+      0.18539288863002604,
+      0.18867410808675983
+    ]
+  },
+  "autoregressive_val": []
+}
