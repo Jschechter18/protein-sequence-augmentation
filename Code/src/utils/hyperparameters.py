@@ -16,14 +16,14 @@ class Hyperparameters:
 
 @dataclass
 class AutoencoderHyperparameters(Hyperparameters):
-    learning_rate: float = 1e-4
+    learning_rate: float = 3e-4 # default: 1e-4
     layer_type: str = "gru" # gru(+single cnn layer), transformer
-    embedding_dim: int = 512
+    embedding_dim: int = 256
     cnn_out_channels: int = 256
-    hidden_dim: int = 1024
+    hidden_dim: int = 512 # default: 1024
     latent_dim: int = 256
     kernel_size: int = 5
-    num_layers: int = 3
+    num_layers: int = 2 # default: 3
     bidirectional: bool = True
     grad_clip: bool = True
     condition_decoder_on_latent: bool = True
@@ -36,6 +36,7 @@ class AutoencoderHyperparameters(Hyperparameters):
     scheduler_factor: float = 0.1
     use_cnn_before_transformer: bool = False
     weight_decay: float = 0.01  # for transformer
+    validate_autoregressive: bool = False  # whether to validate autoregressive performance during training
 
 
 GRU_AUTOENCODER_SWEEP_SEARCH_SPACE = {
