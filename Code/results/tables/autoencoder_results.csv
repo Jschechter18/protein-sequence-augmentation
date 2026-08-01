@@ -63,3 +63,9 @@ v12,checkpoints/autoencoder/solubility/v12/model_ae_length_2_of_3_solubility_lr0
 v12,checkpoints/autoencoder/solubility/v12/model_ae_length_2_of_3_solubility_lr0p0003_num_layers3_hidden_dim1024.pt,1.016168,3.671781,0.632595,0.306995
 v12,checkpoints/autoencoder/solubility/v12/model_ae_length_2_of_3_solubility_lr0p0003_num_layers3_hidden_dim512.pt,0.759009,3.748979,0.712302,0.311885
 v13,checkpoints/autoencoder/solubility/v13/model_ae_length_2_of_3_solubility.pt,0.737301,3.162922,0.712411,0.357404
+v17,checkpoints/autoencoder/solubility/v17/model_ae_length_2_of_3_solubility_transformer.pt,2.492070,2.941539,0.191901,0.089839
+v18,checkpoints/autoencoder/solubility/v18/model_ae_length_2_of_3_solubility_transformer.pt,3.459439,3.055560,0.118378,0.084679
+v19,checkpoints/autoencoder/solubility/v19/model_ae_length_2_of_3_solubility_transformer.pt,2.561045,2.918186,0.175650,0.089569
+v21,checkpoints/autoencoder/solubility/v21/model_ae_solubility.pt,1.124902,5.260273,0.599368,0.201829
+v22,checkpoints/autoencoder/solubility/v22/model_ae_solubility.pt,1.077364,3.941917,0.594115,0.222754
+v23,checkpoints/autoencoder/solubility/v23/model_ae_length_3_of_3_solubility.pt,1.042419,3.915761,0.604436,0.229349

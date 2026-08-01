@@ -370,6 +370,7 @@ def ae_params_from_state_dict(
                 ),
                 "max_encoder_positions": state_dict["encoder_position_embedding.weight"].shape[0],
                 "max_decoder_positions": state_dict["decoder_position_embedding.weight"].shape[0],
+                "use_cnn_before_transformer": "cnn.weight" in state_dict,
                 "pad_idx": PAD_IDX,
                 "bos_idx": BOS_IDX,
             }
@@ -408,6 +409,9 @@ def ae_params_from_state_dict(
         "patience",
         "lr_patience",
         "scheduler_factor",
+        "grad_clip",
+        "weight_decay",
+        "validate_autoregressive",
     ):
         params.pop(training_only_param, None)
 
