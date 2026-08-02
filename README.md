@@ -54,6 +54,16 @@
    bash Code/scripts/setup_peer_data.sh
    ```
 
+4. Install checkpoints
+   bash
+
+   ```
+   ./scripts/download_checkpoints.sh
+
+   bash Code/scripts/download_checkpoints.sh
+
+   ```
+
 ## 1 Objective:
 
             This project will test whether adding controlled noise to the latent vector of a trained protein sequence autoencoder,
@@ -286,3 +296,7 @@ _Figure 1: Caption_
 - Author: Amir Jafari
 - Email: [ajafari@gwu.edu](mailto:ajafari@gwu.edu)
 - GitHub: [https://github.com/amir-jafari](https://github.com/https://github.com/amir-jafari)
+
+```
+
+```

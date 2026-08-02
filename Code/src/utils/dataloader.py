@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 import torch
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import BatchSampler, DataLoader, Dataset, Subset
 import numpy as np
 from .sequence_dataset import SequenceDataset
 
@@ -118,6 +118,107 @@ def get_length(dataset, idx):
     item = dataset[idx]
     length = item["length"]
     return int(length.item() if hasattr(length, "item") else length)
+
+
+class LengthAwareBatchSampler(BatchSampler):
+    """Create shuffled batches of similarly sized sequences.
+
+    Indices are shuffled first, divided into large pools, sorted by sequence
+    length within each pool, and then divided into batches. Shuffling the
+    resulting batches avoids presenting every epoch in length order while
+    substantially reducing padding.
+    """
+
+    def __init__(
+        self,
+        dataset: Dataset,
+        batch_size: int,
+        pool_size_multiplier: int = 10,
+        drop_last: bool = False,
+        generator: torch.Generator | None = None,
+    ) -> None:
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+        if pool_size_multiplier <= 0:
+            raise ValueError("pool_size_multiplier must be positive")
+
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.pool_size = batch_size * pool_size_multiplier
+        self.drop_last = drop_last
+        self.generator = generator
+        self._lengths = [get_length(dataset, index) for index in range(len(dataset))]
+
+    def __iter__(self):
+        indices = torch.randperm(
+            len(self.dataset),
+            generator=self.generator,
+        ).tolist()
+        batches: list[list[int]] = []
+
+        for pool_start in range(0, len(indices), self.pool_size):
+            pool = indices[pool_start : pool_start + self.pool_size]
+            pool.sort(key=self._lengths.__getitem__)
+            for batch_start in range(0, len(pool), self.batch_size):
+                batch = pool[batch_start : batch_start + self.batch_size]
+                if len(batch) == self.batch_size or not self.drop_last:
+                    batches.append(batch)
+
+        if batches:
+            batch_order = torch.randperm(
+                len(batches),
+                generator=self.generator,
+            ).tolist()
+            for batch_index in batch_order:
+                yield batches[batch_index]
+
+    def __len__(self) -> int:
+        if self.drop_last:
+            return len(self.dataset) // self.batch_size
+        return (len(self.dataset) + self.batch_size - 1) // self.batch_size
+
+
+def dataloader_batch_size(dataloader: DataLoader) -> int:
+    """Return the configured batch size for standard or custom-batched loaders."""
+    if dataloader.batch_size is not None:
+        return dataloader.batch_size
+    batch_size = getattr(dataloader.batch_sampler, "batch_size", None)
+    if batch_size is None:
+        raise ValueError("dataloader does not expose a fixed batch_size")
+    return batch_size
+
+
+def make_length_aware_dataloader(
+    base_loader: DataLoader,
+    pool_size_multiplier: int = 10,
+) -> DataLoader:
+    """Clone a loader with pooled length-aware batch sampling."""
+    batch_size = dataloader_batch_size(base_loader)
+    generator = base_loader.generator
+    drop_last = base_loader.drop_last
+    if isinstance(base_loader.batch_sampler, LengthAwareBatchSampler):
+        generator = base_loader.batch_sampler.generator
+        drop_last = base_loader.batch_sampler.drop_last
+
+    batch_sampler = LengthAwareBatchSampler(
+        base_loader.dataset,
+        batch_size=batch_size,
+        pool_size_multiplier=pool_size_multiplier,
+        drop_last=drop_last,
+        generator=generator,
+    )
+    return DataLoader(
+        base_loader.dataset,
+        batch_sampler=batch_sampler,
+        num_workers=base_loader.num_workers,
+        pin_memory=base_loader.pin_memory,
+        collate_fn=base_loader.collate_fn,
+        generator=generator,
+        worker_init_fn=base_loader.worker_init_fn,
+        persistent_workers=(
+            base_loader.persistent_workers if base_loader.num_workers > 0 else False
+        ),
+    )
 
 
 def compute_train_length_boundaries(train_dataset, num_bins: int = 4):
@@ -275,9 +376,7 @@ def make_overfit_dataloaders(
     if num_batches <= 0:
         raise ValueError("--overfit_batches must be a positive integer")
 
-    batch_size = train_dataloader.batch_size
-    if batch_size is None:
-        raise ValueError("batch_size cannot be None")
+    batch_size = dataloader_batch_size(train_dataloader)
 
     num_examples = min(
         num_batches * batch_size,
@@ -287,7 +386,7 @@ def make_overfit_dataloaders(
 
     train_subset_loader = DataLoader(
         subset,
-        batch_size=train_dataloader.batch_size,
+        batch_size=batch_size,
         shuffle=True,
         num_workers=train_dataloader.num_workers,
         pin_memory=train_dataloader.pin_memory,
@@ -295,12 +394,21 @@ def make_overfit_dataloaders(
     )
     val_subset_loader = DataLoader(
         subset,
-        batch_size=train_dataloader.batch_size,
+        batch_size=batch_size,
         shuffle=False,
         num_workers=train_dataloader.num_workers,
         pin_memory=train_dataloader.pin_memory,
         collate_fn=train_dataloader.collate_fn,
     )
+
+    if isinstance(train_dataloader.batch_sampler, LengthAwareBatchSampler):
+        train_subset_loader = make_length_aware_dataloader(
+            train_subset_loader,
+            pool_size_multiplier=(
+                train_dataloader.batch_sampler.pool_size
+                // train_dataloader.batch_sampler.batch_size
+            ),
+        )
 
     return train_subset_loader, val_subset_loader
 
@@ -329,6 +437,8 @@ def create_dataloader(
     generator: torch.Generator | None = None,
     worker_init_fn: Callable[[int], None] | None = None,
     persistent_workers: bool = False,
+    length_aware_batching: bool = False,
+    length_pool_size_multiplier: int = 10,
 ) -> DataLoader[SequenceDataset]:
     """Create a DataLoader for a protein sequence dataset.
 
@@ -385,6 +495,11 @@ def create_dataloader(
     persistent_workers:
         Keep worker processes alive between epochs when ``num_workers > 0``.
         Ignored when ``num_workers`` is zero.
+    length_aware_batching:
+        Group similarly sized sequences into shuffled batches to reduce padding.
+    length_pool_size_multiplier:
+        Number of batches per shuffled sorting pool when length-aware batching
+        is enabled.
 
     Returns
     -------
@@ -469,5 +584,11 @@ def create_dataloader(
         dataloader = make_length_bin_loader(dataloader, boundaries, length_bin, shuffle, cumulative=cumulative)
     elif loader_type is not None:
         raise ValueError("loader_type must be one of None, 'max_length', 'quartile', or 'length_bin'")
+
+    if length_aware_batching:
+        dataloader = make_length_aware_dataloader(
+            dataloader,
+            pool_size_multiplier=length_pool_size_multiplier,
+        )
     
     return dataloader

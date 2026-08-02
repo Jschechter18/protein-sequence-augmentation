@@ -27,6 +27,11 @@ from torch.nn.utils import clip_grad_norm_
 from sklearn.metrics import accuracy_score
 from tqdm import tqdm
 
+# Support both the trainer's existing top-level imports and Code.src imports
+# used by the model modules during direct script execution.
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 SRC_DIR = Path(__file__).resolve().parents[1]
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
@@ -229,6 +234,8 @@ def train(
     cumulative: bool = False,
     artifact_suffix: str | None = None,
     layer_type: str | None = None,
+    length_aware_batching: bool = False,
+    length_pool_size_multiplier: int = 10,
 ) -> tuple[AE, dict]:
 
     layer_type = hyperparams.layer_type if layer_type is None else layer_type
@@ -258,6 +265,12 @@ def train(
             "start_fraction": curriculum_start_fraction,
         },
         "artifact_suffix": artifact_suffix,
+        "batching": {
+            "length_aware": length_aware_batching,
+            "pool_size_multiplier": (
+                length_pool_size_multiplier if length_aware_batching else None
+            ),
+        },
         "epochs": [],
         "train_loss": [],
         "train_scores": {
@@ -373,7 +386,7 @@ def train(
         history["val_loss"].append(val_loss)
         history["val_scores"]["accuracy"].append(val_metrics["accuracy"])
 
-        if (epoch + 1) % 10 == 0 and hyperparams.layer_type != "transformer":
+        if (epoch + 1) % 10 == 0 and hyperparams.layer_type != "transformer" and hyperparams.validate_autoregressive:
             autoregressive_val_metrics = validate_autoregressive(model, val_dataloader, loss_fn)
             epoch_info["autoregressive_val_loss"] = autoregressive_val_metrics["loss"]
             epoch_info["autoregressive_val_accuracy"] = autoregressive_val_metrics["accuracy"]
@@ -410,6 +423,7 @@ def train(
                 "epoch": epoch + 1,
                 "val_loss": val_loss,
                 "val_accuracy": val_metrics["accuracy"],
+                "batching": history["batching"],
             }, checkpoint_path)
         else:
             epochs_without_improvement += 1
@@ -529,7 +543,9 @@ def main():
                                 num_workers=num_workers, loader_type=loader_type, max_length=args.max_length,
                                 length_options=args.length_options, length_bin=args.length_bin,
                                 cumulative=args.cumulative,
-                                length_boundaries=length_boundaries)
+                                length_boundaries=length_boundaries,
+                                length_aware_batching=args.length_aware_batching,
+                                length_pool_size_multiplier=args.length_pool_size_multiplier)
     val_dataloader = create_dataloader(task=args.task, split=VALID_SPLIT, mode="autoencoder",
                                     batch_size=hyperparams.batch_size, shuffle=False,
                                     num_workers=num_workers, loader_type=loader_type, max_length=args.max_length,
@@ -632,6 +648,8 @@ def main():
             cumulative=args.cumulative,
             artifact_suffix=artifact_suffix,
             layer_type=run_hyperparams.layer_type,
+            length_aware_batching=args.length_aware_batching,
+            length_pool_size_multiplier=args.length_pool_size_multiplier,
         )
 
         print(f"Saved training history to: {history_path}")

@@ -279,6 +279,23 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
         help="Autoencoder architecture to train.",
     )
     args.add_argument(
+        '--length_aware_batching',
+        type=_str_to_bool,
+        nargs='?',
+        const=True,
+        default=False,
+        help=(
+            'Group similarly sized sequences into shuffled training batches. '
+            'Disabled by default to preserve historical training behavior.'
+        ),
+    )
+    args.add_argument(
+        '--length_pool_size_multiplier',
+        type=int,
+        default=10,
+        help='Number of batches per sorting pool for length-aware batching.',
+    )
+    args.add_argument(
         '--max_encoder_positions',
         type=int,
         default=1024,
@@ -326,9 +343,13 @@ def add_and_validate_train_inputs():
         raise ValueError("--max_decoder_positions must be positive")
     if args.max_encoder_positions <= 0:
         raise ValueError("--max_encoder_positions must be positive")
+    if args.length_pool_size_multiplier <= 0:
+        raise ValueError("--length_pool_size_multiplier must be positive")
 
     if args.layer_type is not None:
         hyperparams.layer_type = args.layer_type
+    if args.length_aware_batching and hyperparams.layer_type != "gru":
+        raise ValueError("--length_aware_batching is currently supported only for GRU training")
 
     hyperparams.use_decoder_positional_embeddings = args.use_decoder_positional_embeddings
     hyperparams.max_decoder_positions = args.max_decoder_positions
