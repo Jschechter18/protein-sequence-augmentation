@@ -79,6 +79,30 @@ def test_classifier_checkpoints_default_to_project_checkpoint_tree() -> None:
     )
 
 
+def test_end_to_end_flag_builds_combined_uncached_config() -> None:
+    args = train.parse_args(
+        [
+            "--representation",
+            "trained_autoencoder+esm2",
+            "--end_to_end",
+            "--no-cache_embeddings",
+        ]
+    )
+
+    config = train.build_run_configs(args, device="cpu")[0]
+    assert config.end_to_end is True
+    assert config.cache_embeddings is False
+
+
+def test_end_to_end_flag_rejects_wrong_representation_and_cache() -> None:
+    with pytest.raises(SystemExit):
+        train.parse_args(["--representation", "esm2", "--end_to_end"])
+    with pytest.raises(SystemExit):
+        train.parse_args(
+            ["--representation", "trained_autoencoder+esm2", "--end_to_end"]
+        )
+
+
 def test_embedding_cache_identity_is_seeded_only_for_random_encoder(
     tmp_path: Path,
 ) -> None:
@@ -253,9 +277,12 @@ def test_cached_random_autoencoder_path_builds_embeddings_and_head(
 def test_sweep_and_hp_tune_are_mutually_exclusive() -> None:
     assert train.parse_args(["--sweep"]).run_sweep is True
     assert train.parse_args(["--hp_tune"]).hp_tune is True
+    assert train.parse_args(["--end_to_end_sweep"]).end_to_end_sweep is True
 
     with pytest.raises(SystemExit):
         train.parse_args(["--sweep", "--hp_tune"])
+    with pytest.raises(SystemExit):
+        train.parse_args(["--sweep", "--end_to_end_sweep"])
 
 
 def test_default_tuning_grid_matches_declared_search_space(tmp_path: Path) -> None:
@@ -530,6 +557,66 @@ def test_default_stage1_sweep_has_24_unique_balanced_configs(tmp_path: Path) -> 
         for head in train.HEAD_TYPES
     }
     assert all(seeds == set(train.STAGE1_SEEDS) for seeds in seeds_by_condition.values())
+
+
+def test_default_end_to_end_sweep_has_24_uncached_trainable_configs(
+    tmp_path: Path,
+) -> None:
+    args = _sweep_args(tmp_path)
+    args.run_sweep = False
+    args.end_to_end_sweep = True
+
+    configs = train.build_run_configs(args, device="cpu")
+
+    assert len(configs) == 24
+    assert all(config.end_to_end for config in configs)
+    assert all(not config.cache_embeddings for config in configs)
+    assert all(config.mode == "end_to_end_sweep" for config in configs)
+    assert all(config.phase == "end_to_end" for config in configs)
+    assert all(
+        config.run_dir
+        == (
+            tmp_path
+            / "solubility"
+            / "v1"
+            / "end_to_end"
+            / config.head_type
+            / config.representation
+            / f"seed_{config.seed}"
+        )
+        for config in configs
+    )
+
+
+def test_end_to_end_sweep_summary_is_separate_from_frozen_summary(
+    tmp_path: Path,
+) -> None:
+    args = _sweep_args(
+        tmp_path,
+        "--representations",
+        "esm2",
+        "--head_types",
+        "linear",
+        "--seeds",
+        "42",
+    )
+    args.run_sweep = False
+    args.end_to_end_sweep = True
+    configs = train.build_run_configs(args, device="cpu")
+
+    train.save_summaries(
+        configs,
+        [
+            train._row_from_metrics(
+                configs[0], {"accuracy": 0.75, "loss": 0.5}, "complete"
+            )
+        ],
+    )
+
+    summary_root = tmp_path / "solubility" / "v1" / "end_to_end"
+    assert (summary_root / "summary.csv").is_file()
+    assert (summary_root / "aggregated_summary.csv").is_file()
+    assert not (tmp_path / "solubility" / "v1" / "summary.csv").exists()
 
 
 def test_sweep_uses_selected_hyperparameters_for_each_condition(
