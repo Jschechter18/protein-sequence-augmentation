@@ -166,6 +166,7 @@ class ProteinClassificationTrainingPipeline:
         unfreeze_esm: bool = False,
         unfreeze_layers: int = 1,
         unfreeze_all_esm: bool = False,
+        end_to_end: bool = False, 
         cnn_embedding_dim: int = 128,
         cnn_num_filters: int = 128,
         autoencoder_checkpoint: str | None = None,
@@ -222,6 +223,7 @@ class ProteinClassificationTrainingPipeline:
             unfreeze_esm=unfreeze_esm,
             unfreeze_layers=unfreeze_layers,
             unfreeze_all_esm=unfreeze_all_esm,
+            end_to_end=end_to_end, #edited by codex
         )
         self.optimizer = self._create_optimizer()
         self.criterion = nn.CrossEntropyLoss()
@@ -248,6 +250,7 @@ class ProteinClassificationTrainingPipeline:
             "unfreeze_esm": unfreeze_esm,
             "unfreeze_layers": unfreeze_layers,
             "unfreeze_all_esm": unfreeze_all_esm,
+            "end_to_end": end_to_end, #edited by codex
             "cnn_embedding_dim": cnn_embedding_dim,
             "cnn_num_filters": cnn_num_filters,
             "autoencoder_checkpoint": autoencoder_checkpoint,
@@ -269,10 +272,67 @@ class ProteinClassificationTrainingPipeline:
         unfreeze_esm: bool,
         unfreeze_layers: int,
         unfreeze_all_esm: bool,
+        end_to_end: bool, #edited by codex
     ) -> None:
-        """Apply the legacy ESM fine-tuning controls when they are relevant."""
+        """Configure frozen, ESM-only, or combined end-to-end training."""
 
         embedding_type = getattr(self.model, "embedding_type", None)
+        if end_to_end:
+            if unfreeze_esm or unfreeze_all_esm:
+                raise ValueError(
+                    "end_to_end cannot be combined with ESM-only unfreezing options."
+                )
+            encoder = getattr(self.model, "embedded_representation", None)
+            if embedding_type == "esm2":
+                if not isinstance(encoder, nn.Module):
+                    raise ValueError("The ESM-2 representation does not expose an encoder.")
+                logger.info("Unfreezing the complete ESM-2 encoder.")
+                for parameter in encoder.parameters():
+                    parameter.requires_grad = True
+                if hasattr(encoder, "is_frozen"):
+                    encoder.is_frozen = False
+                return
+            if embedding_type in {"random_autoencoder", "trained_autoencoder"}:
+                if not isinstance(encoder, nn.Module):
+                    raise ValueError(
+                        "The autoencoder representation does not expose an encoder."
+                    )
+                logger.info("Unfreezing the autoencoder encoding path.")
+                encoder_parameters = getattr(
+                    encoder, "encoder_parameters", encoder.parameters
+                )
+                for parameter in encoder_parameters():
+                    parameter.requires_grad = True
+                if hasattr(encoder, "is_frozen"):
+                    encoder.is_frozen = False
+                return
+            if embedding_type != "trained_autoencoder+esm2":
+                raise ValueError(
+                    "end_to_end is unsupported for embedding_type="
+                    f"{embedding_type!r}."
+                )
+            autoencoder_encoder = getattr(encoder, "autoencoder_encoder", None)
+            esm_encoder = getattr(encoder, "esm_encoder", None)
+            if not isinstance(autoencoder_encoder, nn.Module) or not isinstance(
+                esm_encoder, nn.Module
+            ):
+                raise ValueError(
+                    "The combined representation must expose autoencoder_encoder "
+                    "and esm_encoder modules for end-to-end training."
+                )
+            logger.info("Unfreezing the autoencoder encoder and complete ESM-2 encoder.")
+            autoencoder_parameters = getattr(
+                autoencoder_encoder, "encoder_parameters", autoencoder_encoder.parameters
+            )
+            for parameter in autoencoder_parameters():
+                parameter.requires_grad = True
+            for parameter in esm_encoder.parameters():
+                parameter.requires_grad = True
+            if hasattr(autoencoder_encoder, "is_frozen"):
+                autoencoder_encoder.is_frozen = False
+            if hasattr(esm_encoder, "is_frozen"):
+                esm_encoder.is_frozen = False
+            return
         if unfreeze_esm and unfreeze_all_esm:
             raise ValueError("Choose either partial or complete ESM unfreezing, not both.")
         if embedding_type != "esm2":
@@ -312,7 +372,37 @@ class ProteinClassificationTrainingPipeline:
             parameter for parameter in encoder.parameters() if parameter.requires_grad
         ] if isinstance(encoder, nn.Module) else []
 
-        assigned = {id(parameter) for parameter in head_params + encoder_params}
+        autoencoder_component = getattr(encoder, "autoencoder_encoder", None)
+        esm_component = getattr(encoder, "esm_encoder", None)
+        if isinstance(autoencoder_component, nn.Module) and isinstance(
+            esm_component, nn.Module
+        ):
+            autoencoder_parameters = getattr(
+                autoencoder_component,
+                "encoder_parameters",
+                autoencoder_component.parameters,
+            )
+            autoencoder_params = [
+                parameter
+                for parameter in autoencoder_parameters()
+                if parameter.requires_grad
+            ]
+            esm_params = [
+                parameter
+                for parameter in esm_component.parameters()
+                if parameter.requires_grad
+            ]
+            encoder_params = []
+        else:
+            autoencoder_params = []
+            esm_params = []
+
+        assigned = {
+            id(parameter)
+            for parameter in (
+                head_params + encoder_params + autoencoder_params + esm_params
+            )
+        }
         remaining_params = [
             parameter
             for parameter in self.model.parameters()
@@ -330,6 +420,12 @@ class ProteinClassificationTrainingPipeline:
                 else self.encoder_learning_rate
             )
             parameter_groups.append({"params": encoder_params, "lr": encoder_lr})
+        if autoencoder_params:
+            parameter_groups.append(
+                {"params": autoencoder_params, "lr": self.encoder_learning_rate}
+            )
+        if esm_params:
+            parameter_groups.append({"params": esm_params, "lr": self.esm_learning_rate})
         if not parameter_groups:
             raise ValueError("The model has no trainable parameters.")
 
