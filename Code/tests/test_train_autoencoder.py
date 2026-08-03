@@ -300,6 +300,7 @@ def test_sweep_search_space_depends_on_layer_type() -> None:
         "num_layers": (2, 3),
         "hidden_dim": (512, 1024),
     }
+    assert sweep_search_space_for_layer("lstm") == sweep_search_space_for_layer("gru")
     assert sweep_search_space_for_layer("transformer") == {
         "learning_rate": (1e-4, 3e-4),
         "num_layers": (2, 3),
