@@ -169,6 +169,30 @@ def test_mlp_head_rejects_invalid_dropout(dropout: float) -> None:
         MLPHead(embedding_dim=16, dropout=dropout)
 
 
+def test_classifier_configures_representation_specific_dropout() -> None:
+    classifier = ProteinSequenceClassifier(
+        embedding_type="random_autoencoder",
+        autoencoder_embedding_dim=4,
+        autoencoder_cnn_channels=4,
+        autoencoder_hidden_dim=8,
+        autoencoder_latent_dim=3,
+        autoencoder_embedding_dropout=0.2,
+        esm_embedding_dropout=0.1,
+    )
+
+    assert classifier.autoencoder_embedding_dropout.p == pytest.approx(0.2)
+    assert classifier.esm_embedding_dropout.p == pytest.approx(0.1)
+
+
+@pytest.mark.parametrize("dropout", [-0.1, 1.0])
+def test_classifier_rejects_invalid_embedding_dropout(dropout: float) -> None:
+    with pytest.raises(ValueError, match="embedding_dropout"):
+        ProteinSequenceClassifier(
+            embedding_type="random_autoencoder",
+            autoencoder_embedding_dropout=dropout,
+        )
+
+
 def test_cached_embedding_classifier_trains_only_its_head() -> None:
     classifier = CachedEmbeddingClassifier(
         embedding_type="esm2",

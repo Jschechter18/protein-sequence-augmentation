@@ -508,6 +508,8 @@ class ProteinSequenceClassifier(nn.Module):
         esm_max_sequence_length: int = 1022,
         head_type: str = "linear",
         dropout: float = 0.1,
+        autoencoder_embedding_dropout: float = 0.0,
+        esm_embedding_dropout: float = 0.0,
         head_seed: int | None = None,
         autoencoder_checkpoint: str | None = None,
         autoencoder_embedding_dim: int = 128,
@@ -526,6 +528,14 @@ class ProteinSequenceClassifier(nn.Module):
         self.head_type = head_type
         self.esm_model_name = esm_model_name
         self.esm_max_sequence_length = esm_max_sequence_length
+        for name, value in (
+            ("autoencoder_embedding_dropout", autoencoder_embedding_dropout),
+            ("esm_embedding_dropout", esm_embedding_dropout),
+        ):
+            if not 0.0 <= value < 1.0:
+                raise ValueError(f"{name} must be in the range [0, 1).")
+        self.autoencoder_embedding_dropout = nn.Dropout(autoencoder_embedding_dropout)
+        self.esm_embedding_dropout = nn.Dropout(esm_embedding_dropout)
 
         if self.embedding_type == "random_autoencoder":
             self.embedded_representation = RandomAutoencoderEncoder(
@@ -630,6 +640,24 @@ class ProteinSequenceClassifier(nn.Module):
             embeddings = self.embedded_representation(input_ids, lengths, batch["sequence"])
         else:
             raise ValueError(f"Unsupported embedding type: {self.embedding_type}")
+        if self.embedding_type in {"random_autoencoder", "trained_autoencoder"}:
+            return self.autoencoder_embedding_dropout(embeddings)
+        if self.embedding_type == "esm2":
+            return self.esm_embedding_dropout(embeddings)
+        if self.embedding_type == "trained_autoencoder+esm2":
+            autoencoder_dim = self.embedded_representation.autoencoder_encoder.output_dim
+            autoencoder_embeddings, esm_embeddings = torch.split(
+                embeddings,
+                [autoencoder_dim, embeddings.shape[-1] - autoencoder_dim],
+                dim=-1,
+            )
+            return torch.cat(
+                [
+                    self.autoencoder_embedding_dropout(autoencoder_embeddings),
+                    self.esm_embedding_dropout(esm_embeddings),
+                ],
+                dim=-1,
+            )
         return embeddings
 
     def forward(self, batch: dict) -> torch.Tensor:

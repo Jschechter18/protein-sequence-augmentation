@@ -588,6 +588,85 @@ def test_default_end_to_end_sweep_has_24_uncached_trainable_configs(
     )
 
 
+def test_end_to_end_tuning_uses_compact_regularization_grid(tmp_path: Path) -> None:
+    args = _sweep_args(tmp_path)
+    args.run_sweep = False
+    args.end_to_end_hp_tune = True
+
+    configs = train.build_run_configs(args, device="cpu")
+
+    assert len(configs) == 40
+    counts = defaultdict(int)
+    for config in configs:
+        counts[(config.representation, config.head_type)] += 1
+    assert counts == {
+        ("random_autoencoder", "linear"): 4,
+        ("random_autoencoder", "mlp"): 4,
+        ("trained_autoencoder", "linear"): 6,
+        ("trained_autoencoder", "mlp"): 6,
+        ("esm2", "linear"): 4,
+        ("esm2", "mlp"): 4,
+        ("trained_autoencoder+esm2", "linear"): 6,
+        ("trained_autoencoder+esm2", "mlp"): 6,
+    }
+    assert all(config.epochs == 10 for config in configs)
+    assert all(config.early_stopping_patience == 3 for config in configs)
+    assert all(config.seed == 42 for config in configs)
+    assert all(config.end_to_end for config in configs)
+    assert all(not config.evaluate_test for config in configs)
+    assert all(not config.cache_embeddings for config in configs)
+    assert all(config.phase == "end_to_end_tuning" for config in configs)
+    assert all("end_to_end/tuning" in str(config.run_dir) for config in configs)
+
+
+def test_successful_end_to_end_tuning_automatically_runs_final_sweep(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _sweep_args(tmp_path)
+    args.run_sweep = False
+    args.end_to_end_hp_tune = True
+    tuning_config = train.build_run_configs(args, device="cpu")[0]
+    final_config = replace(
+        tuning_config,
+        phase="end_to_end",
+        mode="end_to_end_sweep",
+        evaluate_test=True,
+    )
+    built_args = []
+    run_phases = []
+
+    def fake_build(run_args, device=None):
+        built_args.append(run_args)
+        return [tuning_config] if run_args.end_to_end_hp_tune else [final_config]
+
+    monkeypatch.setattr(train, "parse_args", lambda _argv: args)
+    monkeypatch.setattr(train, "build_run_configs", fake_build)
+    monkeypatch.setattr(train, "validate_preflight", lambda _configs: None)
+    monkeypatch.setattr(
+        train,
+        "run_one",
+        lambda config, **_kwargs: (
+            run_phases.append(config.phase)
+            or train._row_from_metrics(config, {"accuracy": 0.5}, "complete")
+        ),
+    )
+    monkeypatch.setattr(train, "save_summaries", lambda _configs, _rows: None)
+
+    train.main([])
+
+    assert run_phases == ["end_to_end_tuning", "end_to_end"]
+    assert len(built_args) == 2
+    automatic_final_args = built_args[1]
+    assert automatic_final_args.end_to_end_sweep is True
+    assert automatic_final_args.end_to_end_hp_tune is False
+    assert automatic_final_args.epochs == 10
+    assert automatic_final_args.early_stopping_patience == 3
+    assert automatic_final_args.selected_hyperparameters.endswith(
+        "end_to_end/tuning/selected_hyperparameters.json"
+    )
+
+
 def test_end_to_end_sweep_summary_is_separate_from_frozen_summary(
     tmp_path: Path,
 ) -> None:
