@@ -166,7 +166,7 @@ class ProteinClassificationTrainingPipeline:
         unfreeze_esm: bool = False,
         unfreeze_layers: int = 1,
         unfreeze_all_esm: bool = False,
-        end_to_end: bool = False, 
+        end_to_end: bool = False,
         cnn_embedding_dim: int = 128,
         cnn_num_filters: int = 128,
         autoencoder_checkpoint: str | None = None,
@@ -182,6 +182,8 @@ class ProteinClassificationTrainingPipeline:
         config: Mapping[str, Any] | None = None,
         run_config: Mapping[str, Any] | None = None,
         show_progress: bool = False,
+        freeze_autoencoder: bool | None = None,
+        freeze_esm2: bool | None = None,
     ) -> None:
         if not str(run_dir):
             raise ValueError("run_dir must be a non-empty path.")
@@ -207,6 +209,25 @@ class ProteinClassificationTrainingPipeline:
         self.max_grad_norm = max_grad_norm
         self.optimizer_name = optimizer_name.lower()
         self.show_progress = show_progress
+        self.freeze_autoencoder = (
+            bool(getattr(self.model, "freeze_autoencoder", True))
+            if freeze_autoencoder is None
+            else bool(freeze_autoencoder)
+        )
+        self.freeze_esm2 = (
+            bool(getattr(self.model, "freeze_esm2", True))
+            if freeze_esm2 is None
+            else bool(freeze_esm2)
+        )
+        if end_to_end:
+            self.freeze_autoencoder = False
+            self.freeze_esm2 = False
+        elif unfreeze_esm or unfreeze_all_esm:
+            self.freeze_esm2 = False
+        if hasattr(self.model, "freeze_autoencoder"):
+            self.model.freeze_autoencoder = self.freeze_autoencoder
+        if hasattr(self.model, "freeze_esm2"):
+            self.model.freeze_esm2 = self.freeze_esm2
 
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -223,7 +244,9 @@ class ProteinClassificationTrainingPipeline:
             unfreeze_esm=unfreeze_esm,
             unfreeze_layers=unfreeze_layers,
             unfreeze_all_esm=unfreeze_all_esm,
-            end_to_end=end_to_end, #edited by codex
+            end_to_end=end_to_end,
+            freeze_autoencoder=self.freeze_autoencoder,
+            freeze_esm2=self.freeze_esm2,
         )
         self.optimizer = self._create_optimizer()
         self.criterion = nn.CrossEntropyLoss()
@@ -250,7 +273,9 @@ class ProteinClassificationTrainingPipeline:
             "unfreeze_esm": unfreeze_esm,
             "unfreeze_layers": unfreeze_layers,
             "unfreeze_all_esm": unfreeze_all_esm,
-            "end_to_end": end_to_end, #edited by codex
+            "end_to_end": end_to_end,
+            "freeze_autoencoder": self.freeze_autoencoder,
+            "freeze_esm2": self.freeze_esm2,
             "cnn_embedding_dim": cnn_embedding_dim,
             "cnn_num_filters": cnn_num_filters,
             "autoencoder_checkpoint": autoencoder_checkpoint,
@@ -272,45 +297,59 @@ class ProteinClassificationTrainingPipeline:
         unfreeze_esm: bool,
         unfreeze_layers: int,
         unfreeze_all_esm: bool,
-        end_to_end: bool, #edited by codex
+        end_to_end: bool,
+        freeze_autoencoder: bool,
+        freeze_esm2: bool,
     ) -> None:
-        """Configure frozen, ESM-only, or combined end-to-end training."""
+        """Apply explicit component freeze state while preserving legacy options."""
 
         embedding_type = getattr(self.model, "embedding_type", None)
-        if end_to_end:
-            if unfreeze_esm or unfreeze_all_esm:
-                raise ValueError(
-                    "end_to_end cannot be combined with ESM-only unfreezing options."
-                )
-            encoder = getattr(self.model, "embedded_representation", None)
-            if embedding_type == "esm2":
-                if not isinstance(encoder, nn.Module):
-                    raise ValueError("The ESM-2 representation does not expose an encoder.")
-                logger.info("Unfreezing the complete ESM-2 encoder.")
-                for parameter in encoder.parameters():
-                    parameter.requires_grad = True
-                if hasattr(encoder, "is_frozen"):
-                    encoder.is_frozen = False
-                return
-            if embedding_type in {"random_autoencoder", "trained_autoencoder"}:
-                if not isinstance(encoder, nn.Module):
+        if end_to_end and (unfreeze_esm or unfreeze_all_esm):
+            raise ValueError(
+                "end_to_end cannot be combined with ESM-only unfreezing options."
+            )
+        if unfreeze_esm and unfreeze_all_esm:
+            raise ValueError("Choose either partial or complete ESM unfreezing, not both.")
+        if (unfreeze_esm or unfreeze_all_esm) and embedding_type != "esm2":
+            raise ValueError(
+                "ESM unfreezing is supported only for embedding_type='esm2'; "
+                f"received {embedding_type!r}."
+            )
+
+        if getattr(self.model, "uses_cached_embeddings", False):
+            autoencoder_trainable = (
+                "autoencoder" in str(embedding_type) and not freeze_autoencoder
+            )
+            esm2_trainable = "esm2" in str(embedding_type) and not freeze_esm2
+            if autoencoder_trainable or esm2_trainable:
+                raise ValueError("Cached embeddings require frozen encoders.")
+            return
+
+        encoder = getattr(self.model, "embedded_representation", None)
+        if embedding_type in {"random_autoencoder", "trained_autoencoder"}:
+            if not isinstance(encoder, nn.Module):
+                raise ValueError("The autoencoder representation does not expose an encoder.")
+            self._set_autoencoder_frozen(encoder, freeze_autoencoder)
+            return
+
+        if embedding_type == "esm2":
+            if not isinstance(encoder, nn.Module):
+                raise ValueError("The ESM-2 representation does not expose an encoder.")
+            if unfreeze_esm:
+                if unfreeze_layers < 1:
                     raise ValueError(
-                        "The autoencoder representation does not expose an encoder."
+                        "unfreeze_layers must be at least 1 when unfreeze_esm=True."
                     )
-                logger.info("Unfreezing the autoencoder encoding path.")
-                encoder_parameters = getattr(
-                    encoder, "encoder_parameters", encoder.parameters
-                )
-                for parameter in encoder_parameters():
-                    parameter.requires_grad = True
-                if hasattr(encoder, "is_frozen"):
-                    encoder.is_frozen = False
-                return
-            if embedding_type != "trained_autoencoder+esm2":
-                raise ValueError(
-                    "end_to_end is unsupported for embedding_type="
-                    f"{embedding_type!r}."
-                )
+                if not hasattr(encoder, "unfreeze_last_layers"):
+                    raise ValueError("The selected encoder does not support partial unfreezing.")
+                self._set_esm_frozen(encoder, True)
+                encoder.unfreeze_last_layers(int(unfreeze_layers))
+                encoder.train()
+            else:
+                self._set_esm_frozen(encoder, freeze_esm2)
+            return
+
+        if embedding_type == "trained_autoencoder+esm2":
             autoencoder_encoder = getattr(encoder, "autoencoder_encoder", None)
             esm_encoder = getattr(encoder, "esm_encoder", None)
             if not isinstance(autoencoder_encoder, nn.Module) or not isinstance(
@@ -318,47 +357,69 @@ class ProteinClassificationTrainingPipeline:
             ):
                 raise ValueError(
                     "The combined representation must expose autoencoder_encoder "
-                    "and esm_encoder modules for end-to-end training."
+                    "and esm_encoder modules."
                 )
-            logger.info("Unfreezing the autoencoder encoder and complete ESM-2 encoder.")
-            autoencoder_parameters = getattr(
-                autoencoder_encoder, "encoder_parameters", autoencoder_encoder.parameters
+            self._set_autoencoder_frozen(autoencoder_encoder, freeze_autoencoder)
+            self._set_esm_frozen(esm_encoder, freeze_esm2)
+        elif end_to_end:
+            raise ValueError(
+                "end_to_end is unsupported for embedding_type=" f"{embedding_type!r}."
             )
-            for parameter in autoencoder_parameters():
-                parameter.requires_grad = True
-            for parameter in esm_encoder.parameters():
-                parameter.requires_grad = True
-            if hasattr(autoencoder_encoder, "is_frozen"):
-                autoencoder_encoder.is_frozen = False
-            if hasattr(esm_encoder, "is_frozen"):
-                esm_encoder.is_frozen = False
-            return
-        if unfreeze_esm and unfreeze_all_esm:
-            raise ValueError("Choose either partial or complete ESM unfreezing, not both.")
-        if embedding_type != "esm2":
-            if unfreeze_esm or unfreeze_all_esm:
-                raise ValueError(
-                    "ESM unfreezing is supported only for embedding_type='esm2'; "
-                    f"received {embedding_type!r}."
-                )
-            return
-        encoder = getattr(self.model, "embedded_representation", None)
-        if encoder is None:
-            return
-        if hasattr(encoder, "freeze_all_params"):
-            encoder.freeze_all_params()
-        if unfreeze_all_esm:
-            logger.info("Unfreezing the complete ESM-2 encoder.")
+
+    @staticmethod
+    def _set_autoencoder_frozen(encoder: nn.Module, freeze: bool) -> None:
+        if freeze:
+            logger.info("Freezing the autoencoder encoder.")
+            freeze_encoder = getattr(encoder, "freeze_encoder", None)
+            if callable(freeze_encoder):
+                freeze_encoder()
+                return
             for parameter in encoder.parameters():
-                parameter.requires_grad = True
+                parameter.requires_grad = False
             if hasattr(encoder, "is_frozen"):
-                encoder.is_frozen = False
-        elif unfreeze_esm:
-            if unfreeze_layers < 1:
-                raise ValueError("unfreeze_layers must be at least 1 when unfreeze_esm=True.")
-            if not hasattr(encoder, "unfreeze_last_layers"):
-                raise ValueError("The selected encoder does not support partial unfreezing.")
-            encoder.unfreeze_last_layers(int(unfreeze_layers))
+                encoder.is_frozen = True
+            encoder.eval()
+            return
+
+        logger.info("Unfreezing the autoencoder encoding path.")
+        unfreeze_encoder = getattr(encoder, "unfreeze_encoder", None)
+        if callable(unfreeze_encoder):
+            unfreeze_encoder()
+            return
+        for parameter in encoder.parameters():
+            parameter.requires_grad = False
+        encoder_parameters = getattr(encoder, "encoder_parameters", encoder.parameters)
+        for parameter in encoder_parameters():
+            parameter.requires_grad = True
+        if hasattr(encoder, "is_frozen"):
+            encoder.is_frozen = False
+        encoder.train()
+
+    @staticmethod
+    def _set_esm_frozen(encoder: nn.Module, freeze: bool) -> None:
+        if freeze:
+            logger.info("Freezing the ESM-2 encoder.")
+            freeze_all = getattr(encoder, "freeze_all_params", None)
+            if callable(freeze_all):
+                freeze_all()
+                return
+            for parameter in encoder.parameters():
+                parameter.requires_grad = False
+            if hasattr(encoder, "is_frozen"):
+                encoder.is_frozen = True
+            encoder.eval()
+            return
+
+        logger.info("Unfreezing the complete ESM-2 encoder.")
+        unfreeze_all = getattr(encoder, "unfreeze_all_params", None)
+        if callable(unfreeze_all):
+            unfreeze_all()
+            return
+        for parameter in encoder.parameters():
+            parameter.requires_grad = True
+        if hasattr(encoder, "is_frozen"):
+            encoder.is_frozen = False
+        encoder.train()
 
     def _create_optimizer(self) -> Optimizer:
         """Build non-overlapping parameter groups containing trainable tensors only."""

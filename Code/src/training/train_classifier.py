@@ -1,4 +1,4 @@
-"""Train frozen protein-representation classifiers.
+"""Train protein-representation classifiers.
 
 The module supports a single run and the Stage 1 Cartesian sweep. Run it from
 the repository root with either of these equivalent commands::
@@ -116,7 +116,9 @@ STAGE1_REPRESENTATIONS = (
 )
 TUNING_SEED = 42
 TUNING_REPRESENTATIONS = STAGE1_REPRESENTATIONS
-TUNING_LEARNING_RATES = (1e-4, 3e-4, 1e-3)
+TUNING_LEARNING_RATES = (1e-6)
+# TUNING_LEARNING_RATES = (1e-5)
+# TUNING_LEARNING_RATES = (1e-4)
 TUNING_WEIGHT_DECAYS = (0.0, 1e-4)
 TUNING_MLP_DROPOUTS = (0.1, 0.3)
 END_TO_END_TUNING_WEIGHT_DECAYS = (0.0, 1e-4)
@@ -254,6 +256,11 @@ class ClassifierRunConfig:
     phase: str
     cache_embeddings: bool
     embedding_cache_root: str
+    encoder_mode: str = "frozen"
+    autoencoder_version: str | None = None
+    autoencoder_layer_type: str = "gru"
+    freeze_autoencoder: bool = True
+    freeze_esm2: bool = True
 
     @property
     def version_dir(self) -> str:
@@ -289,6 +296,14 @@ class ClassifierRunConfig:
     @property
     def run_dir(self) -> Path:
         root = Path(self.results_dir) / self.dataset / self.version_dir
+        if self.phase == "single" and self.encoder_mode != "frozen":
+            return (
+                root
+                / self.encoder_mode
+                / self.representation
+                / self.head_type
+                / f"seed_{self.seed}"
+            )
         if self.phase in {"tuning", "final", "end_to_end", "end_to_end_tuning"}:
             if self.phase == "end_to_end_tuning":
                 return root / "end_to_end" / "tuning" / self.head_type / self.representation / self.trial_name
@@ -308,6 +323,14 @@ class ClassifierRunConfig:
             / self.dataset
             / self.version_dir
         )
+        if self.phase == "single" and self.encoder_mode != "frozen":
+            return (
+                root
+                / self.encoder_mode
+                / self.representation
+                / self.head_type
+                / f"seed_{self.seed}"
+            )
         if self.phase in {"tuning", "final", "end_to_end", "end_to_end_tuning"}:
             if self.phase == "end_to_end_tuning":
                 return root / "end_to_end" / "tuning" / self.head_type / self.representation / self.trial_name
@@ -356,6 +379,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--unfreeze_all_esm", action="store_true")
     parser.add_argument("--unfreeze_esm", action="store_true")
     parser.add_argument(
+        "--freeze_autoencoder",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Freeze autoencoder encoding parameters (enabled by default).",
+    )
+    parser.add_argument(
+        "--freeze_esm2",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Freeze ESM-2 parameters (enabled by default).",
+    )
+    parser.add_argument(
         "--end_to_end",
         "--full_end_to_end",
         action="store_true",
@@ -375,6 +410,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # These defaults match the current v5 solubility checkpoint and also define
     # the architecture of the matched random-autoencoder baseline.
     parser.add_argument("--autoencoder_checkpoint", default=str(DEFAULT_AE_CHECKPOINT))
+    parser.add_argument("--autoencoder_version", default=None)
+    parser.add_argument(
+        "--autoencoder_layer_type",
+        choices=("gru", "lstm", "transformer"),
+        default="gru",
+    )
     parser.add_argument("--autoencoder_embedding_dim", type=int, default=256)
     parser.add_argument("--autoencoder_cnn_channels", type=int, default=256)
     parser.add_argument("--autoencoder_hidden_dim", type=int, default=512)
@@ -533,13 +574,29 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         or args.unfreeze_all_esm
         or args.unfreeze_layers
         or args.end_to_end
+        or not args.freeze_autoencoder
+        or not args.freeze_esm2
     ):
         parser.error("Stage 1 sweep requires fully frozen encoders; unfreezing options are not allowed")
+    if args.hp_tune and (
+        args.unfreeze_esm
+        or args.unfreeze_all_esm
+        or args.unfreeze_layers
+        or args.end_to_end
+        or not args.freeze_autoencoder
+        or not args.freeze_esm2
+    ):
+        parser.error(
+            "Frozen hyperparameter tuning requires frozen encoders; use "
+            "--end_to_end_hp_tune for trainable encoders."
+        )
     if (args.end_to_end_sweep or args.end_to_end_hp_tune) and (
         args.end_to_end
         or args.unfreeze_esm
         or args.unfreeze_all_esm
         or args.unfreeze_layers
+        or not args.freeze_autoencoder
+        or not args.freeze_esm2
     ):
         parser.error(
             "end-to-end experiment modes cannot be combined with individual "
@@ -550,13 +607,24 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
             parser.error("ESM unfreezing options are supported only with --representation esm2")
     if args.end_to_end and normalize_embedding_type(args.embedding_type) != "trained_autoencoder+esm2":
         parser.error("--end_to_end requires --representation trained_autoencoder+esm2")
-    if args.cache_embeddings and (
-        args.unfreeze_esm or args.unfreeze_all_esm or args.end_to_end
+    if not any(
+        (args.run_sweep, args.hp_tune, args.end_to_end_sweep, args.end_to_end_hp_tune)
     ):
-        parser.error(
-            "Embedding caching requires frozen encoders; use --no-cache_embeddings "
-            "when fine-tuning an encoder."
-        )
+        representation = normalize_embedding_type(args.embedding_type)
+        if not args.freeze_autoencoder and "autoencoder" not in representation:
+            parser.error(
+                "--no-freeze_autoencoder requires an autoencoder representation"
+            )
+        if not args.freeze_esm2 and "esm2" not in representation:
+            parser.error("--no-freeze_esm2 requires an ESM-2 representation")
+        if (
+            representation == "trained_autoencoder+esm2"
+            and args.freeze_autoencoder != args.freeze_esm2
+        ):
+            parser.error(
+                "The combined representation requires both encoders frozen or "
+                "both encoders trainable."
+            )
 
 
 def _unique_normalized(values: Iterable[str]) -> list[str]:
@@ -597,6 +665,41 @@ def _make_run_config(
     num_classes = args.num_classes or (10 if args.dataset == "localization" else 2)
     pin_memory = args.pin_memory if args.pin_memory is not None else device == "cuda"
     persistent_workers = bool(args.persistent_workers and args.num_workers > 0)
+    train_all_encoders = bool(
+        args.end_to_end or args.end_to_end_sweep or args.end_to_end_hp_tune
+    )
+    uses_autoencoder = "autoencoder" in representation
+    uses_trained_autoencoder = representation in {
+        "trained_autoencoder",
+        "trained_autoencoder+esm2",
+    }
+    uses_esm2 = "esm2" in representation
+    freeze_autoencoder = (
+        not train_all_encoders if uses_autoencoder else True
+    )
+    freeze_esm2 = not train_all_encoders if uses_esm2 else True
+    if uses_autoencoder and not train_all_encoders:
+        freeze_autoencoder = args.freeze_autoencoder
+    if uses_esm2 and not train_all_encoders:
+        freeze_esm2 = args.freeze_esm2
+    if uses_esm2 and (args.unfreeze_esm or args.unfreeze_all_esm):
+        freeze_esm2 = False
+    encoders_frozen = freeze_autoencoder and freeze_esm2
+    encoder_mode = (
+        "frozen"
+        if encoders_frozen
+        else "from_scratch"
+        if representation == "random_autoencoder"
+        else "fine_tuned"
+    )
+    autoencoder_version = None
+    if uses_trained_autoencoder:
+        autoencoder_version = args.autoencoder_version
+        if (
+            autoencoder_version is None
+            and args.autoencoder_checkpoint is not None
+        ):
+            autoencoder_version = Path(args.autoencoder_checkpoint).expanduser().parent.name
     return ClassifierRunConfig(
         dataset=args.dataset,
         data_dir=args.data_dir,
@@ -604,6 +707,7 @@ def _make_run_config(
         checkpoint_root=args.checkpoint_root,
         version=str(args.version),
         representation=representation,
+        encoder_mode=encoder_mode,
         head_type=head_type,
         seed=seed,
         num_classes=num_classes,
@@ -621,6 +725,8 @@ def _make_run_config(
         esm_model_name=args.esm_model_name,
         esm_max_sequence_length=args.esm_max_sequence_length,
         autoencoder_checkpoint=args.autoencoder_checkpoint,
+        autoencoder_version=autoencoder_version,
+        autoencoder_layer_type=args.autoencoder_layer_type,
         autoencoder_embedding_dim=args.autoencoder_embedding_dim,
         autoencoder_cnn_channels=args.autoencoder_cnn_channels,
         autoencoder_hidden_dim=args.autoencoder_hidden_dim,
@@ -633,6 +739,8 @@ def _make_run_config(
         end_to_end=(
             args.end_to_end or args.end_to_end_sweep or args.end_to_end_hp_tune
         ),
+        freeze_autoencoder=freeze_autoencoder,
+        freeze_esm2=freeze_esm2,
         max_grad_norm=args.max_grad_norm,
         num_workers=args.num_workers,
         pin_memory=pin_memory,
@@ -656,8 +764,7 @@ def _make_run_config(
         phase=phase,
         cache_embeddings=(
             args.cache_embeddings
-            and not args.end_to_end_sweep
-            and not args.end_to_end_hp_tune
+            and encoders_frozen
         ),
         embedding_cache_root=args.embedding_cache_root,
     )
@@ -1023,6 +1130,7 @@ def create_model(
         dropout=config.dropout if config.dropout is not None else 0.0,
         head_seed=config.seed,
         autoencoder_checkpoint=config.autoencoder_checkpoint,
+        autoencoder_layer_type=config.autoencoder_layer_type,
         autoencoder_embedding_dim=config.autoencoder_embedding_dim,
         autoencoder_cnn_channels=config.autoencoder_cnn_channels,
         autoencoder_hidden_dim=config.autoencoder_hidden_dim,
@@ -1031,6 +1139,8 @@ def create_model(
         autoencoder_kernel_size=config.autoencoder_kernel_size,
         autoencoder_embedding_dropout=config.autoencoder_embedding_dropout,
         esm_embedding_dropout=config.esm_embedding_dropout,
+        freeze_autoencoder=config.freeze_autoencoder,
+        freeze_esm2=config.freeze_esm2,
         device=config.device,
     )
 
@@ -1064,6 +1174,10 @@ def _row_from_metrics(
         "dataset": config.dataset,
         "version": config.version_dir,
         "representation": config.representation,
+        "encoder_mode": config.encoder_mode,
+        "freeze_autoencoder": config.freeze_autoencoder,
+        "freeze_esm2": config.freeze_esm2,
+        "autoencoder_version": config.autoencoder_version,
         "head_type": config.head_type,
         "seed": config.seed,
         "phase": config.phase,
@@ -1213,6 +1327,8 @@ def run_one(
             unfreeze_layers=config.unfreeze_layers,
             unfreeze_all_esm=config.unfreeze_all_esm,
             end_to_end=config.end_to_end,
+            freeze_autoencoder=config.freeze_autoencoder,
+            freeze_esm2=config.freeze_esm2,
             max_grad_norm=config.max_grad_norm,
             run_config=payload,
             show_progress=True,
@@ -1302,6 +1418,11 @@ def save_summaries(configs: list[ClassifierRunConfig], rows: list[dict[str, Any]
     else:
         if all(config.phase == "end_to_end" for config in configs):
             summary_root = summary_root / "end_to_end"
+        elif all(
+            config.phase == "single" and config.encoder_mode != "frozen"
+            for config in configs
+        ):
+            summary_root = summary_root / configs[0].encoder_mode
         summary_path = summary_root / "summary.csv"
     summary = pd.DataFrame(rows)
     if summary_path.is_file():
@@ -1310,7 +1431,46 @@ def save_summaries(configs: list[ClassifierRunConfig], rows: list[dict[str, Any]
             summary = pd.concat([existing, summary], ignore_index=True, sort=False)
         except (OSError, ValueError, pd.errors.ParserError) as error:
             logger.warning("Could not merge existing summary %s: %s", summary_path, error)
-    identity_columns = ["dataset", "version", "representation", "head_type", "seed"]
+
+    def legacy_encoder_state(row: pd.Series) -> tuple[str, bool | None, bool | None]:
+        phase = str(row.get("phase", ""))
+        representation = str(row.get("representation", ""))
+        if phase in {"end_to_end", "end_to_end_tuning"}:
+            mode = (
+                "from_scratch"
+                if representation == "random_autoencoder"
+                else "fine_tuned"
+            )
+            return (
+                mode,
+                "autoencoder" not in representation,
+                "esm2" not in representation,
+            )
+        if phase in {"final", "tuning"}:
+            return "frozen", True, True
+        return "unknown", None, None
+
+    inferred_state = summary.apply(legacy_encoder_state, axis=1)
+    state_defaults = {
+        "encoder_mode": inferred_state.map(lambda state: state[0]),
+        "freeze_autoencoder": inferred_state.map(lambda state: state[1]),
+        "freeze_esm2": inferred_state.map(lambda state: state[2]),
+    }
+    for column, default in state_defaults.items():
+        if column not in summary:
+            summary[column] = default
+        else:
+            summary[column] = summary[column].fillna(default)
+    identity_columns = [
+        "dataset",
+        "version",
+        "representation",
+        "encoder_mode",
+        "freeze_autoencoder",
+        "freeze_esm2",
+        "head_type",
+        "seed",
+    ]
     if is_tuning:
         identity_columns.extend(
             [
@@ -1392,6 +1552,10 @@ def save_summaries(configs: list[ClassifierRunConfig], rows: list[dict[str, Any]
         "dataset",
         "version",
         "representation",
+        "encoder_mode",
+        "freeze_autoencoder",
+        "freeze_esm2",
+        "autoencoder_version",
         "head_type",
         "seed",
         "status",
@@ -1404,12 +1568,19 @@ def save_summaries(configs: list[ClassifierRunConfig], rows: list[dict[str, Any]
         for column in completed.columns
         if column not in identity and pd.api.types.is_numeric_dtype(completed[column])
     ]
-    grouped = completed.groupby(["representation", "head_type"], dropna=False)
+    group_columns = [
+        "representation",
+        "head_type",
+        "encoder_mode",
+        "freeze_autoencoder",
+        "freeze_esm2",
+    ]
+    grouped = completed.groupby(group_columns, dropna=False)
     aggregate = grouped.size().rename("num_seeds").reset_index()
     for metric in metric_columns:
         values = grouped[metric].agg(["mean", "std"]).reset_index()
         values = values.rename(columns={"mean": f"{metric}_mean", "std": f"{metric}_std"})
-        aggregate = aggregate.merge(values, on=["representation", "head_type"], how="left")
+        aggregate = aggregate.merge(values, on=group_columns, how="left")
     _atomic_dataframe_csv(aggregate, summary_root / "aggregated_summary.csv")
 
 

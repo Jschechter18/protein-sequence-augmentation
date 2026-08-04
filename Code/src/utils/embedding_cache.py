@@ -85,6 +85,7 @@ def embedding_cache_metadata(
             else None
         ),
         "autoencoder_architecture": {
+            "layer_type": config.autoencoder_layer_type,
             "embedding_dim": config.autoencoder_embedding_dim,
             "cnn_channels": config.autoencoder_cnn_channels,
             "hidden_dim": config.autoencoder_hidden_dim,
