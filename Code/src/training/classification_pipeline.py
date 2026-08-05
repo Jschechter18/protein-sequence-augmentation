@@ -531,6 +531,28 @@ class ProteinClassificationTrainingPipeline:
             )
         return labels
 
+    @staticmethod
+    def _require_finite_tensor(
+        tensor: torch.Tensor,
+        *,
+        name: str,
+        description: str,
+        batch_index: int,
+    ) -> None:
+        """Fail close to the source of numerical instability."""
+
+        finite = torch.isfinite(tensor)
+        if finite.all().item():
+            return
+        nan_count = int(torch.isnan(tensor).sum().item())
+        positive_inf_count = int(torch.isposinf(tensor).sum().item())
+        negative_inf_count = int(torch.isneginf(tensor).sum().item())
+        raise FloatingPointError(
+            f"Non-finite {name} in {description.lower()} batch {batch_index}: "
+            f"{nan_count} NaN, {positive_inf_count} +Inf, "
+            f"{negative_inf_count} -Inf values."
+        )
+
     def _collect_split(
         self,
         loader: DataLoader,
@@ -555,7 +577,7 @@ class ProteinClassificationTrainingPipeline:
         )
         context = torch.enable_grad() if training else torch.inference_mode()
         with context:
-            for raw_batch in iterator:
+            for batch_index, raw_batch in enumerate(iterator, start=1):
                 batch = self._move_batch_to_device(raw_batch)
                 labels = self._classification_labels(batch)
                 batch_size = int(labels.numel())
@@ -568,13 +590,34 @@ class ProteinClassificationTrainingPipeline:
                         "Classifier logits must have shape "
                         f"[{batch_size}, {self.num_classes}], got {tuple(logits.shape)}."
                     )
+                self._require_finite_tensor(
+                    logits,
+                    name="classifier logits",
+                    description=description,
+                    batch_index=batch_index,
+                )
                 loss = self.criterion(logits, labels)
+                self._require_finite_tensor(
+                    loss,
+                    name="loss",
+                    description=description,
+                    batch_index=batch_index,
+                )
                 if training:
                     loss.backward()
-                    if self.max_grad_norm is not None:
+                    try:
                         nn.utils.clip_grad_norm_(
-                            self.trainable_parameters, self.max_grad_norm
+                            self.trainable_parameters,
+                            self.max_grad_norm
+                            if self.max_grad_norm is not None
+                            else float("inf"),
+                            error_if_nonfinite=True,
                         )
+                    except RuntimeError as error:
+                        raise FloatingPointError(
+                            "Non-finite gradient norm in "
+                            f"{description.lower()} batch {batch_index}."
+                        ) from error
                     self.optimizer.step()
 
                 probabilities = torch.softmax(logits.detach(), dim=1)
@@ -626,6 +669,11 @@ class ProteinClassificationTrainingPipeline:
 
         if probabilities.shape != (len(labels), self.num_classes):
             raise ValueError("Probability array does not match labels and num_classes.")
+        if not np.isfinite(probabilities).all():
+            raise FloatingPointError(
+                "Probability array contains non-finite values; inspect the model "
+                "logits and input embeddings."
+            )
         positive_labels = labels == 1
         positive_predictions = predictions == 1
         present_classes = np.unique(labels)
@@ -971,7 +1019,7 @@ class ProteinClassificationTrainingPipeline:
             leave=False,
         )
         with torch.inference_mode():
-            for raw_batch in iterator:
+            for batch_index, raw_batch in enumerate(iterator, start=1):
                 batch = self._move_batch_to_device(raw_batch)
                 labels = self._classification_labels(batch)
                 batch_size = int(labels.numel())
@@ -981,7 +1029,19 @@ class ProteinClassificationTrainingPipeline:
                         "Classifier logits must have shape "
                         f"[{batch_size}, {self.num_classes}], got {tuple(logits.shape)}."
                     )
+                self._require_finite_tensor(
+                    logits,
+                    name="classifier logits",
+                    description="Test evaluation",
+                    batch_index=batch_index,
+                )
                 loss = self.criterion(logits, labels)
+                self._require_finite_tensor(
+                    loss,
+                    name="loss",
+                    description="Test evaluation",
+                    batch_index=batch_index,
+                )
                 probabilities = torch.softmax(logits, dim=1)
                 predictions = probabilities.argmax(dim=1)
 

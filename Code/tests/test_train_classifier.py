@@ -299,6 +299,25 @@ def test_embedding_cache_round_trip_preserves_examples(
     assert dataset[1]["sample_id"] == 11
 
 
+def test_embedding_cache_rejects_nonfinite_embeddings(tmp_path: Path) -> None:
+    path = tmp_path / "cache.pt"
+    metadata = {"fingerprint": "test"}
+    train._atomic_torch_save(
+        {
+            "metadata": metadata,
+            "embeddings": train.torch.tensor([[1.0, float("nan")]]),
+            "labels": train.torch.tensor([1]),
+            "lengths": train.torch.tensor([3]),
+            "sequences": ["ACD"],
+            "sample_ids": [10],
+        },
+        path,
+    )
+
+    with pytest.raises(ValueError, match=r"non-finite embeddings in row\(s\) 0"):
+        train._load_embedding_cache(path, metadata)
+
+
 def test_cached_random_autoencoder_path_builds_embeddings_and_head(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

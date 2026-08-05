@@ -23,22 +23,42 @@ logger = logging.getLogger(__name__)
 EMBEDDING_CACHE_SCHEMA_VERSION = 1
 
 
+def _validate_embedding_payload(payload: dict[str, Any], *, source: str) -> None:
+    embeddings = payload.get("embeddings")
+    labels = payload.get("labels")
+    lengths = payload.get("lengths")
+    sequences = payload.get("sequences")
+    sample_ids = payload.get("sample_ids")
+    if not all(torch.is_tensor(value) for value in (embeddings, labels, lengths)):
+        raise ValueError(f"{source} is missing tensor fields.")
+    size = len(labels)
+    if (
+        embeddings.ndim != 2
+        or len(embeddings) != size
+        or len(lengths) != size
+        or not isinstance(sequences, (list, tuple))
+        or len(sequences) != size
+        or not isinstance(sample_ids, (list, tuple))
+        or len(sample_ids) != size
+    ):
+        raise ValueError(f"{source} contains inconsistent dimensions.")
+    if not torch.isfinite(embeddings).all().item():
+        bad_rows = (~torch.isfinite(embeddings)).any(dim=1).nonzero().flatten()
+        preview = ", ".join(str(int(index)) for index in bad_rows[:10])
+        suffix = "..." if len(bad_rows) > 10 else ""
+        raise ValueError(
+            f"{source} contains non-finite embeddings in row(s) {preview}{suffix}."
+        )
+
+
 class CachedEmbeddingDataset(Dataset):
     def __init__(self, payload: dict[str, Any]) -> None:
+        _validate_embedding_payload(payload, source="Cached embedding payload")
         self.embeddings = payload["embeddings"].float()
         self.labels = payload["labels"].long()
         self.lengths = payload["lengths"].long()
         self.sequences = list(payload["sequences"])
         self.sample_ids = list(payload["sample_ids"])
-        size = len(self.labels)
-        if (
-            self.embeddings.ndim != 2
-            or len(self.embeddings) != size
-            or len(self.lengths) != size
-            or len(self.sequences) != size
-            or len(self.sample_ids) != size
-        ):
-            raise ValueError("Cached embedding payload contains inconsistent dimensions.")
 
     def __len__(self) -> int:
         return len(self.labels)
@@ -217,6 +237,7 @@ def load_embedding_cache(
         payload = torch.load(path, map_location="cpu")
     if not isinstance(payload, dict) or payload.get("metadata") != expected_metadata:
         raise ValueError(f"Embedding cache metadata mismatch: {path}")
+    _validate_embedding_payload(payload, source=f"Embedding cache {path}")
     return payload
 
 
