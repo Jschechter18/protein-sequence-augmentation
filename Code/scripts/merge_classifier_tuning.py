@@ -797,7 +797,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--output_dir",
         "--output-dir",
         required=True,
-        help="Canonical tuning directory to create, such as .../v4/tuning.",
+        help=(
+            "Canonical tuning directory to create, such as "
+            ".../v4/frozen/tuning or .../v4/unfrozen/tuning."
+        ),
     )
     parser.add_argument(
         "--phase",

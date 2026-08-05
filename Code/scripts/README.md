@@ -124,6 +124,37 @@ Each one-rate instance runs 24 trials; the merged full grid has 72 trials. Use
 the same dataset files, autoencoder checkpoint, environment, and Git commit on
 all instances.
 
+To run both frozen and unfrozen tuning in one invocation, add
+`--include_unfrozen_tuning`:
+
+```bash
+python -m Code.src.training.train_classifier \
+  --hp_tune \
+  --include_unfrozen_tuning \
+  --version v5 \
+  --tuning_learning_rates 1e-4 \
+  --autoencoder_checkpoint checkpoints/autoencoder/solubility/v5/model_ae_solubility.pt \
+  --autoencoder_version v5
+```
+
+The combined command requires exactly one assigned tuning learning rate. It
+runs 24 frozen trials first, writes the local frozen winners, and then runs 40
+trainable-encoder trials using that assigned head learning rate. It deliberately
+does not start either final seeded sweep; merge all three EC2 tuning outputs
+first.
+
+Classifier experiment stages use a symmetric layout:
+
+```text
+Code/results/classifier/solubility/v5/
+├── frozen/
+│   ├── tuning/
+│   └── final/
+└── unfrozen/
+    ├── tuning/
+    └── final/
+```
+
 Collect each result tree into a separate local staging directory. Preserve the
 trailing slash on the remote tuning directory:
 
@@ -132,11 +163,11 @@ mkdir -p collected/classifier-v4/ec2-1 \
   collected/classifier-v4/ec2-2 \
   collected/classifier-v4/ec2-3
 
-rsync -az ubuntu@ec2-1:/path/to/repo/Code/results/classifier/solubility/v4/tuning/ \
+rsync -az ubuntu@ec2-1:/path/to/repo/Code/results/classifier/solubility/v4/frozen/tuning/ \
   collected/classifier-v4/ec2-1/
-rsync -az ubuntu@ec2-2:/path/to/repo/Code/results/classifier/solubility/v4/tuning/ \
+rsync -az ubuntu@ec2-2:/path/to/repo/Code/results/classifier/solubility/v4/frozen/tuning/ \
   collected/classifier-v4/ec2-2/
-rsync -az ubuntu@ec2-3:/path/to/repo/Code/results/classifier/solubility/v4/tuning/ \
+rsync -az ubuntu@ec2-3:/path/to/repo/Code/results/classifier/solubility/v4/frozen/tuning/ \
   collected/classifier-v4/ec2-3/
 ```
 
@@ -147,8 +178,23 @@ python Code/scripts/merge_classifier_tuning.py \
   --input_dir collected/classifier-v4/ec2-1 \
   --input_dir collected/classifier-v4/ec2-2 \
   --input_dir collected/classifier-v4/ec2-3 \
-  --output_dir Code/results/classifier/solubility/v4/tuning \
+  --output_dir Code/results/classifier/solubility/v4/frozen/tuning \
   --expect_full_grid
+```
+
+Collect each remote `v4/unfrozen/tuning/` directory into separate
+`collected/classifier-v4-unfrozen/ec2-*` folders, then merge the unfrozen grids
+separately. Across three one-rate EC2 instances there are 120 end-to-end tuning
+trials:
+
+```bash
+python Code/scripts/merge_classifier_tuning.py \
+  --phase end_to_end_tuning \
+  --input_dir collected/classifier-v4-unfrozen/ec2-1 \
+  --input_dir collected/classifier-v4-unfrozen/ec2-2 \
+  --input_dir collected/classifier-v4-unfrozen/ec2-3 \
+  --output_dir Code/results/classifier/solubility/v4/unfrozen/tuning \
+  --expected_trials 120
 ```
 
 Start the final three-seed sweep from the merged winner file:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from collections import defaultdict
 from dataclasses import replace
@@ -14,7 +15,7 @@ from Code.src.training import train_classifier as train
 
 
 def _sweep_args(results_dir: Path, *extra: str):
-    tuning_root = results_dir / "solubility" / "v1" / "tuning"
+    tuning_root = results_dir / "solubility" / "v1" / "frozen" / "tuning"
     tuning_root.mkdir(parents=True, exist_ok=True)
     selected_path = tuning_root / "selected_hyperparameters.json"
     if not selected_path.exists():
@@ -480,6 +481,65 @@ def test_tuning_learning_rate_partition_rejects_unknown_rate() -> None:
         train.parse_args(["--hp_tune", "--tuning_learning_rates", "1e-3"])
 
 
+def test_combined_frozen_and_unfrozen_tuning_requires_one_rate() -> None:
+    with pytest.raises(SystemExit):
+        train.parse_args(["--hp_tune", "--include_unfrozen_tuning"])
+    with pytest.raises(SystemExit):
+        train.parse_args(
+            [
+                "--hp_tune",
+                "--include_unfrozen_tuning",
+                "--tuning_learning_rates",
+                "1e-4",
+                "1e-5",
+            ]
+        )
+
+
+def test_combined_tuning_passes_assigned_rate_to_unfrozen_grid(
+    tmp_path: Path,
+) -> None:
+    args = train.parse_args(
+        [
+            "--hp_tune",
+            "--include_unfrozen_tuning",
+            "--tuning_learning_rates",
+            "1e-5",
+            "--results_dir",
+            str(tmp_path),
+            "--representations",
+            "esm2",
+            "--head_types",
+            "linear",
+        ]
+    )
+    frozen_configs = train.build_run_configs(args, device="cpu")
+    frozen_rows = [
+        train._row_from_metrics(
+            config,
+            {
+                "selection_epoch": 1,
+                "best_val_f1": 0.7,
+                "val_loss_at_selection": 0.5,
+                "val_accuracy_at_selection": 0.75,
+            },
+            "complete",
+        )
+        for config in frozen_configs
+    ]
+    train.save_summaries(frozen_configs, frozen_rows)
+
+    unfrozen_args = argparse.Namespace(**vars(args))
+    unfrozen_args.hp_tune = False
+    unfrozen_args.end_to_end_hp_tune = True
+    unfrozen_configs = train.build_run_configs(unfrozen_args, device="cpu")
+
+    assert len(unfrozen_configs) == 4
+    assert {config.learning_rate for config in unfrozen_configs} == {1e-5}
+    assert all(config.phase == "end_to_end_tuning" for config in unfrozen_configs)
+    assert all(not config.freeze_esm2 for config in unfrozen_configs)
+
+
 def test_tuning_paths_are_versioned_and_unique(tmp_path: Path) -> None:
     args = train.parse_args(
         [
@@ -503,6 +563,7 @@ def test_tuning_paths_are_versioned_and_unique(tmp_path: Path) -> None:
     relative = (
         Path("solubility")
         / "v3"
+        / "frozen"
         / "tuning"
         / "mlp"
         / "esm2"
@@ -553,7 +614,7 @@ def test_tuning_summaries_and_selected_hyperparameters_are_saved_separately(
 
     train.save_summaries(configs, rows)
 
-    tuning_root = tmp_path / "solubility" / "v1" / "tuning"
+    tuning_root = tmp_path / "solubility" / "v1" / "frozen" / "tuning"
     results = pd.read_csv(tuning_root / "tuning_results.csv")
     selected = json.loads(
         (tuning_root / "selected_hyperparameters.json").read_text()
@@ -604,6 +665,7 @@ def test_partial_tuning_output_includes_hardcoded_unselected_conditions(
             tmp_path
             / "solubility"
             / "v1"
+            / "frozen"
             / "tuning"
             / "selected_hyperparameters.json"
         ).read_text()
@@ -661,6 +723,7 @@ def test_failed_requested_tuning_condition_does_not_use_hardcoded_default(
             tmp_path
             / "solubility"
             / "v1"
+            / "frozen"
             / "tuning"
             / "selected_hyperparameters.json"
         ).read_text()
@@ -725,7 +788,8 @@ def test_default_end_to_end_sweep_has_24_uncached_trainable_configs(
             tmp_path
             / "solubility"
             / "v1"
-            / "end_to_end"
+            / "unfrozen"
+            / "final"
             / config.head_type
             / config.representation
             / f"seed_{config.seed}"
@@ -762,7 +826,7 @@ def test_end_to_end_tuning_uses_compact_regularization_grid(tmp_path: Path) -> N
     assert all(not config.evaluate_test for config in configs)
     assert all(not config.cache_embeddings for config in configs)
     assert all(config.phase == "end_to_end_tuning" for config in configs)
-    assert all("end_to_end/tuning" in str(config.run_dir) for config in configs)
+    assert all("unfrozen/tuning" in str(config.run_dir) for config in configs)
 
 
 def test_successful_end_to_end_tuning_automatically_runs_final_sweep(
@@ -809,8 +873,75 @@ def test_successful_end_to_end_tuning_automatically_runs_final_sweep(
     assert automatic_final_args.epochs == 10
     assert automatic_final_args.early_stopping_patience == 3
     assert automatic_final_args.selected_hyperparameters.endswith(
-        "end_to_end/tuning/selected_hyperparameters.json"
+        "unfrozen/tuning/selected_hyperparameters.json"
     )
+
+
+def test_combined_tuning_runs_frozen_then_unfrozen_without_final_sweep(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = train.parse_args(
+        [
+            "--hp_tune",
+            "--include_unfrozen_tuning",
+            "--tuning_learning_rates",
+            "1e-4",
+            "--results_dir",
+            str(tmp_path),
+            "--representations",
+            "esm2",
+            "--head_types",
+            "linear",
+        ]
+    )
+    frozen_config = train.build_tuning_configs(args, device="cpu")[0]
+    unfrozen_config = replace(
+        frozen_config,
+        phase="end_to_end_tuning",
+        mode="end_to_end_hp_tune",
+        end_to_end=True,
+        cache_embeddings=False,
+        freeze_esm2=False,
+        encoder_mode="fine_tuned",
+    )
+    built_args = []
+    run_phases = []
+
+    def fake_build(run_args, device=None):
+        built_args.append(run_args)
+        return [frozen_config] if run_args.hp_tune else [unfrozen_config]
+
+    monkeypatch.setattr(train, "parse_args", lambda _argv: args)
+    monkeypatch.setattr(train, "build_run_configs", fake_build)
+    monkeypatch.setattr(train, "validate_preflight", lambda _configs: None)
+    monkeypatch.setattr(
+        train,
+        "run_one",
+        lambda config, **_kwargs: (
+            run_phases.append(config.phase)
+            or train._row_from_metrics(
+                config,
+                {
+                    "selection_epoch": 1,
+                    "best_val_f1": 0.7,
+                    "val_loss_at_selection": 0.5,
+                    "val_accuracy_at_selection": 0.75,
+                },
+                "complete",
+            )
+        ),
+    )
+    monkeypatch.setattr(train, "save_summaries", lambda _configs, _rows: None)
+
+    train.main([])
+
+    assert run_phases == ["tuning", "end_to_end_tuning"]
+    assert len(built_args) == 2
+    assert built_args[0].hp_tune is True
+    assert built_args[1].hp_tune is False
+    assert built_args[1].end_to_end_hp_tune is True
+    assert built_args[1].run_final_after_tuning is False
 
 
 def test_end_to_end_sweep_summary_is_separate_from_frozen_summary(
@@ -838,16 +969,18 @@ def test_end_to_end_sweep_summary_is_separate_from_frozen_summary(
         ],
     )
 
-    summary_root = tmp_path / "solubility" / "v1" / "end_to_end"
+    summary_root = tmp_path / "solubility" / "v1" / "unfrozen" / "final"
     assert (summary_root / "summary.csv").is_file()
     assert (summary_root / "aggregated_summary.csv").is_file()
-    assert not (tmp_path / "solubility" / "v1" / "summary.csv").exists()
+    assert not (
+        tmp_path / "solubility" / "v1" / "frozen" / "final" / "summary.csv"
+    ).exists()
 
 
 def test_sweep_uses_selected_hyperparameters_for_each_condition(
     tmp_path: Path,
 ) -> None:
-    tuning_root = tmp_path / "solubility" / "v1" / "tuning"
+    tuning_root = tmp_path / "solubility" / "v1" / "frozen" / "tuning"
     tuning_root.mkdir(parents=True)
     selected = {
         "linear": {
@@ -918,6 +1051,42 @@ def test_explicit_selected_hyperparameter_path_must_exist(tmp_path: Path) -> Non
 
     with pytest.raises(FileNotFoundError, match="Final sweeps require selected"):
         train.build_run_configs(args, device="cpu")
+
+
+def test_sweep_can_read_legacy_frozen_selection_path(tmp_path: Path) -> None:
+    legacy_root = tmp_path / "solubility" / "v1" / "tuning"
+    legacy_root.mkdir(parents=True)
+    (legacy_root / "selected_hyperparameters.json").write_text(
+        json.dumps(
+            {
+                "linear": {
+                    "esm2": {
+                        "learning_rate": 1e-4,
+                        "weight_decay": 0.0,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    args = train.parse_args(
+        [
+            "--sweep",
+            "--results_dir",
+            str(tmp_path),
+            "--representations",
+            "esm2",
+            "--head_types",
+            "linear",
+            "--seeds",
+            "42",
+        ]
+    )
+
+    configs = train.build_run_configs(args, device="cpu")
+
+    assert len(configs) == 1
+    assert configs[0].learning_rate == pytest.approx(1e-4)
 
 
 def test_sweep_rejects_a_missing_selected_condition(tmp_path: Path) -> None:
@@ -1089,7 +1258,7 @@ def test_aggregate_summary_reports_completed_seed_mean_and_sample_std(
 
     train.save_summaries(configs, rows)
 
-    summary_root = tmp_path / "solubility" / "v1"
+    summary_root = tmp_path / "solubility" / "v1" / "frozen" / "final"
     summary = pd.read_csv(summary_root / "summary.csv")
     aggregate = pd.read_csv(summary_root / "aggregated_summary.csv")
     assert len(summary) == 3
@@ -1256,7 +1425,7 @@ def test_summary_updates_merge_distinct_subset_runs(tmp_path: Path) -> None:
         [train._row_from_metrics(configs[1], {"accuracy": 0.8}, "complete")],
     )
 
-    root = tmp_path / "solubility" / "v1"
+    root = tmp_path / "solubility" / "v1" / "frozen" / "final"
     summary = pd.read_csv(root / "summary.csv")
     aggregate = pd.read_csv(root / "aggregated_summary.csv")
     assert summary["seed"].tolist() == [42, 43]
@@ -1311,7 +1480,7 @@ def test_legacy_end_to_end_summary_infers_trainable_encoder_state(
     args.run_sweep = False
     args.end_to_end_sweep = True
     config = train.build_run_configs(args, device="cpu")[0]
-    summary_root = tmp_path / "solubility" / "v1" / "end_to_end"
+    summary_root = tmp_path / "solubility" / "v1" / "unfrozen" / "final"
     summary_root.mkdir(parents=True)
     legacy_row = train._row_from_metrics(
         config, {"accuracy": 0.5}, "complete"

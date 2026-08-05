@@ -300,6 +300,16 @@ class ClassifierRunConfig:
         return "_".join(parts)
 
     @property
+    def experiment_stage_dir(self) -> Path:
+        mode_dir, stage_dir = {
+            "tuning": ("frozen", "tuning"),
+            "final": ("frozen", "final"),
+            "end_to_end_tuning": ("unfrozen", "tuning"),
+            "end_to_end": ("unfrozen", "final"),
+        }[self.phase]
+        return Path(mode_dir) / stage_dir
+
+    @property
     def run_dir(self) -> Path:
         root = Path(self.results_dir) / self.dataset / self.version_dir
         if self.phase == "single" and self.encoder_mode != "frozen":
@@ -311,10 +321,18 @@ class ClassifierRunConfig:
                 / f"seed_{self.seed}"
             )
         if self.phase in {"tuning", "final", "end_to_end", "end_to_end_tuning"}:
-            if self.phase == "end_to_end_tuning":
-                return root / "end_to_end" / "tuning" / self.head_type / self.representation / self.trial_name
-            leaf = self.trial_name if self.phase == "tuning" else f"seed_{self.seed}"
-            return root / self.phase / self.head_type / self.representation / leaf
+            leaf = (
+                self.trial_name
+                if self.phase in {"tuning", "end_to_end_tuning"}
+                else f"seed_{self.seed}"
+            )
+            return (
+                root
+                / self.experiment_stage_dir
+                / self.head_type
+                / self.representation
+                / leaf
+            )
         return (
             root
             / self.representation
@@ -338,10 +356,18 @@ class ClassifierRunConfig:
                 / f"seed_{self.seed}"
             )
         if self.phase in {"tuning", "final", "end_to_end", "end_to_end_tuning"}:
-            if self.phase == "end_to_end_tuning":
-                return root / "end_to_end" / "tuning" / self.head_type / self.representation / self.trial_name
-            leaf = self.trial_name if self.phase == "tuning" else f"seed_{self.seed}"
-            return root / self.phase / self.head_type / self.representation / leaf
+            leaf = (
+                self.trial_name
+                if self.phase in {"tuning", "end_to_end_tuning"}
+                else f"seed_{self.seed}"
+            )
+            return (
+                root
+                / self.experiment_stage_dir
+                / self.head_type
+                / self.representation
+                / leaf
+            )
         return (
             root
             / self.representation
@@ -501,6 +527,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Run hyperparameter tuning for the classifier.",
     )
+    parser.add_argument(
+        "--include_unfrozen_tuning",
+        "--include_end_to_end_tuning",
+        action="store_true",
+        help=(
+            "With --hp_tune, run the frozen grid first and then the trainable-"
+            "encoder grid using the frozen winners from this invocation. Requires "
+            "exactly one --tuning_learning_rates value and does not run final sweeps."
+        ),
+    )
     experiment_mode.add_argument(
         "--end_to_end_sweep",
         action="store_true",
@@ -531,7 +567,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "JSON file containing per-head/per-representation tuning winners. "
             "With --sweep, defaults to "
-            "<results_dir>/<dataset>/v<version>/tuning/selected_hyperparameters.json "
+            "<results_dir>/<dataset>/v<version>/frozen/tuning/"
+            "selected_hyperparameters.json "
             "when that file exists."
         ),
     )
@@ -587,6 +624,21 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         parser.error("--tuning_learning_rates values must be distinct")
     if args.tuning_learning_rates is not None and not args.hp_tune:
         parser.error("--tuning_learning_rates requires --hp_tune")
+    if args.include_unfrozen_tuning and not args.hp_tune:
+        parser.error("--include_unfrozen_tuning requires --hp_tune")
+    if args.include_unfrozen_tuning and (
+        args.tuning_learning_rates is None
+        or len(args.tuning_learning_rates) != 1
+    ):
+        parser.error(
+            "--include_unfrozen_tuning requires exactly one "
+            "--tuning_learning_rates value"
+        )
+    if args.include_unfrozen_tuning and args.selected_hyperparameters is not None:
+        parser.error(
+            "--include_unfrozen_tuning cannot use --selected_hyperparameters; "
+            "it consumes the frozen winners produced by the same invocation"
+        )
     if args.weight_decay < 0:
         parser.error("--weight_decay must be non-negative")
     for name in ("autoencoder_embedding_dropout", "esm_embedding_dropout"):
@@ -904,6 +956,7 @@ def _selected_hyperparameters_path(args: argparse.Namespace) -> Path:
         Path(args.results_dir)
         / args.dataset
         / version_dir
+        / "frozen"
         / "tuning"
         / "selected_hyperparameters.json"
     )
@@ -913,6 +966,23 @@ def _load_selected_hyperparameters(
     args: argparse.Namespace,
 ) -> dict[str, dict[str, dict[str, float]]]:
     path = _selected_hyperparameters_path(args)
+    if args.selected_hyperparameters is None and not path.is_file():
+        legacy_path = (
+            Path(args.results_dir)
+            / args.dataset
+            / (
+                str(args.version)
+                if str(args.version).startswith("v")
+                else f"v{args.version}"
+            )
+            / "tuning"
+            / "selected_hyperparameters.json"
+        )
+        if legacy_path.is_file():
+            logger.warning(
+                "Using legacy frozen tuning selection path: %s", legacy_path
+            )
+            path = legacy_path
     if not path.is_file():
         raise FileNotFoundError(
             "Final sweeps require selected tuning hyperparameters; file not found: "
@@ -1433,14 +1503,16 @@ def save_summaries(configs: list[ClassifierRunConfig], rows: list[dict[str, Any]
     is_tuning = is_frozen_tuning or is_end_to_end_tuning
     if is_tuning:
         summary_root = (
-            summary_root / "end_to_end" / "tuning"
+            summary_root / "unfrozen" / "tuning"
             if is_end_to_end_tuning
-            else summary_root / "tuning"
+            else summary_root / "frozen" / "tuning"
         )
         summary_path = summary_root / "tuning_results.csv"
     else:
         if all(config.phase == "end_to_end" for config in configs):
-            summary_root = summary_root / "end_to_end"
+            summary_root = summary_root / "unfrozen" / "final"
+        elif all(config.phase == "final" for config in configs):
+            summary_root = summary_root / "frozen" / "final"
         elif all(
             config.phase == "single" and config.encoder_mode != "frozen"
             for config in configs
@@ -1562,11 +1634,10 @@ def save_summaries(configs: list[ClassifierRunConfig], rows: list[dict[str, Any]
     _atomic_dataframe_csv(aggregate, summary_root / "aggregated_summary.csv")
 
 
-def main(argv: list[str] | None = None) -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    args = parse_args(argv)
-    configs = build_run_configs(args)
-    print(f"Device: {configs[0].device}", flush=True)
+def _execute_configs(
+    args: argparse.Namespace,
+    configs: list[ClassifierRunConfig],
+) -> None:
     validate_preflight(configs)
 
     if args.hp_tune:
@@ -1617,6 +1688,28 @@ def main(argv: list[str] | None = None) -> None:
     if failures:
         raise RuntimeError(f"{failures} of {len(configs)} classifier runs failed")
 
+
+def main(argv: list[str] | None = None) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    args = parse_args(argv)
+    configs = build_run_configs(args)
+    print(f"Device: {configs[0].device}", flush=True)
+    _execute_configs(args, configs)
+
+    if args.hp_tune and args.include_unfrozen_tuning:
+        end_to_end_args = argparse.Namespace(**vars(args))
+        end_to_end_args.hp_tune = False
+        end_to_end_args.end_to_end_hp_tune = True
+        end_to_end_args.include_unfrozen_tuning = False
+        end_to_end_args.run_final_after_tuning = False
+        end_to_end_configs = build_run_configs(end_to_end_args)
+        logger.info(
+            "Frozen tuning complete; starting unfrozen tuning with %d unique runs",
+            len(end_to_end_configs),
+        )
+        _execute_configs(end_to_end_args, end_to_end_configs)
+        return
+
     if args.end_to_end_hp_tune and args.run_final_after_tuning:
         final_args = argparse.Namespace(**vars(args))
         final_args.end_to_end_hp_tune = False
@@ -1627,7 +1720,7 @@ def main(argv: list[str] | None = None) -> None:
             Path(args.results_dir)
             / args.dataset
             / configs[0].version_dir
-            / "end_to_end"
+            / "unfrozen"
             / "tuning"
             / "selected_hyperparameters.json"
         )
