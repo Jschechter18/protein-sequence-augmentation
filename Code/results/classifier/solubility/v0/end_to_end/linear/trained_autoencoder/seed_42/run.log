@@ -1,0 +1,65 @@
+2026-08-03 20:38:13,183 INFO Code.src.training.classification_pipeline: Unfreezing the autoencoder encoding path.
+2026-08-03 20:38:13,183 INFO Code.src.training.classification_pipeline: Epoch 1/30
+2026-08-03 20:44:06,330 INFO Code.src.training.classification_pipeline: Epoch 1: train loss 0.5464, val loss 0.5166, val accuracy 0.7305
+2026-08-03 20:44:06,330 INFO Code.src.training.classification_pipeline: Epoch 2/30
+2026-08-03 20:49:51,407 INFO Code.src.training.classification_pipeline: Epoch 2: train loss 0.5190, val loss 0.5028, val accuracy 0.7270
+2026-08-03 20:49:51,407 INFO Code.src.training.classification_pipeline: Epoch 3/30
+2026-08-03 20:55:36,988 INFO Code.src.training.classification_pipeline: Epoch 3: train loss 0.5082, val loss 0.4976, val accuracy 0.7377
+2026-08-03 20:55:36,988 INFO Code.src.training.classification_pipeline: Epoch 4/30
+2026-08-03 21:01:22,145 INFO Code.src.training.classification_pipeline: Epoch 4: train loss 0.4954, val loss 0.4925, val accuracy 0.7417
+2026-08-03 21:01:22,145 INFO Code.src.training.classification_pipeline: Epoch 5/30
+2026-08-03 21:07:05,775 INFO Code.src.training.classification_pipeline: Epoch 5: train loss 0.4842, val loss 0.5079, val accuracy 0.7365
+2026-08-03 21:07:05,775 INFO Code.src.training.classification_pipeline: Epoch 6/30
+2026-08-03 21:12:33,889 ERROR __main__: Run failed: Code/results/classifier/solubility/v0/end_to_end/linear/trained_autoencoder/seed_42
+Traceback (most recent call last):
+  File "/home/ubuntu/protein-sequence-augmentation/Code/src/training/train_classifier.py", line 1059, in run_one
+    history = pipeline.fit(
+        train_loader=train_loader,
+    ...<3 lines>...
+        resume_from=resume_path if resume_path and resume_path.is_file() else None,
+    )
+  File "/home/ubuntu/protein-sequence-augmentation/Code/src/training/classification_pipeline.py", line 666, in fit
+    train_metrics = self.train_epoch(train_loader)
+  File "/home/ubuntu/protein-sequence-augmentation/Code/src/training/classification_pipeline.py", line 619, in train_epoch
+    metrics, _ = self._collect_split(
+                 ~~~~~~~~~~~~~~~~~~~^
+        train_loader, training=True, description="Training"
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/ubuntu/protein-sequence-augmentation/Code/src/training/classification_pipeline.py", line 538, in _collect_split
+    metrics = self._calculate_metrics(
+        labels_array,
+    ...<2 lines>...
+        loss=total_loss / total_samples,
+    )
+  File "/home/ubuntu/protein-sequence-augmentation/Code/src/training/classification_pipeline.py", line 580, in _calculate_metrics
+    auroc = float(roc_auc_score(positive_labels, positive_probabilities))
+                  ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.14/site-packages/sklearn/utils/_param_validation.py", line 218, in wrapper
+    return func(*args, **kwargs)
+  File "/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.14/site-packages/sklearn/metrics/_ranking.py", line 710, in roc_auc_score
+    y_score = check_array(y_score, ensure_2d=False)
+  File "/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.14/site-packages/sklearn/utils/validation.py", line 1087, in check_array
+    _assert_all_finite(
+    ~~~~~~~~~~~~~~~~~~^
+        array,
+        ^^^^^^
+    ...<2 lines>...
+        allow_nan=ensure_all_finite == "allow-nan",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.14/site-packages/sklearn/utils/validation.py", line 137, in _assert_all_finite
+    _assert_all_finite_element_wise(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        X,
+        ^^
+    ...<4 lines>...
+        input_name=input_name,
+        ^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.14/site-packages/sklearn/utils/validation.py", line 186, in _assert_all_finite_element_wise
+    raise ValueError(msg_err)
+ValueError: Input contains NaN.

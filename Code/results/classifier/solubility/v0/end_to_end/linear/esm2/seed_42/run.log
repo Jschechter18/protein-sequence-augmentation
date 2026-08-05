@@ -1,0 +1,20 @@
+2026-08-03 21:47:03,679 INFO Code.src.models.classifier: Using ESM-2 encoder on cuda:0
+2026-08-03 21:47:03,680 INFO Code.src.training.classification_pipeline: Unfreezing the complete ESM-2 encoder.
+2026-08-03 21:47:03,681 INFO Code.src.training.classification_pipeline: Epoch 1/30
+2026-08-03 22:07:35,360 INFO Code.src.training.classification_pipeline: Epoch 1: train loss 0.5102, val loss 0.4797, val accuracy 0.7570
+2026-08-03 22:07:35,361 INFO Code.src.training.classification_pipeline: Epoch 2/30
+2026-08-03 22:28:00,419 INFO Code.src.training.classification_pipeline: Epoch 2: train loss 0.4550, val loss 0.4648, val accuracy 0.7630
+2026-08-03 22:28:00,420 INFO Code.src.training.classification_pipeline: Epoch 3/30
+2026-08-03 22:48:25,325 INFO Code.src.training.classification_pipeline: Epoch 3: train loss 0.4256, val loss 0.4579, val accuracy 0.7738
+2026-08-03 22:48:25,325 INFO Code.src.training.classification_pipeline: Epoch 4/30
+2026-08-03 23:08:51,822 INFO Code.src.training.classification_pipeline: Epoch 4: train loss 0.3920, val loss 0.4931, val accuracy 0.7710
+2026-08-03 23:08:51,822 INFO Code.src.training.classification_pipeline: Epoch 5/30
+2026-08-03 23:29:15,550 INFO Code.src.training.classification_pipeline: Epoch 5: train loss 0.3490, val loss 0.5320, val accuracy 0.7646
+2026-08-03 23:29:15,550 INFO Code.src.training.classification_pipeline: Epoch 6/30
+2026-08-03 23:49:38,986 INFO Code.src.training.classification_pipeline: Epoch 6: train loss 0.2940, val loss 0.6591, val accuracy 0.7567
+2026-08-03 23:49:38,986 INFO Code.src.training.classification_pipeline: Epoch 7/30
+2026-08-04 00:10:06,420 INFO Code.src.training.classification_pipeline: Epoch 7: train loss 0.2330, val loss 0.9400, val accuracy 0.7475
+2026-08-04 00:10:06,420 INFO Code.src.training.classification_pipeline: Epoch 8/30
+2026-08-04 00:30:29,625 INFO Code.src.training.classification_pipeline: Epoch 8: train loss 0.1799, val loss 1.1772, val accuracy 0.7452
+2026-08-04 00:30:29,625 INFO Code.src.training.classification_pipeline: Early stopping at epoch 8.
+2026-08-04 00:30:51,790 INFO Code.src.training.classification_pipeline: Test Loss: 0.5173 | Test Acc: 0.7284 | Test F1 (Macro): 0.7258

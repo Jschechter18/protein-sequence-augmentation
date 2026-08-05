@@ -1,0 +1,4 @@
+2026-08-04 17:37:09,850 INFO Code.src.training.classification_pipeline: Unfreezing the autoencoder encoder and complete ESM-2 encoder.
+2026-08-04 17:37:09,851 INFO Code.src.training.classification_pipeline: Epoch 1/30
+2026-08-04 18:03:27,993 INFO Code.src.training.classification_pipeline: Epoch 1: train loss 0.5213, val loss 0.4683, val accuracy 0.7656
+2026-08-04 18:03:27,993 INFO Code.src.training.classification_pipeline: Epoch 2/30
