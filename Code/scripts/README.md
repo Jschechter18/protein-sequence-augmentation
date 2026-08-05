@@ -95,6 +95,93 @@ Output:
 
 - `history.json` written into each processed run directory.
 
+## `merge_classifier_tuning.py`
+
+Combines classifier hyperparameter trials run on separate machines, copies the
+unique trial artifacts into one canonical tuning tree, and rebuilds the global
+`tuning_results.csv` and `selected_hyperparameters.json` from validation
+histories. It deliberately ignores the partial summary files produced on each
+machine.
+
+Partition the full frozen tuning grid by learning rate while keeping the same
+commit on all three EC2 instances:
+
+```bash
+# EC2 instance 1
+python -m Code.src.training.train_classifier \
+  --hp_tune --version 4 --tuning_learning_rates 1e-4
+
+# EC2 instance 2
+python -m Code.src.training.train_classifier \
+  --hp_tune --version 4 --tuning_learning_rates 1e-5
+
+# EC2 instance 3
+python -m Code.src.training.train_classifier \
+  --hp_tune --version 4 --tuning_learning_rates 1e-6
+```
+
+Each one-rate instance runs 24 trials; the merged full grid has 72 trials. Use
+the same dataset files, autoencoder checkpoint, environment, and Git commit on
+all instances.
+
+Collect each result tree into a separate local staging directory. Preserve the
+trailing slash on the remote tuning directory:
+
+```bash
+mkdir -p collected/classifier-v4/ec2-1 \
+  collected/classifier-v4/ec2-2 \
+  collected/classifier-v4/ec2-3
+
+rsync -az ubuntu@ec2-1:/path/to/repo/Code/results/classifier/solubility/v4/tuning/ \
+  collected/classifier-v4/ec2-1/
+rsync -az ubuntu@ec2-2:/path/to/repo/Code/results/classifier/solubility/v4/tuning/ \
+  collected/classifier-v4/ec2-2/
+rsync -az ubuntu@ec2-3:/path/to/repo/Code/results/classifier/solubility/v4/tuning/ \
+  collected/classifier-v4/ec2-3/
+```
+
+Then merge and require full coverage:
+
+```bash
+python Code/scripts/merge_classifier_tuning.py \
+  --input_dir collected/classifier-v4/ec2-1 \
+  --input_dir collected/classifier-v4/ec2-2 \
+  --input_dir collected/classifier-v4/ec2-3 \
+  --output_dir Code/results/classifier/solubility/v4/tuning \
+  --expect_full_grid
+```
+
+Start the final three-seed sweep from the merged winner file:
+
+```bash
+python -m Code.src.training.train_classifier --sweep --version 4
+```
+
+Outputs:
+
+- Canonical trial directories under `<head>/<representation>/<trial>/`
+- `tuning_results.csv` rebuilt from every trial's `status.json` and `history.csv`
+- `selected_hyperparameters.json` ready for the final seeded sweep
+- `merge_manifest.json` recording inputs, counts, statuses, and provenance hashes
+
+With `--expect_full_grid`, the merge checks every expected representation, head,
+learning rate, weight decay, dropout, and seed—not just the total of 72. The
+merge also fails before publishing results if any discovered trial is not
+complete, duplicate completed trials disagree, or code/data/environment
+provenance differs. Archived `.backup_*` trials are ignored. Tuning checkpoints
+are stored in a separate checkpoint tree and are not needed to choose
+hyperparameters; transfer them separately only if they must be archived or
+resumed.
+
+If jobs were already partitioned by manually editing `TUNING_LEARNING_RATES`,
+the three saved source hashes will differ. Compare those source files first. If
+the only difference is the assigned search-rate constant, rerun the merge with
+`--allow_partition_source_mismatch`. This narrow exception still requires the
+data, checkpoints, environment, and all other fingerprinted source files to
+match; the distinct driver hashes and commits remain recorded in
+`merge_manifest.json`. New runs should use the CLI partition shown above so this
+exception is unnecessary.
+
 ## `download_checkpoints.sh`
 
 Downloads any saved checkpoints to local repository.

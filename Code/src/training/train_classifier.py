@@ -77,6 +77,10 @@ from Code.src.utils.classifier_data import (
     validate_dataset_integrity,
     validate_preflight,
 )
+from Code.src.utils.classifier_tuning_results import (
+    select_tuning_hyperparameters,
+    tuning_metrics_from_history,
+)
 from Code.src.utils.embedding_cache import (
     EMBEDDING_CACHE_SCHEMA_VERSION,
     CachedEmbeddingDataset,
@@ -116,9 +120,10 @@ STAGE1_REPRESENTATIONS = (
 )
 TUNING_SEED = 42
 TUNING_REPRESENTATIONS = STAGE1_REPRESENTATIONS
-TUNING_LEARNING_RATES = (1e-6)
-# TUNING_LEARNING_RATES = (1e-5)
-# TUNING_LEARNING_RATES = (1e-4)
+TUNING_LEARNING_RATES = (1e-4, 1e-5, 1e-6)
+# TUNING_LEARNING_RATES = (1e-4,)
+# TUNING_LEARNING_RATES = (1e-5,)
+# TUNING_LEARNING_RATES = (1e-6,)
 TUNING_WEIGHT_DECAYS = (0.0, 1e-4)
 TUNING_MLP_DROPOUTS = (0.1, 0.3)
 END_TO_END_TUNING_WEIGHT_DECAYS = (0.0, 1e-4)
@@ -203,6 +208,7 @@ FINGERPRINTED_SOURCE_FILES = (
     "Code/src/training/classification_pipeline.py",
     "Code/src/training/train_classifier.py",
     "Code/src/utils/classifier_data.py",
+    "Code/src/utils/classifier_tuning_results.py",
     "Code/src/utils/dataloader.py",
     "Code/src/utils/embedding_cache.py",
     "Code/src/utils/experiment_artifacts.py",
@@ -370,6 +376,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--num_classes", type=int, default=None)
 
     parser.add_argument("--learning_rate", type=float, default=1e-3)
+    parser.add_argument(
+        "--tuning_learning_rates",
+        type=float,
+        nargs="+",
+        default=None,
+        help=(
+            "Optional subset of classifier learning rates for --hp_tune. "
+            "Use one value per EC2 instance to partition the tuning grid "
+            "without editing source code."
+        ),
+    )
     parser.add_argument("--weight_decay", type=float, default=0.0)
     parser.add_argument("--encoder_learning_rate", type=float, default=1e-3)
     parser.add_argument("--esm_learning_rate", type=float, default=1e-5)
@@ -552,6 +569,24 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         parser.error("--num_classes must be at least 2")
     if args.learning_rate <= 0 or args.encoder_learning_rate <= 0 or args.esm_learning_rate <= 0:
         parser.error("learning rates must be positive")
+    if args.tuning_learning_rates is not None and any(
+        learning_rate <= 0 for learning_rate in args.tuning_learning_rates
+    ):
+        parser.error("--tuning_learning_rates values must be positive")
+    if args.tuning_learning_rates is not None and any(
+        learning_rate not in TUNING_LEARNING_RATES
+        for learning_rate in args.tuning_learning_rates
+    ):
+        parser.error(
+            "--tuning_learning_rates must be a subset of "
+            f"{TUNING_LEARNING_RATES}"
+        )
+    if args.tuning_learning_rates is not None and len(
+        set(args.tuning_learning_rates)
+    ) != len(args.tuning_learning_rates):
+        parser.error("--tuning_learning_rates values must be distinct")
+    if args.tuning_learning_rates is not None and not args.hp_tune:
+        parser.error("--tuning_learning_rates requires --hp_tune")
     if args.weight_decay < 0:
         parser.error("--weight_decay must be non-negative")
     for name in ("autoencoder_embedding_dropout", "esm_embedding_dropout"):
@@ -790,7 +825,7 @@ def build_tuning_configs(
         else:
             dropouts = (None,)
         for learning_rate, weight_decay, dropout in product(
-            TUNING_LEARNING_RATES,
+            args.tuning_learning_rates or TUNING_LEARNING_RATES,
             TUNING_WEIGHT_DECAYS,
             dropouts,
         ):
@@ -1199,25 +1234,13 @@ def _row_from_metrics(
 def _tuning_metrics_from_history(
     history: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    if not history:
-        raise ValueError("A completed tuning run must contain training history.")
-    selection_record = max(
-        history,
-        key=lambda record: (
-            float(record.get("val_f1", float("-inf"))),
-            -float(record.get("val_loss", float("inf"))),
-        ),
-    )
-    return {
-        "selection_epoch": int(selection_record["epoch"]),
-        "best_val_f1": float(selection_record["val_f1"]),
-        "val_loss_at_selection": float(selection_record["val_loss"]),
-        "val_accuracy_at_selection": float(selection_record["val_accuracy"]),
-    }
+    return tuning_metrics_from_history(history)
 
 
 def _read_tuning_metrics(run_dir: Path) -> dict[str, Any]:
-    history = pd.read_csv(run_dir / "history.csv").to_dict(orient="records")
+    history = pd.read_csv(
+        run_dir / "history.csv", float_precision="round_trip"
+    ).to_dict(orient="records")
     return _tuning_metrics_from_history(history)
 
 
@@ -1488,60 +1511,15 @@ def save_summaries(configs: list[ClassifierRunConfig], rows: list[dict[str, Any]
 
     completed = summary[summary["status"] == "complete"].copy()
     if is_tuning:
-        selected: dict[str, dict[str, dict[str, Any]]] = (
-            {}
-            if is_end_to_end_tuning
-            else json.loads(json.dumps(DEFAULT_SELECTED_HYPERPARAMETERS))
-        )
-        # A requested condition must earn its selection from a completed trial.
-        # Removing its fallback prevents a failed retune from silently reusing a
-        # checkpoint-incompatible default.
         requested_conditions = {
             (config.head_type, config.representation) for config in configs
         }
-        for head_type, representation in requested_conditions:
-            selected.get(head_type, {}).pop(representation, None)
-        if not completed.empty and "best_val_f1" in completed:
-            ranked = completed.sort_values(
-                [
-                    "head_type",
-                    "representation",
-                    "best_val_f1",
-                    "val_loss_at_selection",
-                    "learning_rate",
-                    "weight_decay",
-                    "dropout",
-                    "autoencoder_embedding_dropout",
-                    "esm_embedding_dropout",
-                ],
-                ascending=[True, True, False, True, True, True, True, True, True],
-                na_position="first",
-                kind="stable",
-            )
-            winners = ranked.drop_duplicates(
-                ["head_type", "representation"], keep="first"
-            )
-            for row in winners.to_dict(orient="records"):
-                parameters: dict[str, Any] = {
-                    "learning_rate": float(row["learning_rate"]),
-                    "weight_decay": float(row["weight_decay"]),
-                    "selection_seed": int(row["seed"]),
-                    "selection_epoch": int(row["selection_epoch"]),
-                    "best_val_f1": float(row["best_val_f1"]),
-                    "val_loss_at_selection": float(row["val_loss_at_selection"]),
-                }
-                if row["head_type"] == "mlp":
-                    parameters["dropout"] = float(row["dropout"])
-                if is_end_to_end_tuning:
-                    parameters["autoencoder_embedding_dropout"] = float(
-                        row["autoencoder_embedding_dropout"]
-                    )
-                    parameters["esm_embedding_dropout"] = float(
-                        row["esm_embedding_dropout"]
-                    )
-                selected.setdefault(str(row["head_type"]), {})[
-                    str(row["representation"])
-                ] = parameters
+        selected = select_tuning_hyperparameters(
+            summary,
+            requested_conditions=requested_conditions,
+            is_end_to_end_tuning=is_end_to_end_tuning,
+            default_selected=DEFAULT_SELECTED_HYPERPARAMETERS,
+        )
         save_json(selected, summary_root / "selected_hyperparameters.json")
         return
 

@@ -453,6 +453,33 @@ def test_tuning_grid_respects_requested_heads_and_representations(
     assert {config.dropout for config in configs} == {0.1, 0.3}
 
 
+def test_tuning_grid_can_be_partitioned_by_learning_rate(tmp_path: Path) -> None:
+    args = train.parse_args(
+        [
+            "--hp_tune",
+            "--results_dir",
+            str(tmp_path),
+            "--tuning_learning_rates",
+            "1e-5",
+        ]
+    )
+
+    configs = train.build_tuning_configs(args, device="cpu")
+
+    assert len(configs) == 24
+    assert {config.learning_rate for config in configs} == {1e-5}
+
+
+def test_tuning_learning_rate_partition_requires_hp_tune() -> None:
+    with pytest.raises(SystemExit):
+        train.parse_args(["--tuning_learning_rates", "1e-5"])
+
+
+def test_tuning_learning_rate_partition_rejects_unknown_rate() -> None:
+    with pytest.raises(SystemExit):
+        train.parse_args(["--hp_tune", "--tuning_learning_rates", "1e-3"])
+
+
 def test_tuning_paths_are_versioned_and_unique(tmp_path: Path) -> None:
     args = train.parse_args(
         [
