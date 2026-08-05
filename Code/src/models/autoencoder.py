@@ -48,7 +48,7 @@ class ProteinSequenceAutoencoder(nn.Module):
         embedding_dim : int, optional
             Dimension of the token embeddings, by default 128
         hidden_dim : int, optional
-            Number of hidden units in the GRU layers, by default 256
+            Number of hidden units in the recurrent layers, by default 256
         latent_dim : int, optional
             Number of dimensions in compressed latent space, by default 128
         num_layers : int, optional
@@ -86,8 +86,8 @@ class ProteinSequenceAutoencoder(nn.Module):
             warnings.warn("latent_dim should ideally be smaller than hidden_dim for effective compression", UserWarning)
         
         self.layer_type = layer_type
-        self.bidirectional = bidirectional # meaningful in gru only
-        self.encoder_num_directions = 2 if self.bidirectional else 1 # meaningful in gru only
+        self.bidirectional = bidirectional # meaningful in recurrent models only
+        self.encoder_num_directions = 2 if self.bidirectional else 1 # meaningful in recurrent models only
         # self.grad_clip = grad_clip # meaningful in gru only
 
         rnn_dropout = dropout if num_layers > 1 else 0.0
