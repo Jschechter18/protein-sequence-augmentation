@@ -128,7 +128,7 @@ def model_definition(
     else:
         raise ValueError(f"Model type {model_type} not supported.")
     
-    if layer_type == "gru":
+    if layer_type in {"gru", "lstm"}:
         optimizer = torch.optim.Adam(model.parameters(), lr=hyperparams.learning_rate)
         scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=hyperparams.scheduler_factor, patience=hyperparams.lr_patience)
     elif layer_type == "transformer":

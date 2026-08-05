@@ -37,6 +37,37 @@ def _make_transformer_model() -> AE:
     )
 
 
+def _make_lstm_model() -> AE:
+    return AE(
+        layer_type="lstm",
+        embedding_dim=32,
+        cnn_out_channels=32,
+        hidden_dim=64,
+        latent_dim=16,
+        kernel_size=3,
+        num_layers=2,
+        dropout=0.1,
+        pad_idx=0,
+        bos_idx=2,
+    )
+
+
+def test_lstm_autoencoder_forward_and_autoregressive_decode() -> None:
+    model = _make_lstm_model()
+    input_ids = torch.randint(0, model.vocab_size, (3, 8))
+    lengths = torch.tensor([8, 6, 4])
+
+    logits = model(input_ids, decoder_input_ids=input_ids[:, :-1], lengths=lengths)
+    latent = model.encode(input_ids, lengths=lengths)
+    autoregressive_logits = model.decode_autoregressive(latent, max_length=7)
+
+    assert isinstance(model.encoder, torch.nn.LSTM)
+    assert isinstance(model.decoder, torch.nn.LSTM)
+    assert logits.shape == (3, 7, model.vocab_size)
+    assert latent.shape == (3, model.latent_dim)
+    assert autoregressive_logits.shape == (3, 7, model.vocab_size)
+
+
 def test_autoencoder_forward_pass():
     model = _make_model()
     batch_size = 4
