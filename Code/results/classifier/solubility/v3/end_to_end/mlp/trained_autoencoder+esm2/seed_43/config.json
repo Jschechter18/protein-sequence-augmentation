@@ -9,10 +9,10 @@
   "autoencoder_num_layers": 2,
   "batch_size": 16,
   "cache_embeddings": false,
-  "checkpoint_dir": "/home/ubuntu/protein-sequence-augmentation/checkpoints/classifier/solubility/v3/end_to_end/mlp/esm2/seed_43",
+  "checkpoint_dir": "/home/ubuntu/protein-sequence-augmentation/checkpoints/classifier/solubility/v3/end_to_end/mlp/trained_autoencoder+esm2/seed_43",
   "checkpoint_root": "/home/ubuntu/protein-sequence-augmentation/checkpoints/classifier",
-  "completed_at": "2026-08-04T18:38:40.588185+00:00",
-  "configuration_fingerprint": "c9479fa4b44892e9319f7a3675cb862987554c208518fa40c0908819d98b5de9",
+  "completed_at": "2026-08-05T01:44:23.859524+00:00",
+  "configuration_fingerprint": "dd2fa284275cea72b2fe0912c8cd67ab1d83a01152029be2806f864470af44a6",
   "data_dir": "data/processed/peer",
   "data_sources": {
     "test": {
@@ -37,7 +37,7 @@
   "dataset": "solubility",
   "deterministic": true,
   "device": "cuda",
-  "dropout": 0.3,
+  "dropout": 0.1,
   "early_stopping_patience": 5,
   "embedding_cache_root": "/home/ubuntu/protein-sequence-augmentation/data/processed/embeddings",
   "encoder_learning_rate": 0.0001,
@@ -47,7 +47,7 @@
   "esm_max_sequence_length": 1022,
   "esm_model_name": "esm2_t6_8M_UR50D",
   "evaluate_test": true,
-  "git_commit": "bb22afcd626228ab36b3fb8e5013af3462eb045d",
+  "git_commit": "e3806d15147ecd2c7ddd2f3fa5a1c770b5932c8f",
   "git_dirty": true,
   "head_type": "mlp",
   "learning_rate": 0.0003,
@@ -70,10 +70,10 @@
     "esm_long_sequence_policy": "truncate_right",
     "esm_max_sequence_length": 1022
   },
-  "representation": "esm2",
+  "representation": "trained_autoencoder+esm2",
   "results_dir": "Code/results/classifier",
-  "resume_fingerprint": "dcc7adf6a619d4c5d88df69b8d32639e63087e9460ade44d81a968e27a995953",
-  "run_dir": "Code/results/classifier/solubility/v3/end_to_end/mlp/esm2/seed_43",
+  "resume_fingerprint": "7c3a2ad20f7f58c6c83ff15f13441749c6c5ac7bd35a68768bf2a95bf6b9733d",
+  "run_dir": "Code/results/classifier/solubility/v3/end_to_end/mlp/trained_autoencoder+esm2/seed_43",
   "runtime": {
     "packages": {
       "fair-esm": "2.0.0",
@@ -98,12 +98,12 @@
     "Code/src/utils/experiment_artifacts.py": "0acf2e83e2114f65680fa1429d88559b906fcbc4539cdda3b59bcda7ca3be715",
     "Code/src/utils/sequence_dataset.py": "40f450bebdbfd39fe9132ce82aaf1015e4f70b4f03009c341e18b9d83da5513c"
   },
-  "started_at": "2026-08-04T15:52:40.423459+00:00",
-  "total_runtime_seconds": 9960.16473698616,
+  "started_at": "2026-08-04T22:11:35.666615+00:00",
+  "total_runtime_seconds": 12768.192927122116,
   "unfreeze_all_esm": false,
   "unfreeze_esm": false,
   "unfreeze_layers": 0,
   "use_cache": true,
   "version": "3",
-  "weight_decay": 0.0
+  "weight_decay": 0.0001
 }

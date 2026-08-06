@@ -9,10 +9,10 @@
   "autoencoder_num_layers": 2,
   "batch_size": 16,
   "cache_embeddings": false,
-  "checkpoint_dir": "/home/ubuntu/protein-sequence-augmentation/checkpoints/classifier/solubility/v3/end_to_end/mlp/esm2/seed_43",
+  "checkpoint_dir": "/home/ubuntu/protein-sequence-augmentation/checkpoints/classifier/solubility/v3/end_to_end/mlp/random_autoencoder/seed_44",
   "checkpoint_root": "/home/ubuntu/protein-sequence-augmentation/checkpoints/classifier",
-  "completed_at": "2026-08-04T18:38:40.588185+00:00",
-  "configuration_fingerprint": "c9479fa4b44892e9319f7a3675cb862987554c208518fa40c0908819d98b5de9",
+  "completed_at": "2026-08-05T03:25:37.582636+00:00",
+  "configuration_fingerprint": "cc9b1781627f1b6ace60c223c6a1bec5cd7db4b01979c460d45ef85d77b88859",
   "data_dir": "data/processed/peer",
   "data_sources": {
     "test": {
@@ -37,7 +37,7 @@
   "dataset": "solubility",
   "deterministic": true,
   "device": "cuda",
-  "dropout": 0.3,
+  "dropout": 0.1,
   "early_stopping_patience": 5,
   "embedding_cache_root": "/home/ubuntu/protein-sequence-augmentation/data/processed/embeddings",
   "encoder_learning_rate": 0.0001,
@@ -47,10 +47,10 @@
   "esm_max_sequence_length": 1022,
   "esm_model_name": "esm2_t6_8M_UR50D",
   "evaluate_test": true,
-  "git_commit": "bb22afcd626228ab36b3fb8e5013af3462eb045d",
+  "git_commit": "e3806d15147ecd2c7ddd2f3fa5a1c770b5932c8f",
   "git_dirty": true,
   "head_type": "mlp",
-  "learning_rate": 0.0003,
+  "learning_rate": 0.001,
   "max_grad_norm": 1.0,
   "mode": "end_to_end_sweep",
   "num_classes": 2,
@@ -70,10 +70,10 @@
     "esm_long_sequence_policy": "truncate_right",
     "esm_max_sequence_length": 1022
   },
-  "representation": "esm2",
+  "representation": "random_autoencoder",
   "results_dir": "Code/results/classifier",
-  "resume_fingerprint": "dcc7adf6a619d4c5d88df69b8d32639e63087e9460ade44d81a968e27a995953",
-  "run_dir": "Code/results/classifier/solubility/v3/end_to_end/mlp/esm2/seed_43",
+  "resume_fingerprint": "501faa0e4136000708927a886576d98f3224ba4f72215815d2e2433f6e5001a9",
+  "run_dir": "Code/results/classifier/solubility/v3/end_to_end/mlp/random_autoencoder/seed_44",
   "runtime": {
     "packages": {
       "fair-esm": "2.0.0",
@@ -86,7 +86,7 @@
     "python": "3.12.3",
     "torch_cuda_version": "13.0"
   },
-  "seed": 43,
+  "seed": 44,
   "source_file_sha256": {
     "Code/src/models/autoencoder.py": "9fc48453a564ecd1d5d2203fe9f90e023b9b1a14afd9cf3f602a5660cb0feb92",
     "Code/src/models/classifier.py": "0bb2650b02fe41f9b24a6fc7d745fcf8c91c45f8f790d142c807e9d673ce19d0",
@@ -98,8 +98,8 @@
     "Code/src/utils/experiment_artifacts.py": "0acf2e83e2114f65680fa1429d88559b906fcbc4539cdda3b59bcda7ca3be715",
     "Code/src/utils/sequence_dataset.py": "40f450bebdbfd39fe9132ce82aaf1015e4f70b4f03009c341e18b9d83da5513c"
   },
-  "started_at": "2026-08-04T15:52:40.423459+00:00",
-  "total_runtime_seconds": 9960.16473698616,
+  "started_at": "2026-08-05T02:37:55.797100+00:00",
+  "total_runtime_seconds": 2861.785563468933,
   "unfreeze_all_esm": false,
   "unfreeze_esm": false,
   "unfreeze_layers": 0,

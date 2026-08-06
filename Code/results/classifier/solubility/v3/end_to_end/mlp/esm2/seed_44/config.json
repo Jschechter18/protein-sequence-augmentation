@@ -9,10 +9,10 @@
   "autoencoder_num_layers": 2,
   "batch_size": 16,
   "cache_embeddings": false,
-  "checkpoint_dir": "/home/ubuntu/protein-sequence-augmentation/checkpoints/classifier/solubility/v3/end_to_end/mlp/esm2/seed_43",
+  "checkpoint_dir": "/home/ubuntu/protein-sequence-augmentation/checkpoints/classifier/solubility/v3/end_to_end/mlp/esm2/seed_44",
   "checkpoint_root": "/home/ubuntu/protein-sequence-augmentation/checkpoints/classifier",
-  "completed_at": "2026-08-04T18:38:40.588185+00:00",
-  "configuration_fingerprint": "c9479fa4b44892e9319f7a3675cb862987554c208518fa40c0908819d98b5de9",
+  "completed_at": "2026-08-05T10:23:48.796222+00:00",
+  "configuration_fingerprint": "3fc878194c26d98134a748bb15017f6bbe5762af1b9764a8733b9ace8747aa78",
   "data_dir": "data/processed/peer",
   "data_sources": {
     "test": {
@@ -47,7 +47,7 @@
   "esm_max_sequence_length": 1022,
   "esm_model_name": "esm2_t6_8M_UR50D",
   "evaluate_test": true,
-  "git_commit": "bb22afcd626228ab36b3fb8e5013af3462eb045d",
+  "git_commit": "e3806d15147ecd2c7ddd2f3fa5a1c770b5932c8f",
   "git_dirty": true,
   "head_type": "mlp",
   "learning_rate": 0.0003,
@@ -72,8 +72,8 @@
   },
   "representation": "esm2",
   "results_dir": "Code/results/classifier",
-  "resume_fingerprint": "dcc7adf6a619d4c5d88df69b8d32639e63087e9460ade44d81a968e27a995953",
-  "run_dir": "Code/results/classifier/solubility/v3/end_to_end/mlp/esm2/seed_43",
+  "resume_fingerprint": "8e41aacbdb7062f5b30eaaeb82d1991b390bdd953aa4ecadb45f392807b4d3b4",
+  "run_dir": "Code/results/classifier/solubility/v3/end_to_end/mlp/esm2/seed_44",
   "runtime": {
     "packages": {
       "fair-esm": "2.0.0",
@@ -86,7 +86,7 @@
     "python": "3.12.3",
     "torch_cuda_version": "13.0"
   },
-  "seed": 43,
+  "seed": 44,
   "source_file_sha256": {
     "Code/src/models/autoencoder.py": "9fc48453a564ecd1d5d2203fe9f90e023b9b1a14afd9cf3f602a5660cb0feb92",
     "Code/src/models/classifier.py": "0bb2650b02fe41f9b24a6fc7d745fcf8c91c45f8f790d142c807e9d673ce19d0",
@@ -98,8 +98,8 @@
     "Code/src/utils/experiment_artifacts.py": "0acf2e83e2114f65680fa1429d88559b906fcbc4539cdda3b59bcda7ca3be715",
     "Code/src/utils/sequence_dataset.py": "40f450bebdbfd39fe9132ce82aaf1015e4f70b4f03009c341e18b9d83da5513c"
   },
-  "started_at": "2026-08-04T15:52:40.423459+00:00",
-  "total_runtime_seconds": 9960.16473698616,
+  "started_at": "2026-08-05T07:38:00.585348+00:00",
+  "total_runtime_seconds": 9948.21088552475,
   "unfreeze_all_esm": false,
   "unfreeze_esm": false,
   "unfreeze_layers": 0,

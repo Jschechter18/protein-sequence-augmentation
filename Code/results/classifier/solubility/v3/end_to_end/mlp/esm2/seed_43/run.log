@@ -15,3 +15,6 @@
 2026-08-04 17:56:52,549 INFO Code.src.training.classification_pipeline: Epoch 7/30
 2026-08-04 18:17:36,135 INFO Code.src.training.classification_pipeline: Epoch 7: train loss 0.2612, val loss 0.8000, val accuracy 0.7459
 2026-08-04 18:17:36,135 INFO Code.src.training.classification_pipeline: Epoch 8/30
+2026-08-04 18:38:21,418 INFO Code.src.training.classification_pipeline: Epoch 8: train loss 0.2140, val loss 1.0185, val accuracy 0.7433
+2026-08-04 18:38:21,418 INFO Code.src.training.classification_pipeline: Early stopping at epoch 8.
+2026-08-04 18:38:40,559 INFO Code.src.training.classification_pipeline: Test Loss: 0.5389 | Test Acc: 0.7184 | Test F1 (Macro): 0.7116
