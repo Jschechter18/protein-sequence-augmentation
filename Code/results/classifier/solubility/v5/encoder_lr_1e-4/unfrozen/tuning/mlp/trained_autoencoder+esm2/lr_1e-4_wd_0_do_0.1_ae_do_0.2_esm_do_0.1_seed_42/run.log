@@ -1,0 +1,45 @@
+2026-08-07 18:22:20,837 INFO Code.src.training.classification_pipeline: Unfreezing the autoencoder encoding path.
+2026-08-07 18:22:20,838 INFO Code.src.training.classification_pipeline: Unfreezing the complete ESM-2 encoder.
+2026-08-07 18:22:20,839 INFO Code.src.training.classification_pipeline: Epoch 1/10
+2026-08-07 18:48:57,941 INFO Code.src.training.classification_pipeline: Epoch 1: train loss 0.5237, val loss 0.4839, val accuracy 0.7492
+2026-08-07 18:48:57,942 INFO Code.src.training.classification_pipeline: Epoch 2/10
+2026-08-07 19:15:37,194 INFO Code.src.training.classification_pipeline: Epoch 2: train loss 0.4779, val loss 0.4731, val accuracy 0.7517
+2026-08-07 19:15:37,194 INFO Code.src.training.classification_pipeline: Epoch 3/10
+2026-08-07 19:42:16,204 INFO Code.src.training.classification_pipeline: Epoch 3: train loss 0.4532, val loss 0.4595, val accuracy 0.7662
+2026-08-07 19:42:16,204 INFO Code.src.training.classification_pipeline: Epoch 4/10
+2026-08-07 20:08:56,200 INFO Code.src.training.classification_pipeline: Epoch 4: train loss 0.4277, val loss 0.4815, val accuracy 0.7619
+2026-08-07 20:08:56,200 INFO Code.src.training.classification_pipeline: Epoch 5/10
+2026-08-07 20:35:32,658 INFO Code.src.training.classification_pipeline: Epoch 5: train loss 0.3972, val loss 0.4838, val accuracy 0.7639
+2026-08-07 20:35:32,659 INFO Code.src.training.classification_pipeline: Epoch 6/10
+2026-08-07 21:00:22,265 ERROR __main__: Run failed: Code/results/classifier/solubility/v5/unfrozen/tuning/mlp/trained_autoencoder+esm2/lr_1e-4_wd_0_do_0.1_ae_do_0.2_esm_do_0.1_seed_42
+Traceback (most recent call last):
+  File "/home/ubuntu/protein-sequence-augmentation/Code/src/training/classification_pipeline.py", line 609, in _collect_split
+    nn.utils.clip_grad_norm_(
+  File "/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.12/site-packages/torch/nn/utils/clip_grad.py", line 41, in _no_grad_wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.12/site-packages/torch/nn/utils/clip_grad.py", line 230, in clip_grad_norm_
+    total_norm = _get_total_norm(grads, norm_type, error_if_nonfinite, foreach)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.12/site-packages/torch/nn/utils/clip_grad.py", line 41, in _no_grad_wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.12/site-packages/torch/nn/utils/clip_grad.py", line 110, in _get_total_norm
+    raise RuntimeError(
+RuntimeError: The total norm of order 2.0 for gradients from `parameters` is non-finite, so it cannot be clipped. To disable this error and scale the gradients by the non-finite norm anyway, set `error_if_nonfinite=False`
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/ubuntu/protein-sequence-augmentation/Code/src/training/train_classifier.py", line 1431, in run_one
+    history = pipeline.fit(
+              ^^^^^^^^^^^^^
+  File "/home/ubuntu/protein-sequence-augmentation/Code/src/training/classification_pipeline.py", line 775, in fit
+    train_metrics = self.train_epoch(train_loader)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/protein-sequence-augmentation/Code/src/training/classification_pipeline.py", line 728, in train_epoch
+    metrics, _ = self._collect_split(
+                 ^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/protein-sequence-augmentation/Code/src/training/classification_pipeline.py", line 617, in _collect_split
+    raise FloatingPointError(
+FloatingPointError: Non-finite gradient norm in training batch 3822.

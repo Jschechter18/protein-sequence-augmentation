@@ -126,6 +126,7 @@ def validate_preflight(configs: list[Any]) -> None:
             latent_dim=exemplar.autoencoder_latent_dim,
             num_layers=exemplar.autoencoder_num_layers,
             kernel_size=exemplar.autoencoder_kernel_size,
+            layer_type=exemplar.autoencoder_layer_type,
         )
         try:
             model.load_state_dict(load_state_dict(checkpoint_path), strict=True)

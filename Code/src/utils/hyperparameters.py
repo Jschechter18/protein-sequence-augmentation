@@ -17,11 +17,12 @@ class Hyperparameters:
 @dataclass
 class AutoencoderHyperparameters(Hyperparameters):
     learning_rate: float = 3e-4 # default: 1e-4
-    layer_type: str = "gru" # gru(+single cnn layer), transformer
+    layer_type: str = "gru" # gru/lstm (+single cnn layer), transformer
     embedding_dim: int = 256
     cnn_out_channels: int = 256
     hidden_dim: int = 512 # default: 1024
-    latent_dim: int = 256
+    # latent_dim: int = 256
+    latent_dim: int = 512
     kernel_size: int = 5
     num_layers: int = 2 # default: 3
     bidirectional: bool = True
@@ -56,6 +57,7 @@ TRANSFORMER_AUTOENCODER_SWEEP_SEARCH_SPACE = {
 
 AUTOENCODER_SWEEP_SEARCH_SPACES = {
     "gru": GRU_AUTOENCODER_SWEEP_SEARCH_SPACE,
+    "lstm": GRU_AUTOENCODER_SWEEP_SEARCH_SPACE,
     "transformer": TRANSFORMER_AUTOENCODER_SWEEP_SEARCH_SPACE,
 }
 

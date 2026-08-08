@@ -39,8 +39,8 @@ def _cli_arg_provided(flag: str) -> bool:
 
 
 def _validate_autoencoder_hyperparams(hyperparams: AEParams) -> None:
-    if hyperparams.layer_type not in {"gru", "transformer"}:
-        raise ValueError("layer_type must be 'gru' or 'transformer'")
+    if hyperparams.layer_type not in {"gru", "lstm", "transformer"}:
+        raise ValueError("layer_type must be 'gru', 'lstm', or 'transformer'")
     if hyperparams.batch_size <= 0:
         raise ValueError("batch_size must be positive")
     if hyperparams.num_epochs <= 0:
@@ -81,7 +81,7 @@ def _validate_autoencoder_hyperparams(hyperparams: AEParams) -> None:
         raise ValueError("weight_decay must be non-negative")
 
     uses_cnn_stem = (
-        hyperparams.layer_type == "gru"
+        hyperparams.layer_type in {"gru", "lstm"}
         or (
             hyperparams.layer_type == "transformer"
             and hyperparams.use_cnn_before_transformer
@@ -232,7 +232,7 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
     args.add_argument(
         '--length_bin',
         type=int,
-        default=2,
+        default=3,
         help='1-indexed length bin to train on. Requires --length_options. For --length_options thirds, use 1, 2, or 3.',
     )
     args.add_argument(
@@ -274,7 +274,7 @@ def _add_args(args: argparse.ArgumentParser) -> argparse.Namespace:
     args.add_argument(
         '--layer_type',
         type=str,
-        choices=["gru", "transformer"],
+        choices=["gru", "lstm", "transformer"],
         default=None,
         help="Autoencoder architecture to train.",
     )
@@ -348,8 +348,8 @@ def add_and_validate_train_inputs():
 
     if args.layer_type is not None:
         hyperparams.layer_type = args.layer_type
-    if args.length_aware_batching and hyperparams.layer_type != "gru":
-        raise ValueError("--length_aware_batching is currently supported only for GRU training")
+    if args.length_aware_batching and hyperparams.layer_type not in {"gru", "lstm"}:
+        raise ValueError("--length_aware_batching is currently supported only for recurrent training")
 
     hyperparams.use_decoder_positional_embeddings = args.use_decoder_positional_embeddings
     hyperparams.max_decoder_positions = args.max_decoder_positions
