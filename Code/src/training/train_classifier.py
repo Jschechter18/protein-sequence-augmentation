@@ -24,6 +24,13 @@ The final experiment should:
     4. Continue using validation data for early stopping.
     5. Evaluate the clean test split once per final seeded run.
     6. Aggregate test metrics across the three seeds.
+
+End-to-end sweep (all representation encoders trainable):
+python -m Code.src.training.train_classifier \
+  --end_to_end_sweep \
+  --version <number> \
+  --encoder_learning_rate 1e-4 \
+  --esm_learning_rate 1e-5
 """
 
 from __future__ import annotations
@@ -218,6 +225,7 @@ class ClassifierRunConfig:
     unfreeze_esm: bool
     unfreeze_all_esm: bool
     unfreeze_layers: int
+    end_to_end: bool
     max_grad_norm: float | None
     num_workers: int
     pin_memory: bool
@@ -259,7 +267,7 @@ class ClassifierRunConfig:
     @property
     def run_dir(self) -> Path:
         root = Path(self.results_dir) / self.dataset / self.version_dir
-        if self.phase in {"tuning", "final"}:
+        if self.phase in {"tuning", "final", "end_to_end"}:
             leaf = self.trial_name if self.phase == "tuning" else f"seed_{self.seed}"
             return root / self.phase / self.head_type / self.representation / leaf
         return (
@@ -276,7 +284,7 @@ class ClassifierRunConfig:
             / self.dataset
             / self.version_dir
         )
-        if self.phase in {"tuning", "final"}:
+        if self.phase in {"tuning", "final", "end_to_end"}:
             leaf = self.trial_name if self.phase == "tuning" else f"seed_{self.seed}"
             return root / self.phase / self.head_type / self.representation / leaf
         return (
@@ -321,6 +329,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--unfreeze_layers", type=int, default=0)
     parser.add_argument("--unfreeze_all_esm", action="store_true")
     parser.add_argument("--unfreeze_esm", action="store_true")
+    parser.add_argument(
+        "--end_to_end",
+        "--full_end_to_end",
+        action="store_true",
+        help=(
+            "Train the classifier head, trained autoencoder encoder, and complete "
+            "ESM-2 model jointly. Requires --representation trained_autoencoder+esm2."
+        ),
+    )
     parser.add_argument("--esm_model_name", default="esm2_t6_8M_UR50D")
     parser.add_argument(
         "--esm_max_sequence_length",
@@ -379,6 +396,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--hp_tune",
         action="store_true",
         help="Run hyperparameter tuning for the classifier.",
+    )
+    experiment_mode.add_argument(
+        "--end_to_end_sweep",
+        action="store_true",
+        help=(
+            "Run the representation/head/seed sweep with every selected encoder "
+            "trainable. Frozen-embedding caching is disabled automatically."
+        ),
     )
     parser.add_argument("--seeds", type=int, nargs="+", default=None)
     parser.add_argument(
@@ -442,15 +467,35 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         parser.error("--unfreeze_layers must be positive with --unfreeze_esm")
     if not args.unfreeze_esm and args.unfreeze_layers:
         parser.error("--unfreeze_layers has no effect without --unfreeze_esm")
-    if args.run_sweep and (args.unfreeze_esm or args.unfreeze_all_esm or args.unfreeze_layers):
+    if args.end_to_end and (args.unfreeze_esm or args.unfreeze_all_esm):
+        parser.error("--end_to_end cannot be combined with ESM-only unfreezing options")
+    if args.run_sweep and (
+        args.unfreeze_esm
+        or args.unfreeze_all_esm
+        or args.unfreeze_layers
+        or args.end_to_end
+    ):
         parser.error("Stage 1 sweep requires fully frozen encoders; unfreezing options are not allowed")
+    if args.end_to_end_sweep and (
+        args.end_to_end
+        or args.unfreeze_esm
+        or args.unfreeze_all_esm
+        or args.unfreeze_layers
+    ):
+        parser.error(
+            "--end_to_end_sweep cannot be combined with individual unfreezing options"
+        )
     if not args.run_sweep and (args.unfreeze_esm or args.unfreeze_all_esm):
         if normalize_embedding_type(args.embedding_type) != "esm2":
             parser.error("ESM unfreezing options are supported only with --representation esm2")
-    if args.cache_embeddings and (args.unfreeze_esm or args.unfreeze_all_esm):
+    if args.end_to_end and normalize_embedding_type(args.embedding_type) != "trained_autoencoder+esm2":
+        parser.error("--end_to_end requires --representation trained_autoencoder+esm2")
+    if args.cache_embeddings and (
+        args.unfreeze_esm or args.unfreeze_all_esm or args.end_to_end
+    ):
         parser.error(
             "Embedding caching requires frozen encoders; use --no-cache_embeddings "
-            "when fine-tuning ESM-2."
+            "when fine-tuning an encoder."
         )
 
 
@@ -517,6 +562,7 @@ def _make_run_config(
         unfreeze_esm=args.unfreeze_esm,
         unfreeze_all_esm=args.unfreeze_all_esm,
         unfreeze_layers=args.unfreeze_layers,
+        end_to_end=args.end_to_end or args.end_to_end_sweep,
         max_grad_norm=args.max_grad_norm,
         num_workers=args.num_workers,
         pin_memory=pin_memory,
@@ -528,7 +574,7 @@ def _make_run_config(
         mode=mode,
         dropout=dropout,
         phase=phase,
-        cache_embeddings=args.cache_embeddings,
+        cache_embeddings=args.cache_embeddings and not args.end_to_end_sweep,
         embedding_cache_root=args.embedding_cache_root,
     )
 
@@ -661,14 +707,14 @@ def build_run_configs(
     if args.hp_tune:
         return build_tuning_configs(args, device=device)
 
-    if args.run_sweep:
+    if args.run_sweep or args.end_to_end_sweep:
         seeds = list(dict.fromkeys(args.seeds or STAGE1_SEEDS))
         representations = _unique_normalized(
             args.representations or STAGE1_REPRESENTATIONS
         )
         heads = list(dict.fromkeys(args.head_types or HEAD_TYPES))
-        mode = "stage1_sweep"
-        phase = "final"
+        mode = "end_to_end_sweep" if args.end_to_end_sweep else "stage1_sweep"
+        phase = "end_to_end" if args.end_to_end_sweep else "final"
         selected = _load_selected_hyperparameters(args)
     else:
         seeds = [args.seed]
@@ -680,7 +726,7 @@ def build_run_configs(
 
     configs: list[ClassifierRunConfig] = []
     for seed, representation, head_type in product(seeds, representations, heads):
-        if args.run_sweep:
+        if args.run_sweep or args.end_to_end_sweep:
             learning_rate, weight_decay, dropout = _hyperparameters_for_condition(
                 selected,
                 head_type=head_type,
@@ -1003,6 +1049,7 @@ def run_one(
             unfreeze_esm=config.unfreeze_esm,
             unfreeze_layers=config.unfreeze_layers,
             unfreeze_all_esm=config.unfreeze_all_esm,
+            end_to_end=config.end_to_end,
             max_grad_norm=config.max_grad_norm,
             run_config=payload,
             show_progress=True,
@@ -1082,6 +1129,8 @@ def save_summaries(configs: list[ClassifierRunConfig], rows: list[dict[str, Any]
         summary_root = summary_root / "tuning"
         summary_path = summary_root / "tuning_results.csv"
     else:
+        if all(config.phase == "end_to_end" for config in configs):
+            summary_root = summary_root / "end_to_end"
         summary_path = summary_root / "summary.csv"
     summary = pd.DataFrame(rows)
     if summary_path.is_file():
@@ -1185,6 +1234,8 @@ def main(argv: list[str] | None = None) -> None:
         logger.info("Starting hyperparameter tuning with %d unique runs", len(configs))
     elif args.run_sweep:
         logger.info("Starting Stage 1 sweep with %d unique runs", len(configs))
+    elif args.end_to_end_sweep:
+        logger.info("Starting end-to-end sweep with %d unique runs", len(configs))
 
     rows: list[dict[str, Any]] = []
     failures = 0
@@ -1209,7 +1260,11 @@ def main(argv: list[str] | None = None) -> None:
         except Exception as error:
             failures += 1
             rows.append(_row_from_metrics(config, None, "failed", str(error)))
-            if (not args.run_sweep and not args.hp_tune) or args.fail_fast:
+            if (
+                not args.run_sweep
+                and not args.end_to_end_sweep
+                and not args.hp_tune
+            ) or args.fail_fast:
                 save_summaries(configs, rows)
                 raise
 

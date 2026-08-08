@@ -1,0 +1,19 @@
+2026-08-04 18:38:42,135 INFO Code.src.training.classification_pipeline: Unfreezing the autoencoder encoder and complete ESM-2 encoder.
+2026-08-04 18:38:42,137 INFO Code.src.training.classification_pipeline: Epoch 1/30
+2026-08-04 19:05:19,319 INFO Code.src.training.classification_pipeline: Epoch 1: train loss 0.5113, val loss 0.4726, val accuracy 0.7622
+2026-08-04 19:05:19,319 INFO Code.src.training.classification_pipeline: Epoch 2/30
+2026-08-04 19:31:57,559 INFO Code.src.training.classification_pipeline: Epoch 2: train loss 0.4673, val loss 0.4785, val accuracy 0.7548
+2026-08-04 19:31:57,559 INFO Code.src.training.classification_pipeline: Epoch 3/30
+2026-08-04 19:58:29,591 INFO Code.src.training.classification_pipeline: Epoch 3: train loss 0.4448, val loss 0.4535, val accuracy 0.7743
+2026-08-04 19:58:29,591 INFO Code.src.training.classification_pipeline: Epoch 4/30
+2026-08-04 20:25:02,941 INFO Code.src.training.classification_pipeline: Epoch 4: train loss 0.4261, val loss 0.4703, val accuracy 0.7597
+2026-08-04 20:25:02,941 INFO Code.src.training.classification_pipeline: Epoch 5/30
+2026-08-04 20:51:32,585 INFO Code.src.training.classification_pipeline: Epoch 5: train loss 0.4045, val loss 0.4845, val accuracy 0.7629
+2026-08-04 20:51:32,585 INFO Code.src.training.classification_pipeline: Epoch 6/30
+2026-08-04 21:18:00,925 INFO Code.src.training.classification_pipeline: Epoch 6: train loss 0.3842, val loss 0.4953, val accuracy 0.7701
+2026-08-04 21:18:00,926 INFO Code.src.training.classification_pipeline: Epoch 7/30
+2026-08-04 21:44:34,949 INFO Code.src.training.classification_pipeline: Epoch 7: train loss 0.3557, val loss 0.5175, val accuracy 0.7620
+2026-08-04 21:44:34,949 INFO Code.src.training.classification_pipeline: Epoch 8/30
+2026-08-04 22:11:11,712 INFO Code.src.training.classification_pipeline: Epoch 8: train loss 0.3285, val loss 0.6226, val accuracy 0.7594
+2026-08-04 22:11:11,712 INFO Code.src.training.classification_pipeline: Early stopping at epoch 8.
+2026-08-04 22:11:35,136 INFO Code.src.training.classification_pipeline: Test Loss: 0.5211 | Test Acc: 0.7399 | Test F1 (Macro): 0.7365

@@ -341,6 +341,26 @@ class TrainedAutoencoderEncoder(nn.Module):
             self.autoencoder.eval()
         return self
 
+    def encoder_parameters(self):
+        """Yield parameters used by the autoencoder encode method only."""
+        module_names = (
+            "embedding",
+            "encoder_position_embedding",
+            "cnn",
+            "encoder",
+            "attention_score",
+            "to_latent",
+        )
+        seen: set[int] = set()
+        for name in module_names:
+            module = getattr(self.autoencoder, name, None)
+            if not isinstance(module, nn.Module):
+                continue
+            for parameter in module.parameters():
+                if id(parameter) not in seen:
+                    seen.add(id(parameter))
+                    yield parameter
+
     def forward(
         self,
         token_ids: torch.Tensor,
@@ -350,7 +370,7 @@ class TrainedAutoencoderEncoder(nn.Module):
 
 class RandomAutoencoderEncoder(nn.Module):
     """
-    Expose a frozen, randomly initialized autoencoder encoder.
+    Expose a frozen-capable, randomly initialized autoencoder encoder.
 
     Input:
         token_ids: [B, L]
@@ -373,6 +393,7 @@ class RandomAutoencoderEncoder(nn.Module):
         super().__init__()
 
         self.output_dim = latent_dim
+        self.is_frozen = True
 
         self.autoencoder = ProteinSequenceAutoencoder(
             embedding_dim=embedding_dim,
@@ -390,8 +411,29 @@ class RandomAutoencoderEncoder(nn.Module):
 
     def train(self, mode: bool = True):
         super().train(mode)
-        self.autoencoder.eval()
+        if self.is_frozen:
+            self.autoencoder.eval()
         return self
+
+    def encoder_parameters(self):
+        """Yield parameters used by the autoencoder encode method only."""
+        module_names = (
+            "embedding",
+            "encoder_position_embedding",
+            "cnn",
+            "encoder",
+            "attention_score",
+            "to_latent",
+        )
+        seen: set[int] = set()
+        for name in module_names:
+            module = getattr(self.autoencoder, name, None)
+            if not isinstance(module, nn.Module):
+                continue
+            for parameter in module.parameters():
+                if id(parameter) not in seen:
+                    seen.add(id(parameter))
+                    yield parameter
 
     def forward(
         self,

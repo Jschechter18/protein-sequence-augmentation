@@ -1,0 +1,107 @@
+{
+  "autoencoder_checkpoint": "checkpoints/autoencoder/solubility/v5/model_ae_solubility.pt",
+  "autoencoder_checkpoint_sha256": "e17904ed8813f9489126f4cb91054f36c83ad0e2de3f44e463aa896bb00c6d51",
+  "autoencoder_cnn_channels": 256,
+  "autoencoder_embedding_dim": 256,
+  "autoencoder_hidden_dim": 512,
+  "autoencoder_kernel_size": 5,
+  "autoencoder_latent_dim": 512,
+  "autoencoder_num_layers": 2,
+  "batch_size": 16,
+  "cache_embeddings": false,
+  "checkpoint_dir": "/home/ubuntu/protein-sequence-augmentation/checkpoints/classifier/solubility/v0/end_to_end/linear/trained_autoencoder+esm2/seed_44",
+  "checkpoint_root": "/home/ubuntu/protein-sequence-augmentation/checkpoints/classifier",
+  "configuration_fingerprint": "58eefe730e439637f17e3e74c6d8dda3f5bebfa16f95509e6fd5c12235d8a16a",
+  "data_dir": "data/processed/peer",
+  "data_sources": {
+    "test": {
+      "combined_file": false,
+      "combined_split_value": null,
+      "path": "/home/ubuntu/protein-sequence-augmentation/data/processed/peer/solubility/test.csv",
+      "sha256": "1185c764a4980292f79e79b7cd8e88210d20aff089b01313d98e655d0a633fc3"
+    },
+    "train": {
+      "combined_file": false,
+      "combined_split_value": null,
+      "path": "/home/ubuntu/protein-sequence-augmentation/data/processed/peer/solubility/train.csv",
+      "sha256": "014033cafc231670b98023fa0c7f7cb80861aabae48b08494fa8c80579878896"
+    },
+    "valid": {
+      "combined_file": false,
+      "combined_split_value": null,
+      "path": "/home/ubuntu/protein-sequence-augmentation/data/processed/peer/solubility/valid.csv",
+      "sha256": "ab4fd377f882f33dcd2326428edf891adc0289a83bb59757c60c95c4120dd23b"
+    }
+  },
+  "dataset": "solubility",
+  "deterministic": true,
+  "device": "cuda",
+  "dropout": null,
+  "early_stopping_patience": 5,
+  "embedding_cache_root": "/home/ubuntu/protein-sequence-augmentation/data/processed/embeddings",
+  "encoder_learning_rate": 0.0001,
+  "end_to_end": true,
+  "epochs": 30,
+  "esm_learning_rate": 1e-05,
+  "esm_max_sequence_length": 1022,
+  "esm_model_name": "esm2_t6_8M_UR50D",
+  "evaluate_test": true,
+  "git_commit": "344eb31016b82ac5714ceb9460e1753e2395a7af",
+  "git_dirty": true,
+  "head_type": "linear",
+  "learning_rate": 0.001,
+  "max_grad_norm": 1.0,
+  "mode": "end_to_end_sweep",
+  "num_classes": 2,
+  "num_workers": 2,
+  "persistent_workers": true,
+  "phase": "end_to_end",
+  "pin_memory": true,
+  "preprocessing": {
+    "autoencoder_special_tokens": "BOS+residues+EOS",
+    "classification_encoding": "char",
+    "embedding_cache": {
+      "enabled": false,
+      "files": {},
+      "root": "/home/ubuntu/protein-sequence-augmentation/data/processed/embeddings",
+      "schema_version": 1
+    },
+    "esm_long_sequence_policy": "truncate_right",
+    "esm_max_sequence_length": 1022
+  },
+  "representation": "trained_autoencoder+esm2",
+  "results_dir": "Code/results/classifier",
+  "resume_fingerprint": "0d81a8aa431a90d8e06194ac62a9303132179d179f6e29f05a1865d042fa7895",
+  "run_dir": "Code/results/classifier/solubility/v0/end_to_end/linear/trained_autoencoder+esm2/seed_44",
+  "runtime": {
+    "packages": {
+      "fair-esm": "2.0.0",
+      "numpy": "2.5.1",
+      "pandas": "3.0.5",
+      "scikit-learn": "1.9.0",
+      "torch": "2.13.0"
+    },
+    "platform": "Linux-7.0.0-1009-aws-x86_64-with-glibc2.43",
+    "python": "3.14.4",
+    "torch_cuda_version": "13.0"
+  },
+  "seed": 44,
+  "source_file_sha256": {
+    "Code/src/models/autoencoder.py": "9fc48453a564ecd1d5d2203fe9f90e023b9b1a14afd9cf3f602a5660cb0feb92",
+    "Code/src/models/classifier.py": "0bb2650b02fe41f9b24a6fc7d745fcf8c91c45f8f790d142c807e9d673ce19d0",
+    "Code/src/training/classification_pipeline.py": "00d43cd1633d93899d200960b884863f86afeef5add90874511c1fa117a780bd",
+    "Code/src/training/train_classifier.py": "4f17f6a390ba7cb7f40c0f5291a207dcd838246515c6c7a3c2c7d49404e03dd1",
+    "Code/src/utils/classifier_data.py": "11205222e4e3ad5a2af347ee751dbf20ecd43a8b5a672984f5814426ba2c09cd",
+    "Code/src/utils/dataloader.py": "7e982d16ffcb92cb94b4662ac8998f1b1a8eab24b4b4ab33a1e6ed82b27414f6",
+    "Code/src/utils/embedding_cache.py": "ece99a8d2767e131ef2ad1336283c3381ce7b0e911152b9da3852b0ff7bc6ca0",
+    "Code/src/utils/experiment_artifacts.py": "0acf2e83e2114f65680fa1429d88559b906fcbc4539cdda3b59bcda7ca3be715",
+    "Code/src/utils/sequence_dataset.py": "40f450bebdbfd39fe9132ce82aaf1015e4f70b4f03009c341e18b9d83da5513c"
+  },
+  "started_at": "2026-08-05T07:25:35.592715+00:00",
+  "unfreeze_all_esm": false,
+  "unfreeze_esm": false,
+  "unfreeze_layers": 0,
+  "use_cache": true,
+  "version": "0",
+  "weight_decay": 0.0
+}
