@@ -1,0 +1,38 @@
+2026-08-06 05:38:26,402 INFO Code.src.training.classification_pipeline: Unfreezing the autoencoder encoding path.
+2026-08-06 05:38:26,403 INFO Code.src.training.classification_pipeline: Epoch 1/10
+2026-08-06 05:44:28,490 INFO Code.src.training.classification_pipeline: Epoch 1: train loss 0.5462, val loss 0.5133, val accuracy 0.7305
+2026-08-06 05:44:28,490 INFO Code.src.training.classification_pipeline: Epoch 2/10
+2026-08-06 05:50:28,687 INFO Code.src.training.classification_pipeline: Epoch 2: train loss 0.5112, val loss 0.4972, val accuracy 0.7383
+2026-08-06 05:50:28,687 INFO Code.src.training.classification_pipeline: Epoch 3/10
+2026-08-06 05:52:59,967 ERROR __main__: Run failed: Code/results/classifier/solubility/v5/unfrozen/tuning/linear/trained_autoencoder/lr_1e-4_wd_0_ae_do_0.2_esm_do_0_seed_42
+Traceback (most recent call last):
+  File "/home/ubuntu/protein-sequence-augmentation/Code/src/training/classification_pipeline.py", line 609, in _collect_split
+    nn.utils.clip_grad_norm_(
+  File "/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.12/site-packages/torch/nn/utils/clip_grad.py", line 41, in _no_grad_wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.12/site-packages/torch/nn/utils/clip_grad.py", line 230, in clip_grad_norm_
+    total_norm = _get_total_norm(grads, norm_type, error_if_nonfinite, foreach)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.12/site-packages/torch/nn/utils/clip_grad.py", line 41, in _no_grad_wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.12/site-packages/torch/nn/utils/clip_grad.py", line 110, in _get_total_norm
+    raise RuntimeError(
+RuntimeError: The total norm of order 2.0 for gradients from `parameters` is non-finite, so it cannot be clipped. To disable this error and scale the gradients by the non-finite norm anyway, set `error_if_nonfinite=False`
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/ubuntu/protein-sequence-augmentation/Code/src/training/train_classifier.py", line 1431, in run_one
+    history = pipeline.fit(
+              ^^^^^^^^^^^^^
+  File "/home/ubuntu/protein-sequence-augmentation/Code/src/training/classification_pipeline.py", line 775, in fit
+    train_metrics = self.train_epoch(train_loader)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/protein-sequence-augmentation/Code/src/training/classification_pipeline.py", line 728, in train_epoch
+    metrics, _ = self._collect_split(
+                 ^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/protein-sequence-augmentation/Code/src/training/classification_pipeline.py", line 617, in _collect_split
+    raise FloatingPointError(
+FloatingPointError: Non-finite gradient norm in training batch 1710.
