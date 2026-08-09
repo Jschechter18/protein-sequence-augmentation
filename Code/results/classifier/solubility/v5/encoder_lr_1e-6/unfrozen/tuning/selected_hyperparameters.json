@@ -1,0 +1,48 @@
+{
+  "linear": {
+    "trained_autoencoder": {
+      "autoencoder_embedding_dropout": 0.0,
+      "best_val_f1": 0.6498120942944995,
+      "esm_embedding_dropout": 0.0,
+      "learning_rate": 0.0001,
+      "selection_epoch": 8,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.5362099855580134,
+      "weight_decay": 0.0
+    },
+    "trained_autoencoder+esm2": {
+      "autoencoder_embedding_dropout": 0.1,
+      "best_val_f1": 0.7161572052401747,
+      "esm_embedding_dropout": 0.05,
+      "learning_rate": 0.0001,
+      "selection_epoch": 8,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.4852557158356817,
+      "weight_decay": 0.0001
+    }
+  },
+  "mlp": {
+    "trained_autoencoder": {
+      "autoencoder_embedding_dropout": 0.0,
+      "best_val_f1": 0.6795774647887324,
+      "dropout": 0.1,
+      "esm_embedding_dropout": 0.0,
+      "learning_rate": 0.0001,
+      "selection_epoch": 3,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.5328099503104332,
+      "weight_decay": 0.0001
+    },
+    "trained_autoencoder+esm2": {
+      "autoencoder_embedding_dropout": 0.2,
+      "best_val_f1": 0.7185649009984769,
+      "dropout": 0.1,
+      "esm_embedding_dropout": 0.1,
+      "learning_rate": 0.0001,
+      "selection_epoch": 8,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.4806329830515045,
+      "weight_decay": 0.0
+    }
+  }
+}
