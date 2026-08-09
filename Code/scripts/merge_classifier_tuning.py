@@ -99,8 +99,8 @@ PROVENANCE_FIELDS = (
     "autoencoder_layer_type",
     "esm_model_name",
     "esm_max_sequence_length",
-    "encoder_learning_rate",
-    "esm_learning_rate",
+    # "encoder_learning_rate",
+    # "esm_learning_rate",
     "max_grad_norm",
     "git_commit",
 )
@@ -329,7 +329,7 @@ def _provenance(
         {
             "version": _normalized_version(config.get("version")),
             "data_sources": data_sources,
-            "source_file_sha256": source_hashes,
+            # "source_file_sha256": source_hashes,
             "preprocessing": {
                 "classification_encoding": preprocessing.get(
                     "classification_encoding"
@@ -347,8 +347,8 @@ def _provenance(
                     "schema_version"
                 ),
             },
-            "package_versions": runtime.get("packages", {}),
-            "python_version": runtime.get("python"),
+            # "package_versions": runtime.get("packages", {}),    
+            # "python_version": runtime.get("python"),
             "platform": runtime.get("platform"),
             "torch_cuda_version": runtime.get("torch_cuda_version"),
         }
