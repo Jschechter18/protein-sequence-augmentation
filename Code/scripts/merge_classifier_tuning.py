@@ -37,6 +37,7 @@ from Code.src.training.train_classifier import (
     TUNING_WEIGHT_DECAYS,
 )
 from Code.src.utils.classifier_tuning_results import (
+    representation_learning_rate,
     select_tuning_hyperparameters,
     tuning_metrics_from_history,
 )
@@ -72,6 +73,8 @@ IDENTITY_FIELDS = (
     "head_type",
     "seed",
     "learning_rate",
+    "encoder_learning_rate",
+    "esm_learning_rate",
     "weight_decay",
     "dropout",
     "autoencoder_embedding_dropout",
@@ -99,8 +102,6 @@ PROVENANCE_FIELDS = (
     "autoencoder_layer_type",
     "esm_model_name",
     "esm_max_sequence_length",
-    # "encoder_learning_rate",
-    # "esm_learning_rate",
     "max_grad_norm",
     "git_commit",
 )
@@ -148,6 +149,16 @@ def _canonical_trial_name(config: dict[str, Any]) -> str:
             raise TuningMergeError("An MLP tuning config is missing dropout")
         parts.append(f"do_{float(config['dropout']):g}")
     if config.get("phase") == "end_to_end_tuning":
+        parts.append(
+            "rep_lr_"
+            + _format_trial_value(
+                representation_learning_rate(
+                    str(config["representation"]),
+                    encoder_learning_rate=config["encoder_learning_rate"],
+                    esm_learning_rate=config["esm_learning_rate"],
+                )
+            )
+        )
         parts.extend(
             [
                 f"ae_do_{float(config['autoencoder_embedding_dropout']):g}",
@@ -189,6 +200,8 @@ def _candidate_identity(config: dict[str, Any]) -> tuple[Any, ...]:
         "head_type": str(config["head_type"]),
         "seed": int(config["seed"]),
         "learning_rate": float(config["learning_rate"]),
+        "encoder_learning_rate": float(config["encoder_learning_rate"]),
+        "esm_learning_rate": float(config["esm_learning_rate"]),
         "weight_decay": float(config["weight_decay"]),
         "dropout": (
             None if config.get("dropout") is None else float(config["dropout"])
@@ -595,6 +608,18 @@ def _row(
         "seed": int(config["seed"]),
         "phase": str(config["phase"]),
         "learning_rate": float(config["learning_rate"]),
+        "head_learning_rate": float(config["learning_rate"]),
+        "representation_learning_rate": (
+            representation_learning_rate(
+                str(config["representation"]),
+                encoder_learning_rate=config["encoder_learning_rate"],
+                esm_learning_rate=config["esm_learning_rate"],
+            )
+            if str(config["phase"]) == "end_to_end_tuning"
+            else None
+        ),
+        "encoder_learning_rate": float(config["encoder_learning_rate"]),
+        "esm_learning_rate": float(config["esm_learning_rate"]),
         "weight_decay": float(config["weight_decay"]),
         "dropout": config.get("dropout"),
         "autoencoder_embedding_dropout": config.get(
@@ -650,6 +675,8 @@ def merge_tuning_results(
     expect_full_grid: bool = False,
     require_complete: bool = True,
     allow_partition_source_mismatch: bool = False,
+    expected_head_learning_rate: float | None = None,
+    require_tied_representation_learning_rates: bool = False,
 ) -> dict[str, Any]:
     """Merge trial trees and rebuild the global tuning summary and winners."""
 
@@ -678,6 +705,24 @@ def merge_tuning_results(
         discovered = _discover_source(source_root, source, phase)
         source_counts[source] = len(discovered)
         all_candidates.extend(discovered)
+
+    unfiltered_attempt_count = len(all_candidates)
+    if expected_head_learning_rate is not None:
+        all_candidates = [
+            candidate
+            for candidate in all_candidates
+            if float(candidate.config["learning_rate"])
+            == float(expected_head_learning_rate)
+        ]
+    if require_tied_representation_learning_rates:
+        all_candidates = [
+            candidate
+            for candidate in all_candidates
+            if float(candidate.config["encoder_learning_rate"])
+            == float(candidate.config["esm_learning_rate"])
+        ]
+    if not all_candidates:
+        raise TuningMergeError("No trials remain after learning-rate filtering.")
 
     datasets = {str(candidate.config["dataset"]) for candidate in all_candidates}
     versions = {
@@ -749,12 +794,17 @@ def merge_tuning_results(
         "input_dirs": [str(source) for source in sources],
         "source_trial_counts": source_counts,
         "num_attempts": len(all_candidates),
+        "num_filtered_attempts": unfiltered_attempt_count - len(all_candidates),
         "num_unique_trials": len(candidates),
         "num_copied_trials": copied,
         "status_counts": dict(sorted(status_counts.items())),
         "expected_trials": expected_trials,
         "expected_full_frozen_grid": expect_full_grid,
         "require_complete": require_complete,
+        "expected_head_learning_rate": expected_head_learning_rate,
+        "require_tied_representation_learning_rates": (
+            require_tied_representation_learning_rates
+        ),
         "partition_source_mismatch_allowed": allow_partition_source_mismatch,
         "partition_source_audit": {
             "git_commits": sorted(
@@ -835,9 +885,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "after auditing manually edited learning-rate partitions."
         ),
     )
+    parser.add_argument(
+        "--expected_head_learning_rate",
+        type=float,
+        default=None,
+        help="Ignore trials whose classifier-head learning rate differs.",
+    )
+    parser.add_argument(
+        "--require_tied_representation_learning_rates",
+        action="store_true",
+        help="Ignore trials where encoder and ESM learning rates differ.",
+    )
     args = parser.parse_args(argv)
     if args.expected_trials is not None and args.expected_trials <= 0:
         parser.error("--expected_trials must be positive")
+    if (
+        args.expected_head_learning_rate is not None
+        and args.expected_head_learning_rate <= 0
+    ):
+        parser.error("--expected_head_learning_rate must be positive")
     return args
 
 
@@ -852,6 +918,10 @@ def main(argv: list[str] | None = None) -> None:
             expect_full_grid=args.expect_full_grid,
             require_complete=not args.allow_incomplete,
             allow_partition_source_mismatch=args.allow_partition_source_mismatch,
+            expected_head_learning_rate=args.expected_head_learning_rate,
+            require_tied_representation_learning_rates=(
+                args.require_tied_representation_learning_rates
+            ),
         )
     except TuningMergeError as error:
         raise SystemExit(f"error: {error}") from error

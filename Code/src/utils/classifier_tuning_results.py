@@ -7,6 +7,29 @@ from typing import Any, Iterable, Mapping
 import pandas as pd
 
 
+def representation_learning_rate(
+    representation: str,
+    *,
+    encoder_learning_rate: Any,
+    esm_learning_rate: Any,
+) -> float:
+    """Return the learning rate used by a representation's trainable encoder."""
+
+    encoder_rate = float(encoder_learning_rate)
+    esm_rate = float(esm_learning_rate)
+    if representation in {"random_autoencoder", "trained_autoencoder"}:
+        rate = encoder_rate
+    elif representation == "esm2":
+        rate = esm_rate
+    elif representation == "trained_autoencoder+esm2":
+        rate = encoder_rate
+    else:
+        raise ValueError(f"Unsupported representation: {representation!r}")
+    if rate <= 0:
+        raise ValueError("Representation learning rate must be positive.")
+    return rate
+
+
 def tuning_metrics_from_history(
     history: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -60,19 +83,21 @@ def select_tuning_hyperparameters(
     if completed.empty or "best_val_f1" not in completed:
         return selected
 
+    rank_columns = [
+        "head_type",
+        "representation",
+        "best_val_f1",
+        "val_loss_at_selection",
+        "head_learning_rate" if is_end_to_end_tuning else "learning_rate",
+        *(["representation_learning_rate"] if is_end_to_end_tuning else []),
+        "weight_decay",
+        "dropout",
+        "autoencoder_embedding_dropout",
+        "esm_embedding_dropout",
+    ]
     ranked = completed.sort_values(
-        [
-            "head_type",
-            "representation",
-            "best_val_f1",
-            "val_loss_at_selection",
-            "learning_rate",
-            "weight_decay",
-            "dropout",
-            "autoencoder_embedding_dropout",
-            "esm_embedding_dropout",
-        ],
-        ascending=[True, True, False, True, True, True, True, True, True],
+        rank_columns,
+        ascending=[True, True, False, True] + [True] * (len(rank_columns) - 4),
         na_position="first",
         kind="stable",
     )
@@ -81,7 +106,6 @@ def select_tuning_hyperparameters(
     )
     for row in winners.to_dict(orient="records"):
         parameters: dict[str, Any] = {
-            "learning_rate": float(row["learning_rate"]),
             "weight_decay": float(row["weight_decay"]),
             "selection_seed": int(row["seed"]),
             "selection_epoch": int(row["selection_epoch"]),
@@ -91,12 +115,18 @@ def select_tuning_hyperparameters(
         if row["head_type"] == "mlp":
             parameters["dropout"] = float(row["dropout"])
         if is_end_to_end_tuning:
+            parameters["head_learning_rate"] = float(row["head_learning_rate"])
+            parameters["representation_learning_rate"] = float(
+                row["representation_learning_rate"]
+            )
             parameters["autoencoder_embedding_dropout"] = float(
                 row["autoencoder_embedding_dropout"]
             )
             parameters["esm_embedding_dropout"] = float(
                 row["esm_embedding_dropout"]
             )
+        else:
+            parameters["learning_rate"] = float(row["learning_rate"])
         selected.setdefault(str(row["head_type"]), {})[
             str(row["representation"])
         ] = parameters

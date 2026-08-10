@@ -25,6 +25,8 @@ def _sweep_args(results_dir: Path, *extra: str):
                     head: {
                         representation: {
                             "learning_rate": 1e-3,
+                            "head_learning_rate": 1e-3,
+                            "representation_learning_rate": 1e-5,
                             "weight_decay": 0.0,
                             **({"dropout": 0.1} if head == "mlp" else {}),
                         }
@@ -801,6 +803,12 @@ def test_default_end_to_end_sweep_has_24_uncached_trainable_configs(
     )
     assert all(config.mode == "end_to_end_sweep" for config in configs)
     assert all(config.phase == "end_to_end" for config in configs)
+    assert all(config.learning_rate == pytest.approx(1e-3) for config in configs)
+    assert all(
+        config.encoder_learning_rate == pytest.approx(1e-5)
+        and config.esm_learning_rate == pytest.approx(1e-5)
+        for config in configs
+    )
     assert all(
         config.run_dir
         == (
@@ -1059,6 +1067,69 @@ def test_sweep_uses_selected_hyperparameters_for_each_condition(
         args.learning_rate
     )
     assert by_condition[("mlp", "esm2")].dropout == pytest.approx(0.1)
+
+
+def test_end_to_end_sweep_uses_winner_specific_representation_rates(
+    tmp_path: Path,
+) -> None:
+    selected_path = tmp_path / "unfrozen_selected.json"
+    selected_path.write_text(
+        json.dumps(
+            {
+                "linear": {
+                    "trained_autoencoder": {
+                        "head_learning_rate": 1e-4,
+                        "representation_learning_rate": 1e-5,
+                        "weight_decay": 0.0,
+                        "autoencoder_embedding_dropout": 0.2,
+                        "esm_embedding_dropout": 0.0,
+                    },
+                    "trained_autoencoder+esm2": {
+                        "head_learning_rate": 1e-4,
+                        "representation_learning_rate": 1e-6,
+                        "weight_decay": 1e-4,
+                        "autoencoder_embedding_dropout": 0.0,
+                        "esm_embedding_dropout": 0.0,
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    args = train.parse_args(
+        [
+            "--end_to_end_sweep",
+            "--results_dir",
+            str(tmp_path),
+            "--representations",
+            "trained_autoencoder",
+            "trained_autoencoder+esm2",
+            "--head_types",
+            "linear",
+            "--seeds",
+            "42",
+            "--selected_hyperparameters",
+            str(selected_path),
+        ]
+    )
+
+    configs = train.build_run_configs(args, device="cpu")
+    by_representation = {config.representation: config for config in configs}
+    assert by_representation["trained_autoencoder"].learning_rate == pytest.approx(
+        1e-4
+    )
+    assert by_representation[
+        "trained_autoencoder"
+    ].encoder_learning_rate == pytest.approx(1e-5)
+    assert by_representation["trained_autoencoder"].esm_learning_rate == pytest.approx(
+        1e-5
+    )
+    assert by_representation[
+        "trained_autoencoder+esm2"
+    ].encoder_learning_rate == pytest.approx(1e-6)
+    assert by_representation[
+        "trained_autoencoder+esm2"
+    ].esm_learning_rate == pytest.approx(1e-6)
 
 
 def test_explicit_selected_hyperparameter_path_must_exist(tmp_path: Path) -> None:

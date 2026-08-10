@@ -28,6 +28,9 @@ def _write_trial(
     head_type: str = "linear",
     weight_decay: float = 0.0,
     dropout: float | None = None,
+    phase: str = "tuning",
+    encoder_learning_rate: float = 1e-3,
+    esm_learning_rate: float = 1e-5,
 ) -> Path:
     trial_name = directory_name or (
         f"trial_{head_type}_{representation}_{learning_rate:g}_"
@@ -38,8 +41,8 @@ def _write_trial(
     config = {
         "dataset": "solubility",
         "version": "9",
-        "phase": "tuning",
-        "mode": "hp_tune",
+        "phase": phase,
+        "mode": "end_to_end_hp_tune" if phase == "end_to_end_tuning" else "hp_tune",
         "representation": representation,
         "head_type": head_type,
         "seed": 42,
@@ -59,8 +62,8 @@ def _write_trial(
         "deterministic": True,
         "esm_model_name": "esm2_t6_8M_UR50D",
         "esm_max_sequence_length": 1022,
-        "encoder_learning_rate": 1e-3,
-        "esm_learning_rate": 1e-5,
+        "encoder_learning_rate": encoder_learning_rate,
+        "esm_learning_rate": esm_learning_rate,
         "max_grad_norm": 1.0,
         "git_commit": "same-commit",
         "data_sources": {
@@ -131,6 +134,53 @@ def test_merge_rebuilds_global_results_and_is_idempotent(tmp_path: Path) -> None
 
     rerun = merge_tuning_results(sources, output, expected_trials=3)
     assert rerun["num_copied_trials"] == 0
+
+
+def test_end_to_end_merge_preserves_head_and_representation_rates(
+    tmp_path: Path,
+) -> None:
+    sources = [tmp_path / f"ec2_{index}" for index in range(3)]
+    for source, representation_rate, val_f1 in zip(
+        sources,
+        (1e-4, 1e-5, 1e-6),
+        (0.70, 0.85, 0.75),
+        strict=True,
+    ):
+        _write_trial(
+            source,
+            learning_rate=1e-4,
+            encoder_learning_rate=representation_rate,
+            esm_learning_rate=representation_rate,
+            phase="end_to_end_tuning",
+            representation="trained_autoencoder+esm2",
+            val_f1=val_f1,
+        )
+
+    output = tmp_path / "merged" / "tuning"
+    merge_tuning_results(
+        sources,
+        output,
+        phase="end_to_end_tuning",
+        expected_trials=3,
+        expected_head_learning_rate=1e-4,
+        require_tied_representation_learning_rates=True,
+    )
+
+    results = pd.read_csv(output / "tuning_results.csv")
+    assert sorted(results["representation_learning_rate"].tolist()) == pytest.approx(
+        [1e-6, 1e-5, 1e-4]
+    )
+    selected = json.loads((output / "selected_hyperparameters.json").read_text())
+    winner = selected["linear"]["trained_autoencoder+esm2"]
+    assert winner["head_learning_rate"] == pytest.approx(1e-4)
+    assert winner["representation_learning_rate"] == pytest.approx(1e-5)
+    assert "learning_rate" not in winner
+    assert (
+        output
+        / "linear"
+        / "trained_autoencoder+esm2"
+        / "lr_1e-4_wd_0_rep_lr_1e-5_ae_do_0_esm_do_0_seed_42"
+    ).is_dir()
 
 
 def test_merge_rejects_conflicting_duplicate_completed_trials(tmp_path: Path) -> None:

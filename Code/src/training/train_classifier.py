@@ -78,6 +78,7 @@ from Code.src.utils.classifier_data import (
     validate_preflight,
 )
 from Code.src.utils.classifier_tuning_results import (
+    representation_learning_rate,
     select_tuning_hyperparameters,
     tuning_metrics_from_history,
 )
@@ -748,6 +749,7 @@ def _make_run_config(
     esm_embedding_dropout: float | None = None,
     epochs: int | None = None,
     early_stopping_patience: int | None = None,
+    representation_learning_rate_value: float | None = None,
 ) -> ClassifierRunConfig:
     num_classes = args.num_classes or (10 if args.dataset == "localization" else 2)
     pin_memory = args.pin_memory if args.pin_memory is not None else device == "cuda"
@@ -807,8 +809,16 @@ def _make_run_config(
         ),
         learning_rate=learning_rate,
         weight_decay=weight_decay,
-        encoder_learning_rate=args.encoder_learning_rate,
-        esm_learning_rate=args.esm_learning_rate,
+        encoder_learning_rate=(
+            args.encoder_learning_rate
+            if representation_learning_rate_value is None
+            else representation_learning_rate_value
+        ),
+        esm_learning_rate=(
+            args.esm_learning_rate
+            if representation_learning_rate_value is None
+            else representation_learning_rate_value
+        ),
         esm_model_name=args.esm_model_name,
         esm_max_sequence_length=args.esm_max_sequence_length,
         autoencoder_checkpoint=args.autoencoder_checkpoint,
@@ -913,7 +923,7 @@ def build_end_to_end_tuning_configs(
     selected = _load_selected_hyperparameters(args)
     configs: list[ClassifierRunConfig] = []
     for head_type, representation in product(heads, representations):
-        learning_rate, _, head_dropout, _, _ = _hyperparameters_for_condition(
+        learning_rate, _, head_dropout, _, _, _ = _hyperparameters_for_condition(
             selected,
             head_type=head_type,
             representation=representation,
@@ -1001,7 +1011,7 @@ def _hyperparameters_for_condition(
     *,
     head_type: str,
     representation: str,
-) -> tuple[float, float, float | None, float, float]:
+) -> tuple[float, float, float | None, float, float, float | None]:
     head_parameters = selected.get(head_type)
     if not isinstance(head_parameters, dict):
         raise ValueError(
@@ -1020,7 +1030,18 @@ def _hyperparameters_for_condition(
         )
 
     try:
-        learning_rate = float(parameters["learning_rate"])
+        raw_head_learning_rate = parameters.get("head_learning_rate")
+        if raw_head_learning_rate is None:
+            raw_head_learning_rate = parameters["learning_rate"]
+        head_learning_rate = float(raw_head_learning_rate)
+        selected_representation_learning_rate = parameters.get(
+            "representation_learning_rate"
+        )
+        selected_representation_learning_rate = (
+            None
+            if selected_representation_learning_rate is None
+            else float(selected_representation_learning_rate)
+        )
         weight_decay = float(parameters["weight_decay"])
         dropout = (
             float(parameters["dropout"]) if head_type == "mlp" else None
@@ -1033,7 +1054,7 @@ def _hyperparameters_for_condition(
         raise ValueError(
             f"Invalid selected hyperparameters for {head_type}/{representation}."
         ) from error
-    if learning_rate <= 0 or weight_decay < 0:
+    if head_learning_rate <= 0 or weight_decay < 0:
         raise ValueError(
             f"Invalid selected hyperparameters for {head_type}/{representation}."
         )
@@ -1049,12 +1070,20 @@ def _hyperparameters_for_condition(
         raise ValueError(
             f"Invalid ESM embedding dropout for {head_type}/{representation}."
         )
+    if (
+        selected_representation_learning_rate is not None
+        and selected_representation_learning_rate <= 0
+    ):
+        raise ValueError(
+            f"Invalid representation learning rate for {head_type}/{representation}."
+        )
     return (
-        learning_rate,
+        head_learning_rate,
         weight_decay,
         dropout,
         autoencoder_embedding_dropout,
         esm_embedding_dropout,
+        selected_representation_learning_rate,
     )
 
 
@@ -1094,17 +1123,24 @@ def build_run_configs(
                 dropout,
                 autoencoder_embedding_dropout,
                 esm_embedding_dropout,
+                selected_representation_learning_rate,
             ) = _hyperparameters_for_condition(
                 selected,
                 head_type=head_type,
                 representation=representation,
             )
+            if args.end_to_end_sweep and selected_representation_learning_rate is None:
+                raise ValueError(
+                    "Unfrozen selected hyperparameters are missing "
+                    f"representation_learning_rate for {head_type}/{representation}."
+                )
         else:
             learning_rate = args.learning_rate
             weight_decay = args.weight_decay
             dropout = 0.1 if head_type == "mlp" else None
             autoencoder_embedding_dropout = args.autoencoder_embedding_dropout
             esm_embedding_dropout = args.esm_embedding_dropout
+            selected_representation_learning_rate = None
         configs.append(
             _make_run_config(
                 args,
@@ -1120,6 +1156,11 @@ def build_run_configs(
                 phase=phase,
                 autoencoder_embedding_dropout=autoencoder_embedding_dropout,
                 esm_embedding_dropout=esm_embedding_dropout,
+                representation_learning_rate_value=(
+                    selected_representation_learning_rate
+                    if args.end_to_end_sweep
+                    else None
+                ),
             )
         )
     return configs
@@ -1287,6 +1328,18 @@ def _row_from_metrics(
         "seed": config.seed,
         "phase": config.phase,
         "learning_rate": config.learning_rate,
+        "head_learning_rate": config.learning_rate,
+        "representation_learning_rate": (
+            representation_learning_rate(
+                config.representation,
+                encoder_learning_rate=config.encoder_learning_rate,
+                esm_learning_rate=config.esm_learning_rate,
+            )
+            if config.phase in {"end_to_end_tuning", "end_to_end"}
+            else None
+        ),
+        "encoder_learning_rate": config.encoder_learning_rate,
+        "esm_learning_rate": config.esm_learning_rate,
         "weight_decay": config.weight_decay,
         "dropout": config.dropout,
         "autoencoder_embedding_dropout": config.autoencoder_embedding_dropout,

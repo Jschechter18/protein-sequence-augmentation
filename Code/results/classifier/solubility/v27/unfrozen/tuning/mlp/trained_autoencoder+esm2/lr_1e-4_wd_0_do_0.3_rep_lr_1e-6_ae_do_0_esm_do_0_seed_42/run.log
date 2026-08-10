@@ -1,0 +1,19 @@
+2026-08-07 17:08:52,341 INFO Code.src.training.classification_pipeline: Unfreezing the autoencoder encoding path.
+2026-08-07 17:08:52,342 INFO Code.src.training.classification_pipeline: Unfreezing the complete ESM-2 encoder.
+2026-08-07 17:08:52,343 INFO Code.src.training.classification_pipeline: Epoch 1/10
+2026-08-07 17:35:18,249 INFO Code.src.training.classification_pipeline: Epoch 1: train loss 0.5743, val loss 0.5263, val accuracy 0.7272
+2026-08-07 17:35:18,249 INFO Code.src.training.classification_pipeline: Epoch 2/10
+2026-08-07 18:01:36,465 INFO Code.src.training.classification_pipeline: Epoch 2: train loss 0.5065, val loss 0.5015, val accuracy 0.7440
+2026-08-07 18:01:36,466 INFO Code.src.training.classification_pipeline: Epoch 3/10
+2026-08-07 18:27:55,033 INFO Code.src.training.classification_pipeline: Epoch 3: train loss 0.4774, val loss 0.4946, val accuracy 0.7463
+2026-08-07 18:27:55,033 INFO Code.src.training.classification_pipeline: Epoch 4/10
+2026-08-07 18:54:15,541 INFO Code.src.training.classification_pipeline: Epoch 4: train loss 0.4564, val loss 0.4911, val accuracy 0.7567
+2026-08-07 18:54:15,541 INFO Code.src.training.classification_pipeline: Epoch 5/10
+2026-08-07 19:20:33,190 INFO Code.src.training.classification_pipeline: Epoch 5: train loss 0.4388, val loss 0.4879, val accuracy 0.7573
+2026-08-07 19:20:33,190 INFO Code.src.training.classification_pipeline: Epoch 6/10
+2026-08-07 19:46:49,002 INFO Code.src.training.classification_pipeline: Epoch 6: train loss 0.4212, val loss 0.4912, val accuracy 0.7561
+2026-08-07 19:46:49,002 INFO Code.src.training.classification_pipeline: Epoch 7/10
+2026-08-07 20:13:09,485 INFO Code.src.training.classification_pipeline: Epoch 7: train loss 0.4051, val loss 0.4920, val accuracy 0.7564
+2026-08-07 20:13:09,485 INFO Code.src.training.classification_pipeline: Epoch 8/10
+2026-08-07 20:39:25,739 INFO Code.src.training.classification_pipeline: Epoch 8: train loss 0.3871, val loss 0.5031, val accuracy 0.7579
+2026-08-07 20:39:25,739 INFO Code.src.training.classification_pipeline: Early stopping at epoch 8.
