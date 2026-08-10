@@ -6,8 +6,11 @@
       "weight_decay": 0.0
     },
     "random_autoencoder": {
-      "learning_rate": 0.001,
-      "selection_source": "hardcoded_reuse",
+      "best_val_f1": 0.3070539419087137,
+      "learning_rate": 0.0001,
+      "selection_epoch": 29,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.6554606465879829,
       "weight_decay": 0.0
     },
     "trained_autoencoder": {
@@ -35,10 +38,13 @@
       "weight_decay": 0.0
     },
     "random_autoencoder": {
+      "best_val_f1": 0.518232044198895,
       "dropout": 0.1,
-      "learning_rate": 0.001,
-      "selection_source": "hardcoded_reuse",
-      "weight_decay": 0.0
+      "learning_rate": 0.0001,
+      "selection_epoch": 16,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.6496691432991072,
+      "weight_decay": 0.0001
     },
     "trained_autoencoder": {
       "best_val_f1": 0.655821047280122,

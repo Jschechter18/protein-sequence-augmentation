@@ -349,7 +349,7 @@ def _provenance(
             },
             # "package_versions": runtime.get("packages", {}),    
             # "python_version": runtime.get("python"),
-            "platform": runtime.get("platform"),
+            # "platform": runtime.get("platform"),
             "torch_cuda_version": runtime.get("torch_cuda_version"),
         }
     )
