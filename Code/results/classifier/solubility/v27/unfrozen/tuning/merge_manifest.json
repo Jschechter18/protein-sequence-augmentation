@@ -1,5 +1,5 @@
 {
-  "created_at": "2026-08-10T20:06:44.830629+00:00",
+  "created_at": "2026-08-10T20:19:58.087631+00:00",
   "dataset": "solubility",
   "expected_full_frozen_grid": false,
   "expected_head_learning_rate": 0.0001,
@@ -10,7 +10,7 @@
     "/Users/josh/GWU/research/collected/classifier-v27-unfrozen-refresh/ec2-3"
   ],
   "num_attempts": 96,
-  "num_copied_trials": 94,
+  "num_copied_trials": 0,
   "num_filtered_attempts": 48,
   "num_unique_trials": 96,
   "partition_source_audit": {
