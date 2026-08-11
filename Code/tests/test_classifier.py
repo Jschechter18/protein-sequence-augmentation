@@ -16,6 +16,9 @@ from Code.src.models.classifier import (
     RandomAutoencoderEncoder,
     TrainedAutoencoderEncoder,
 )
+from Code.src.training.classification_pipeline import (
+    ProteinClassificationTrainingPipeline,
+)
 
 
 class FakeESMAlphabet:
@@ -43,11 +46,14 @@ class FakeESMAlphabet:
 class FakeESMModel(nn.Module):
     def __init__(self):
         super().__init__()
-        self.anchor = nn.Parameter(torch.zeros(1))
+        self.anchor = nn.Parameter(torch.zeros(320))
 
     def forward(self, batch_tokens, repr_layers, return_contacts):
         del return_contacts
-        embeddings = batch_tokens.to(torch.float32).unsqueeze(-1).expand(-1, -1, 320)
+        embeddings = (
+            batch_tokens.to(torch.float32).unsqueeze(-1).expand(-1, -1, 320)
+            + self.anchor.view(1, 1, -1)
+        )
         return {"representations": {repr_layers[0]: embeddings}}
 
 
@@ -96,6 +102,17 @@ def autoencoder_checkpoint(tmp_path):
 
 
 @pytest.fixture
+def lstm_autoencoder_checkpoint(tmp_path):
+    kwargs = {
+        key: value for key, value in autoencoder_kwargs().items() if key != "device"
+    }
+    model = ProteinSequenceAutoencoder(**kwargs, layer_type="lstm")
+    checkpoint = tmp_path / "v27_autoencoder.pt"
+    torch.save({"model_state_dict": model.state_dict()}, checkpoint)
+    return checkpoint
+
+
+@pytest.fixture
 def fake_esm(monkeypatch):
     alphabet = FakeESMAlphabet()
     monkeypatch.setattr(
@@ -108,6 +125,32 @@ def fake_esm(monkeypatch):
         ),
     )
     return alphabet
+
+
+def _classification_batch() -> dict:
+    return {
+        "input_ids": torch.tensor([[4, 5, 6], [7, 8, 0]]),
+        "length": torch.tensor([3, 2]),
+        "sequence": ["ACD", "EF"],
+        "label": torch.tensor([0, 1]),
+    }
+
+
+def _has_nonzero_finite_gradient(parameters) -> bool:
+    gradients = [
+        parameter.grad for parameter in parameters if parameter.grad is not None
+    ]
+    return bool(gradients) and all(
+        torch.isfinite(gradient).all().item() for gradient in gradients
+    ) and any(gradient.abs().sum().item() > 0 for gradient in gradients)
+
+
+def _backward_once(pipeline: ProteinClassificationTrainingPipeline) -> None:
+    pipeline.model.train()
+    batch = _classification_batch()
+    pipeline.optimizer.zero_grad(set_to_none=True)
+    loss = nn.functional.cross_entropy(pipeline.model(batch), batch["label"])
+    loss.backward()
 
 
 def test_random_autoencoder_is_frozen_and_stays_in_eval_mode():
@@ -128,6 +171,100 @@ def test_frozen_trained_autoencoder_stays_in_eval_mode(tmp_path):
     assert all(not parameter.requires_grad for parameter in encoder.parameters())
     encoder.train()
     assert not encoder.autoencoder.training
+
+
+def test_frozen_lstm_autoencoder_backpropagates_only_through_head(
+    tmp_path,
+    lstm_autoencoder_checkpoint,
+):
+    model = ProteinSequenceClassifier(
+        embedding_type="trained_autoencoder",
+        autoencoder_checkpoint=str(lstm_autoencoder_checkpoint),
+        autoencoder_layer_type="lstm",
+        **classifier_autoencoder_kwargs(),
+    )
+    pipeline = ProteinClassificationTrainingPipeline(model, tmp_path)
+
+    _backward_once(pipeline)
+
+    encoder = model.embedded_representation
+    encoder_parameters = list(encoder.encoder_parameters())
+    optimized_ids = {
+        id(parameter)
+        for group in pipeline.optimizer.param_groups
+        for parameter in group["params"]
+    }
+    assert _has_nonzero_finite_gradient(model.head.parameters())
+    assert all(parameter.grad is None for parameter in encoder_parameters)
+    assert all(not parameter.requires_grad for parameter in encoder_parameters)
+    assert optimized_ids.isdisjoint(id(parameter) for parameter in encoder_parameters)
+    assert not encoder.autoencoder.training
+
+
+@pytest.mark.parametrize(
+    "embedding_type",
+    [
+        "random_autoencoder",
+        "trained_autoencoder",
+        "esm2",
+        "trained_autoencoder+esm2",
+    ],
+)
+def test_trainable_encoders_receive_backward_gradients(
+    tmp_path,
+    fake_esm,
+    lstm_autoencoder_checkpoint,
+    embedding_type,
+):
+    del fake_esm
+    uses_autoencoder = "autoencoder" in embedding_type
+    uses_esm2 = "esm2" in embedding_type
+    model = ProteinSequenceClassifier(
+        embedding_type=embedding_type,
+        autoencoder_checkpoint=str(lstm_autoencoder_checkpoint),
+        autoencoder_layer_type="lstm",
+        freeze_autoencoder=not uses_autoencoder,
+        freeze_esm2=not uses_esm2,
+        **classifier_autoencoder_kwargs(),
+    )
+    pipeline = ProteinClassificationTrainingPipeline(
+        model,
+        tmp_path / embedding_type,
+        freeze_autoencoder=not uses_autoencoder,
+        freeze_esm2=not uses_esm2,
+    )
+
+    _backward_once(pipeline)
+
+    assert _has_nonzero_finite_gradient(model.head.parameters())
+    optimized_ids = {
+        id(parameter)
+        for group in pipeline.optimizer.param_groups
+        for parameter in group["params"]
+    }
+    assert optimized_ids == {
+        id(parameter) for parameter in model.parameters() if parameter.requires_grad
+    }
+    representation = model.embedded_representation
+    if embedding_type in {"random_autoencoder", "trained_autoencoder"}:
+        assert _has_nonzero_finite_gradient(representation.encoder_parameters())
+        assert representation.autoencoder.training
+        assert all(
+            not parameter.requires_grad
+            for parameter in representation.autoencoder.decoder.parameters()
+        )
+    elif embedding_type == "esm2":
+        assert _has_nonzero_finite_gradient(representation.model.parameters())
+        assert representation.model.training
+    else:
+        assert _has_nonzero_finite_gradient(
+            representation.autoencoder_encoder.encoder_parameters()
+        )
+        assert _has_nonzero_finite_gradient(
+            representation.esm_encoder.model.parameters()
+        )
+        assert representation.autoencoder_encoder.autoencoder.training
+        assert representation.esm_encoder.model.training
 
 
 def test_frozen_esm_stays_in_eval_mode(monkeypatch):
@@ -169,6 +306,30 @@ def test_mlp_head_rejects_invalid_dropout(dropout: float) -> None:
         MLPHead(embedding_dim=16, dropout=dropout)
 
 
+def test_classifier_configures_representation_specific_dropout() -> None:
+    classifier = ProteinSequenceClassifier(
+        embedding_type="random_autoencoder",
+        autoencoder_embedding_dim=4,
+        autoencoder_cnn_channels=4,
+        autoencoder_hidden_dim=8,
+        autoencoder_latent_dim=3,
+        autoencoder_embedding_dropout=0.2,
+        esm_embedding_dropout=0.1,
+    )
+
+    assert classifier.autoencoder_embedding_dropout.p == pytest.approx(0.2)
+    assert classifier.esm_embedding_dropout.p == pytest.approx(0.1)
+
+
+@pytest.mark.parametrize("dropout", [-0.1, 1.0])
+def test_classifier_rejects_invalid_embedding_dropout(dropout: float) -> None:
+    with pytest.raises(ValueError, match="embedding_dropout"):
+        ProteinSequenceClassifier(
+            embedding_type="random_autoencoder",
+            autoencoder_embedding_dropout=dropout,
+        )
+
+
 def test_cached_embedding_classifier_trains_only_its_head() -> None:
     classifier = CachedEmbeddingClassifier(
         embedding_type="esm2",
@@ -183,6 +344,23 @@ def test_cached_embedding_classifier_trains_only_its_head() -> None:
     assert logits.shape == (4, 2)
     assert list(classifier.embedded_representation.parameters()) == []
     assert all(parameter.requires_grad for parameter in classifier.head.parameters())
+
+
+def test_cached_combined_classifier_preserves_frozen_training_path(tmp_path) -> None:
+    classifier = CachedEmbeddingClassifier(
+        embedding_type="trained_autoencoder+esm2",
+        embedding_dim=8,
+        device="cpu",
+    )
+
+    pipeline = ProteinClassificationTrainingPipeline(classifier, tmp_path)
+
+    optimized_ids = {
+        id(parameter)
+        for group in pipeline.optimizer.param_groups
+        for parameter in group["params"]
+    }
+    assert optimized_ids == {id(parameter) for parameter in classifier.head.parameters()}
 
 
 def test_classifier_rejects_cnn_head_for_sequence_level_encoders():

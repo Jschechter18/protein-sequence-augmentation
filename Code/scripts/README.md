@@ -95,6 +95,167 @@ Output:
 
 - `history.json` written into each processed run directory.
 
+## `merge_classifier_tuning.py`
+
+Combines classifier hyperparameter trials run on separate machines, copies the
+unique trial artifacts into one canonical tuning tree, and rebuilds the global
+`tuning_results.csv` and `selected_hyperparameters.json` from validation
+histories. It deliberately ignores the partial summary files produced on each
+machine.
+
+Partition the full frozen tuning grid by learning rate while keeping the same
+commit on all three EC2 instances:
+
+```bash
+# EC2 instance 1
+python -m Code.src.training.train_classifier \
+  --hp_tune --version 4 --tuning_learning_rates 1e-4
+
+# EC2 instance 2
+python -m Code.src.training.train_classifier \
+  --hp_tune --version 4 --tuning_learning_rates 1e-5
+
+# EC2 instance 3
+python -m Code.src.training.train_classifier \
+  --hp_tune --version 4 --tuning_learning_rates 1e-6
+```
+
+Each one-rate instance runs 24 trials; the merged full grid has 72 trials. Use
+the same dataset files, autoencoder checkpoint, environment, and Git commit on
+all instances.
+
+To run both frozen and unfrozen tuning in one invocation, add
+`--include_unfrozen_tuning`:
+
+```bash
+python -m Code.src.training.train_classifier \
+  --hp_tune \
+  --include_unfrozen_tuning \
+  --version v5 \
+  --tuning_learning_rates 1e-4 \
+  --autoencoder_checkpoint checkpoints/autoencoder/solubility/v5/model_ae_solubility.pt \
+  --autoencoder_version v5
+```
+
+The combined command requires exactly one assigned tuning learning rate. It
+runs 24 frozen trials first, writes the local frozen winners, and then runs 40
+trainable-encoder trials using that assigned head learning rate. It deliberately
+does not start either final seeded sweep; merge all three EC2 tuning outputs
+first.
+
+Classifier experiment stages use a symmetric layout:
+
+```text
+Code/results/classifier/solubility/v5/
+├── frozen/
+│   ├── tuning/
+│   └── final/
+└── unfrozen/
+    ├── tuning/
+    └── final/
+```
+
+Collect each result tree into a separate local staging directory. Preserve the
+trailing slash on the remote tuning directory:
+
+```bash
+mkdir -p collected/classifier-v4/ec2-1 \
+  collected/classifier-v4/ec2-2 \
+  collected/classifier-v4/ec2-3
+
+rsync -az ubuntu@ec2-1:/path/to/repo/Code/results/classifier/solubility/v4/frozen/tuning/ \
+  collected/classifier-v4/ec2-1/
+rsync -az ubuntu@ec2-2:/path/to/repo/Code/results/classifier/solubility/v4/frozen/tuning/ \
+  collected/classifier-v4/ec2-2/
+rsync -az ubuntu@ec2-3:/path/to/repo/Code/results/classifier/solubility/v4/frozen/tuning/ \
+  collected/classifier-v4/ec2-3/
+```
+
+Then merge and require full coverage:
+
+```bash
+python Code/scripts/merge_classifier_tuning.py \
+  --input_dir collected/classifier-v4/ec2-1 \
+  --input_dir collected/classifier-v4/ec2-2 \
+  --input_dir collected/classifier-v4/ec2-3 \
+  --output_dir Code/results/classifier/solubility/v4/frozen/tuning \
+  --expect_full_grid
+```
+
+Collect each remote `v4/unfrozen/tuning/` directory into separate
+`collected/classifier-v4-unfrozen/ec2-*` folders, then merge the unfrozen grids
+separately. Across three one-rate EC2 instances there are 120 end-to-end tuning
+trials:
+
+```bash
+python Code/scripts/merge_classifier_tuning.py \
+  --phase end_to_end_tuning \
+  --input_dir collected/classifier-v4-unfrozen/ec2-1 \
+  --input_dir collected/classifier-v4-unfrozen/ec2-2 \
+  --input_dir collected/classifier-v4-unfrozen/ec2-3 \
+  --output_dir Code/results/classifier/solubility/v4/unfrozen/tuning \
+  --expected_trials 120
+```
+
+To merge a subset of representations, repeat `--representation`. Filtering is
+applied before version and provenance checks, so intentionally reused trials
+for an excluded representation do not affect the merge. If otherwise
+compatible partitions were run with different recorded CUDA versions, the
+runtime exception must be explicitly enabled and is recorded in the manifest:
+
+```bash
+python Code/scripts/merge_classifier_tuning.py \
+  --phase end_to_end_tuning \
+  --input_dir /path/to/encoder_lr_1e-4/unfrozen/tuning \
+  --input_dir /path/to/encoder_lr_1e-5/unfrozen/tuning \
+  --input_dir /path/to/encoder_lr_1e-6/unfrozen/tuning \
+  --output_dir Code/results/classifier/solubility/v5/unfrozen/tuning \
+  --representation esm2 \
+  --representation trained_autoencoder \
+  --representation trained_autoencoder+esm2 \
+  --expected_trials 96 \
+  --expected_head_learning_rate 1e-4 \
+  --require_tied_representation_learning_rates \
+  --allow_partition_source_mismatch \
+  --allow_partition_runtime_mismatch \
+  --allow_incomplete
+```
+
+The runtime override ignores only `torch_cuda_version`; data, checkpoint, and
+other provenance mismatches still fail. Add `--allow_incomplete` only when a
+partial winner file is intentional and the failed trials have been audited.
+
+Start the final three-seed sweep from the merged winner file:
+
+```bash
+python -m Code.src.training.train_classifier --sweep --version 4
+```
+
+Outputs:
+
+- Canonical trial directories under `<head>/<representation>/<trial>/`
+- `tuning_results.csv` rebuilt from every trial's `status.json` and `history.csv`
+- `selected_hyperparameters.json` ready for the final seeded sweep
+- `merge_manifest.json` recording inputs, counts, statuses, and provenance hashes
+
+With `--expect_full_grid`, the merge checks every expected representation, head,
+learning rate, weight decay, dropout, and seed—not just the total of 72. The
+merge also fails before publishing results if any discovered trial is not
+complete, duplicate completed trials disagree, or code/data/environment
+provenance differs. Archived `.backup_*` trials are ignored. Tuning checkpoints
+are stored in a separate checkpoint tree and are not needed to choose
+hyperparameters; transfer them separately only if they must be archived or
+resumed.
+
+If jobs were already partitioned by manually editing `TUNING_LEARNING_RATES`,
+the three saved source hashes will differ. Compare those source files first. If
+the only difference is the assigned search-rate constant, rerun the merge with
+`--allow_partition_source_mismatch`. This narrow exception still requires the
+data, checkpoints, environment, and all other fingerprinted source files to
+match; the distinct driver hashes and commits remain recorded in
+`merge_manifest.json`. New runs should use the CLI partition shown above so this
+exception is unnecessary.
+
 ## `download_checkpoints.sh`
 
 Downloads any saved checkpoints to local repository.

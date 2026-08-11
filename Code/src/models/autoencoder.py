@@ -10,7 +10,7 @@ import warnings
 class ProteinSequenceAutoencoder(nn.Module):
     """Autoencoder for integer-encoded protein sequences.
 
-    Supports the existing CNN+GRU encoder/GRU decoder path and a transformer encoder/decoder path.
+    Supports CNN+GRU, CNN+LSTM, and transformer encoder/decoder paths.
     The model consumes batches shaped ``(batch, sequence_length)`` and returns reconstruction logits shaped ``(batch, sequence_length, vocab_size)``.
     """
 
@@ -48,7 +48,7 @@ class ProteinSequenceAutoencoder(nn.Module):
         embedding_dim : int, optional
             Dimension of the token embeddings, by default 128
         hidden_dim : int, optional
-            Number of hidden units in the GRU layers, by default 256
+            Number of hidden units in the recurrent layers, by default 256
         latent_dim : int, optional
             Number of dimensions in compressed latent space, by default 128
         num_layers : int, optional
@@ -70,8 +70,8 @@ class ProteinSequenceAutoencoder(nn.Module):
             _description_
         """
         super().__init__()
-        if layer_type not in {"gru", "transformer"}:
-            raise ValueError("layer_type must be 'gru' or 'transformer'")
+        if layer_type not in {"gru", "lstm", "transformer"}:
+            raise ValueError("layer_type must be 'gru', 'lstm', or 'transformer'")
         if num_layers < 1:
             raise ValueError("num_layers must be at least 1")
         if not 0.0 <= teacher_forcing_dropout_rate <= 1.0:
@@ -86,8 +86,8 @@ class ProteinSequenceAutoencoder(nn.Module):
             warnings.warn("latent_dim should ideally be smaller than hidden_dim for effective compression", UserWarning)
         
         self.layer_type = layer_type
-        self.bidirectional = bidirectional # meaningful in gru only
-        self.encoder_num_directions = 2 if self.bidirectional else 1 # meaningful in gru only
+        self.bidirectional = bidirectional # meaningful in recurrent models only
+        self.encoder_num_directions = 2 if self.bidirectional else 1 # meaningful in recurrent models only
         # self.grad_clip = grad_clip # meaningful in gru only
 
         rnn_dropout = dropout if num_layers > 1 else 0.0
@@ -173,7 +173,8 @@ class ProteinSequenceAutoencoder(nn.Module):
                 )
             
             
-            self.encoder = nn.GRU(
+            recurrent_layer = nn.GRU if self.layer_type == "gru" else nn.LSTM
+            self.encoder = recurrent_layer(
                 self.cnn_out_channels, # self.embedding_dim is no longer output
                 self.hidden_dim,
                 num_layers=self.num_layers,
@@ -191,7 +192,7 @@ class ProteinSequenceAutoencoder(nn.Module):
             if self.condition_decoder_on_latent:
                 decoder_input_dim += self.latent_dim
 
-            self.decoder = nn.GRU(
+            self.decoder = recurrent_layer(
                 decoder_input_dim,
                 self.hidden_dim,
                 num_layers=self.num_layers,
@@ -301,7 +302,10 @@ class ProteinSequenceAutoencoder(nn.Module):
         clipped_lengths = lengths.to(input_ids.device).clamp(min=1, max=max_len)
         return torch.arange(max_len, device=input_ids.device).unsqueeze(0) >= clipped_lengths.unsqueeze(1)
 
-    def _initial_decoder_hidden(self, latent: torch.Tensor) -> torch.Tensor:
+    def _initial_decoder_hidden(
+        self,
+        latent: torch.Tensor,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         """Initialize the hidden state of the decoder from the latent vector.
 
         Parameters
@@ -316,7 +320,10 @@ class ProteinSequenceAutoencoder(nn.Module):
         """
         hidden: torch.Tensor = self.from_latent(latent)
         hidden = hidden.view(latent.size(0), self.num_layers, self.hidden_dim)
-        return hidden.transpose(0, 1).contiguous()
+        hidden = hidden.transpose(0, 1).contiguous()
+        if self.layer_type == "lstm":
+            return hidden, torch.zeros_like(hidden)
+        return hidden
 
     def _apply_teacher_forcing_token_dropout(
         self,
@@ -547,10 +554,13 @@ class ProteinSequenceAutoencoder(nn.Module):
         self,
         latent: torch.Tensor,
         decoder_input_ids: torch.Tensor,
-        hidden: torch.Tensor,
+        hidden: torch.Tensor | tuple[torch.Tensor, torch.Tensor],
         position_offset: int,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Run one GRU autoregressive decoding step."""
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor | tuple[torch.Tensor, torch.Tensor],
+    ]:
+        """Run one recurrent autoregressive decoding step."""
         decoder_inputs = self._decoder_inputs(
             decoder_input_ids,
             latent,

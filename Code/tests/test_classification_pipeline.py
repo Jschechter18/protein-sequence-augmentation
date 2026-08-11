@@ -53,6 +53,57 @@ class ScalarClassifier(nn.Module):
         return self.head(batch["features"])
 
 
+class TinyAutoencoderComponent(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.encoder = nn.Linear(2, 3)
+        self.decoder = nn.Linear(3, 2)
+        self.is_frozen = True
+
+    def encoder_parameters(self):
+        return self.encoder.parameters()
+
+    def forward(self, features):
+        return self.encoder(features)
+
+
+class TinyCombinedClassifier(nn.Module):
+    embedding_type = "trained_autoencoder+esm2"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.embedded_representation = nn.Module()
+        self.embedded_representation.autoencoder_encoder = TinyAutoencoderComponent()
+        self.embedded_representation.esm_encoder = nn.Linear(2, 4)
+        self.embedded_representation.autoencoder_encoder.is_frozen = True
+        self.embedded_representation.esm_encoder.is_frozen = True
+        for parameter in self.embedded_representation.parameters():
+            parameter.requires_grad = False
+        self.head = nn.Linear(7, 2)
+
+    def forward(self, batch):
+        autoencoder = self.embedded_representation.autoencoder_encoder(batch["features"])
+        esm = self.embedded_representation.esm_encoder(batch["features"])
+        return self.head(torch.cat((autoencoder, esm), dim=1))
+
+
+class TinySingleEncoderClassifier(nn.Module):
+    def __init__(self, embedding_type: str) -> None:
+        super().__init__()
+        self.embedding_type = embedding_type
+        if embedding_type == "esm2":
+            self.embedded_representation = nn.Linear(2, 3)
+            self.embedded_representation.is_frozen = True
+        else:
+            self.embedded_representation = TinyAutoencoderComponent()
+        for parameter in self.embedded_representation.parameters():
+            parameter.requires_grad = False
+        self.head = nn.Linear(3, 2)
+
+    def forward(self, batch):
+        return self.head(self.embedded_representation(batch["features"]))
+
+
 def make_logit_loader(labels=(0, 1, 1), batch_size=2):
     logits = ([3.0, 0.0], [0.0, 2.0], [2.0, 1.0])[: len(labels)]
     records = [
@@ -125,6 +176,45 @@ def test_fractional_classification_labels_are_rejected(tmp_path):
         pipeline.validate(loader)
 
 
+def test_nonfinite_logits_fail_on_the_offending_batch(tmp_path):
+    records = [
+        {"logits": torch.tensor([1.0, 0.0]), "label": 0},
+        {"logits": torch.tensor([float("nan"), 1.0]), "label": 1},
+    ]
+    loader = DataLoader(records, batch_size=1, shuffle=False)
+    pipeline = ProteinClassificationTrainingPipeline(BatchLogitModel(), tmp_path)
+
+    with pytest.raises(
+        FloatingPointError,
+        match=r"Non-finite classifier logits in validation batch 2: 1 NaN",
+    ):
+        pipeline.validate(loader)
+
+
+def test_calculate_metrics_rejects_nonfinite_probabilities(tmp_path):
+    pipeline = ProteinClassificationTrainingPipeline(BatchLogitModel(), tmp_path)
+
+    with pytest.raises(FloatingPointError, match="Probability array"):
+        pipeline._calculate_metrics(
+            np.array([0, 1]),
+            np.array([0, 1]),
+            np.array([[0.8, 0.2], [float("nan"), float("nan")]]),
+            loss=0.1,
+        )
+
+
+def test_nonfinite_gradients_fail_before_optimizer_step(tmp_path):
+    model = BatchLogitModel()
+    model.offset.register_hook(lambda gradient: torch.full_like(gradient, float("nan")))
+    pipeline = ProteinClassificationTrainingPipeline(model, tmp_path)
+
+    with pytest.raises(
+        FloatingPointError,
+        match=r"Non-finite gradient norm in training batch 1",
+    ):
+        pipeline.train_epoch(make_logit_loader(batch_size=2))
+
+
 def test_optimizer_contains_only_trainable_parameters(tmp_path):
     model = TinyClassifier()
     pipeline = ProteinClassificationTrainingPipeline(
@@ -150,6 +240,69 @@ def test_optimizer_contains_only_trainable_parameters(tmp_path):
     assert optimized_ids == expected_ids
     assert optimized_ids.isdisjoint(frozen_ids)
     assert all(group["weight_decay"] == pytest.approx(0.01) for group in pipeline.optimizer.param_groups)
+
+
+def test_end_to_end_unfreezes_both_encoders_with_separate_learning_rates(tmp_path):
+    model = TinyCombinedClassifier()
+    pipeline = ProteinClassificationTrainingPipeline(
+        model,
+        tmp_path,
+        learning_rate=1e-3,
+        encoder_learning_rate=2e-4,
+        esm_learning_rate=3e-5,
+        end_to_end=True,
+    )
+
+    autoencoder = model.embedded_representation.autoencoder_encoder
+    esm = model.embedded_representation.esm_encoder
+    assert all(parameter.requires_grad for parameter in autoencoder.encoder.parameters())
+    assert all(not parameter.requires_grad for parameter in autoencoder.decoder.parameters())
+    assert all(parameter.requires_grad for parameter in esm.parameters())
+    assert autoencoder.is_frozen is False
+    assert esm.is_frozen is False
+    group_lrs = {
+        frozenset(id(parameter) for parameter in group["params"]): group["lr"]
+        for group in pipeline.optimizer.param_groups
+    }
+    assert group_lrs[frozenset(id(p) for p in model.head.parameters())] == pytest.approx(1e-3)
+    assert group_lrs[frozenset(id(p) for p in autoencoder.encoder.parameters())] == pytest.approx(2e-4)
+    assert group_lrs[frozenset(id(p) for p in esm.parameters())] == pytest.approx(3e-5)
+    assert pipeline.config["end_to_end"] is True
+
+
+@pytest.mark.parametrize(
+    ("embedding_type", "encoder_lr"),
+    [
+        ("random_autoencoder", 2e-4),
+        ("trained_autoencoder", 2e-4),
+        ("esm2", 3e-5),
+    ],
+)
+def test_end_to_end_unfreezes_each_standalone_encoder(
+    tmp_path, embedding_type, encoder_lr
+):
+    model = TinySingleEncoderClassifier(embedding_type)
+    pipeline = ProteinClassificationTrainingPipeline(
+        model,
+        tmp_path / embedding_type,
+        encoder_learning_rate=2e-4,
+        esm_learning_rate=3e-5,
+        end_to_end=True,
+    )
+
+    trainable_encoder_ids = {
+        id(parameter)
+        for parameter in model.embedded_representation.parameters()
+        if parameter.requires_grad
+    }
+    optimized_group = next(
+        group
+        for group in pipeline.optimizer.param_groups
+        if trainable_encoder_ids
+        == {id(parameter) for parameter in group["params"]}
+    )
+    assert optimized_group["lr"] == pytest.approx(encoder_lr)
+    assert model.embedded_representation.is_frozen is False
 
 
 def test_one_epoch_training_writes_complete_recoverable_artifacts(tmp_path):

@@ -70,6 +70,19 @@ SELECTED_MODELS = (
         history_path=RESULTS_ROOT / "v23" / "v23_model_ae_length_3_of_3_solubility_history.json",
         checkpoint_path="checkpoints/autoencoder/solubility/v23/model_ae_length_3_of_3_solubility.pt",
     ),
+    SelectedModel(
+    display_name="Final AE",
+    version="v27",
+    distinguishing_feature="Final 512-dimensional latent model",
+    training_data="Full dataset (length bins 1-3 of 3)",
+    history_path=RESULTS_ROOT
+    / "v27"
+    / "v27_model_ae_length_3_of_3_solubility_history.json",
+    checkpoint_path=(
+        "checkpoints/autoencoder/solubility/v27/"
+        "model_ae_length_3_of_3_solubility.pt"
+    ),
+),
 )
 
 
