@@ -1,5 +1,15 @@
 {
   "linear": {
+    "esm2": {
+      "autoencoder_embedding_dropout": 0.0,
+      "best_val_f1": 0.7193318253001566,
+      "esm_embedding_dropout": 0.0,
+      "learning_rate": 0.0001,
+      "selection_epoch": 8,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.47970293366541544,
+      "weight_decay": 0.0
+    },
     "trained_autoencoder": {
       "autoencoder_embedding_dropout": 0.0,
       "best_val_f1": 0.6498120942944995,
@@ -22,6 +32,17 @@
     }
   },
   "mlp": {
+    "esm2": {
+      "autoencoder_embedding_dropout": 0.0,
+      "best_val_f1": 0.7203952973249276,
+      "dropout": 0.1,
+      "esm_embedding_dropout": 0.1,
+      "learning_rate": 0.0001,
+      "selection_epoch": 8,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.47707966195853563,
+      "weight_decay": 0.0001
+    },
     "trained_autoencoder": {
       "autoencoder_embedding_dropout": 0.0,
       "best_val_f1": 0.6795774647887324,
