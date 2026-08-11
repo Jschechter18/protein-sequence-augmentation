@@ -315,7 +315,10 @@ def _discover_source(
 
 
 def _provenance(
-    config: dict[str, Any], *, ignore_partition_driver: bool = False
+    config: dict[str, Any],
+    *,
+    ignore_partition_driver: bool = False,
+    ignore_partition_runtime: bool = False,
 ) -> dict[str, Any]:
     data_sources = {
         split: {
@@ -366,6 +369,8 @@ def _provenance(
             "torch_cuda_version": runtime.get("torch_cuda_version"),
         }
     )
+    if ignore_partition_runtime:
+        result.pop("torch_cuda_version", None)
     return result
 
 
@@ -375,13 +380,17 @@ def _json_digest(payload: Any) -> str:
 
 
 def _validate_provenance(
-    candidates: list[TrialCandidate], *, allow_partition_source_mismatch: bool
+    candidates: list[TrialCandidate],
+    *,
+    allow_partition_source_mismatch: bool,
+    allow_partition_runtime_mismatch: bool,
 ) -> list[str]:
     signatures: dict[str, tuple[dict[str, Any], TrialCandidate]] = {}
     for candidate in candidates:
         provenance = _provenance(
             candidate.config,
             ignore_partition_driver=allow_partition_source_mismatch,
+            ignore_partition_runtime=allow_partition_runtime_mismatch,
         )
         signatures.setdefault(_json_digest(provenance), (provenance, candidate))
     if len(signatures) <= 1:
@@ -391,12 +400,14 @@ def _validate_provenance(
     baseline = _provenance(
         examples[0].config,
         ignore_partition_driver=allow_partition_source_mismatch,
+        ignore_partition_runtime=allow_partition_runtime_mismatch,
     )
     differing_fields: set[str] = set()
     for candidate in examples[1:]:
         other = _provenance(
             candidate.config,
             ignore_partition_driver=allow_partition_source_mismatch,
+            ignore_partition_runtime=allow_partition_runtime_mismatch,
         )
         differing_fields.update(
             field for field in baseline if baseline[field] != other[field]
@@ -675,6 +686,8 @@ def merge_tuning_results(
     expect_full_grid: bool = False,
     require_complete: bool = True,
     allow_partition_source_mismatch: bool = False,
+    allow_partition_runtime_mismatch: bool = False,
+    representations: Iterable[str] | None = None,
     expected_head_learning_rate: float | None = None,
     require_tied_representation_learning_rates: bool = False,
 ) -> dict[str, Any]:
@@ -682,6 +695,19 @@ def merge_tuning_results(
 
     if phase not in {"tuning", "end_to_end_tuning"}:
         raise TuningMergeError(f"Unsupported tuning phase: {phase!r}")
+    requested_representations = (
+        None if representations is None else tuple(dict.fromkeys(representations))
+    )
+    if requested_representations is not None:
+        invalid_representations = sorted(
+            set(requested_representations).difference(TUNING_REPRESENTATIONS)
+        )
+        if invalid_representations:
+            raise TuningMergeError(
+                f"Unsupported representations: {invalid_representations}"
+            )
+        if not requested_representations:
+            raise TuningMergeError("At least one representation must be requested")
     sources = [Path(path).expanduser().resolve() for path in input_dirs]
     if not sources:
         raise TuningMergeError("At least one input directory is required")
@@ -707,6 +733,14 @@ def merge_tuning_results(
         all_candidates.extend(discovered)
 
     unfiltered_attempt_count = len(all_candidates)
+    if requested_representations is not None:
+        requested_representation_set = set(requested_representations)
+        all_candidates = [
+            candidate
+            for candidate in all_candidates
+            if str(candidate.config["representation"])
+            in requested_representation_set
+        ]
     if expected_head_learning_rate is not None:
         all_candidates = [
             candidate
@@ -722,7 +756,7 @@ def merge_tuning_results(
             == float(candidate.config["esm_learning_rate"])
         ]
     if not all_candidates:
-        raise TuningMergeError("No trials remain after learning-rate filtering.")
+        raise TuningMergeError("No trials remain after requested filtering.")
 
     datasets = {str(candidate.config["dataset"]) for candidate in all_candidates}
     versions = {
@@ -738,6 +772,7 @@ def merge_tuning_results(
     provenance_signatures = _validate_provenance(
         all_candidates,
         allow_partition_source_mismatch=allow_partition_source_mismatch,
+        allow_partition_runtime_mismatch=allow_partition_runtime_mismatch,
     )
     candidates, duplicate_sources = _deduplicate(all_candidates)
     if expect_full_grid:
@@ -799,6 +834,11 @@ def merge_tuning_results(
         "num_copied_trials": copied,
         "status_counts": dict(sorted(status_counts.items())),
         "expected_trials": expected_trials,
+        "requested_representations": (
+            None
+            if requested_representations is None
+            else list(requested_representations)
+        ),
         "expected_full_frozen_grid": expect_full_grid,
         "require_complete": require_complete,
         "expected_head_learning_rate": expected_head_learning_rate,
@@ -806,6 +846,7 @@ def merge_tuning_results(
             require_tied_representation_learning_rates
         ),
         "partition_source_mismatch_allowed": allow_partition_source_mismatch,
+        "partition_runtime_mismatch_allowed": allow_partition_runtime_mismatch,
         "partition_source_audit": {
             "git_commits": sorted(
                 {
@@ -821,6 +862,18 @@ def merge_tuning_results(
                         "source_file_sha256", {}
                     ).items()
                     if str(path).endswith("Code/src/training/train_classifier.py")
+                }
+            ),
+        },
+        "partition_runtime_audit": {
+            "torch_cuda_versions": sorted(
+                {
+                    str(
+                        candidate.config.get("runtime", {}).get(
+                            "torch_cuda_version"
+                        )
+                    )
+                    for candidate in all_candidates
                 }
             ),
         },
@@ -886,6 +939,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--allow_partition_runtime_mismatch",
+        "--allow-partition-runtime-mismatch",
+        action="store_true",
+        help=(
+            "Ignore only the recorded torch CUDA version after auditing "
+            "partitions run in otherwise compatible environments."
+        ),
+    )
+    parser.add_argument(
+        "--representation",
+        "--representations",
+        action="append",
+        choices=TUNING_REPRESENTATIONS,
+        dest="representations",
+        help=(
+            "Merge only this representation; repeat for multiple representations. "
+            "Filtering occurs before dataset/version and provenance validation."
+        ),
+    )
+    parser.add_argument(
         "--expected_head_learning_rate",
         type=float,
         default=None,
@@ -918,6 +991,8 @@ def main(argv: list[str] | None = None) -> None:
             expect_full_grid=args.expect_full_grid,
             require_complete=not args.allow_incomplete,
             allow_partition_source_mismatch=args.allow_partition_source_mismatch,
+            allow_partition_runtime_mismatch=args.allow_partition_runtime_mismatch,
+            representations=args.representations,
             expected_head_learning_rate=args.expected_head_learning_rate,
             require_tied_representation_learning_rates=(
                 args.require_tied_representation_learning_rates

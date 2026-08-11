@@ -282,6 +282,73 @@ def test_partition_source_override_is_narrow_and_audited(tmp_path: Path) -> None
     ]
 
 
+def test_representation_filter_precedes_version_validation(tmp_path: Path) -> None:
+    source = tmp_path / "mixed_versions"
+    included = _write_trial(
+        source,
+        learning_rate=1e-4,
+        val_f1=0.8,
+        representation="esm2",
+        phase="end_to_end_tuning",
+    )
+    excluded = _write_trial(
+        source,
+        learning_rate=1e-4,
+        val_f1=0.7,
+        representation="random_autoencoder",
+        phase="end_to_end_tuning",
+    )
+    for run_dir, version in ((included, "v5"), (excluded, "v27")):
+        config_path = run_dir / "config.json"
+        config = json.loads(config_path.read_text())
+        config["version"] = version
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    manifest = merge_tuning_results(
+        [source],
+        tmp_path / "merged",
+        phase="end_to_end_tuning",
+        representations=["esm2"],
+        expected_trials=1,
+    )
+
+    selected = json.loads(
+        (tmp_path / "merged" / "selected_hyperparameters.json").read_text()
+    )
+    assert manifest["version"] == "v5"
+    assert manifest["requested_representations"] == ["esm2"]
+    assert manifest["num_filtered_attempts"] == 1
+    assert set(selected) == {"linear"}
+    assert set(selected["linear"]) == {"esm2"}
+    assert "head_learning_rate" in selected["linear"]["esm2"]
+    assert "representation_learning_rate" in selected["linear"]["esm2"]
+
+
+def test_partition_runtime_override_is_narrow_and_audited(tmp_path: Path) -> None:
+    sources = [tmp_path / "ec2_1", tmp_path / "ec2_2"]
+    _write_trial(sources[0], learning_rate=1e-4, val_f1=0.7)
+    second = _write_trial(sources[1], learning_rate=1e-5, val_f1=0.8)
+    second_config_path = second / "config.json"
+    second_config = json.loads(second_config_path.read_text())
+    second_config["runtime"]["torch_cuda_version"] = "13.0"
+    second_config_path.write_text(json.dumps(second_config), encoding="utf-8")
+
+    with pytest.raises(TuningMergeError, match="torch_cuda_version"):
+        merge_tuning_results(sources, tmp_path / "rejected")
+
+    manifest = merge_tuning_results(
+        sources,
+        tmp_path / "merged",
+        allow_partition_runtime_mismatch=True,
+    )
+
+    assert manifest["partition_runtime_mismatch_allowed"] is True
+    assert manifest["partition_runtime_audit"]["torch_cuda_versions"] == [
+        "12.6",
+        "13.0",
+    ]
+
+
 def test_duplicate_choice_is_independent_of_input_order(tmp_path: Path) -> None:
     first = tmp_path / "a_source"
     second = tmp_path / "b_source"

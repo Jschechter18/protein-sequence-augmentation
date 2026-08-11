@@ -197,6 +197,34 @@ python Code/scripts/merge_classifier_tuning.py \
   --expected_trials 120
 ```
 
+To merge a subset of representations, repeat `--representation`. Filtering is
+applied before version and provenance checks, so intentionally reused trials
+for an excluded representation do not affect the merge. If otherwise
+compatible partitions were run with different recorded CUDA versions, the
+runtime exception must be explicitly enabled and is recorded in the manifest:
+
+```bash
+python Code/scripts/merge_classifier_tuning.py \
+  --phase end_to_end_tuning \
+  --input_dir /path/to/encoder_lr_1e-4/unfrozen/tuning \
+  --input_dir /path/to/encoder_lr_1e-5/unfrozen/tuning \
+  --input_dir /path/to/encoder_lr_1e-6/unfrozen/tuning \
+  --output_dir Code/results/classifier/solubility/v5/unfrozen/tuning \
+  --representation esm2 \
+  --representation trained_autoencoder \
+  --representation trained_autoencoder+esm2 \
+  --expected_trials 96 \
+  --expected_head_learning_rate 1e-4 \
+  --require_tied_representation_learning_rates \
+  --allow_partition_source_mismatch \
+  --allow_partition_runtime_mismatch \
+  --allow_incomplete
+```
+
+The runtime override ignores only `torch_cuda_version`; data, checkpoint, and
+other provenance mismatches still fail. Add `--allow_incomplete` only when a
+partial winner file is intentional and the failed trials have been audited.
+
 Start the final three-seed sweep from the merged winner file:
 
 ```bash

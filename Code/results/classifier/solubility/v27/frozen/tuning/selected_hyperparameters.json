@@ -1,8 +1,11 @@
 {
   "linear": {
     "esm2": {
-      "learning_rate": 0.001,
-      "selection_source": "hardcoded_reuse",
+      "best_val_f1": 0.5353455123113582,
+      "learning_rate": 0.0001,
+      "selection_epoch": 24,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.6061419715664291,
       "weight_decay": 0.0
     },
     "random_autoencoder": {
@@ -32,9 +35,12 @@
   },
   "mlp": {
     "esm2": {
-      "dropout": 0.3,
-      "learning_rate": 0.0003,
-      "selection_source": "hardcoded_reuse",
+      "best_val_f1": 0.6397803329328986,
+      "dropout": 0.1,
+      "learning_rate": 0.0001,
+      "selection_epoch": 20,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.5654984237446423,
       "weight_decay": 0.0
     },
     "random_autoencoder": {
