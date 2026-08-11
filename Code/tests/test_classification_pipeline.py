@@ -176,6 +176,45 @@ def test_fractional_classification_labels_are_rejected(tmp_path):
         pipeline.validate(loader)
 
 
+def test_nonfinite_logits_fail_on_the_offending_batch(tmp_path):
+    records = [
+        {"logits": torch.tensor([1.0, 0.0]), "label": 0},
+        {"logits": torch.tensor([float("nan"), 1.0]), "label": 1},
+    ]
+    loader = DataLoader(records, batch_size=1, shuffle=False)
+    pipeline = ProteinClassificationTrainingPipeline(BatchLogitModel(), tmp_path)
+
+    with pytest.raises(
+        FloatingPointError,
+        match=r"Non-finite classifier logits in validation batch 2: 1 NaN",
+    ):
+        pipeline.validate(loader)
+
+
+def test_calculate_metrics_rejects_nonfinite_probabilities(tmp_path):
+    pipeline = ProteinClassificationTrainingPipeline(BatchLogitModel(), tmp_path)
+
+    with pytest.raises(FloatingPointError, match="Probability array"):
+        pipeline._calculate_metrics(
+            np.array([0, 1]),
+            np.array([0, 1]),
+            np.array([[0.8, 0.2], [float("nan"), float("nan")]]),
+            loss=0.1,
+        )
+
+
+def test_nonfinite_gradients_fail_before_optimizer_step(tmp_path):
+    model = BatchLogitModel()
+    model.offset.register_hook(lambda gradient: torch.full_like(gradient, float("nan")))
+    pipeline = ProteinClassificationTrainingPipeline(model, tmp_path)
+
+    with pytest.raises(
+        FloatingPointError,
+        match=r"Non-finite gradient norm in training batch 1",
+    ):
+        pipeline.train_epoch(make_logit_loader(batch_size=2))
+
+
 def test_optimizer_contains_only_trainable_parameters(tmp_path):
     model = TinyClassifier()
     pipeline = ProteinClassificationTrainingPipeline(

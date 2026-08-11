@@ -352,7 +352,12 @@ def ae_params_from_state_dict(
     state_dict: dict[str, torch.Tensor],
 ) -> dict:
     params = hyperparams.__dict__.copy()
-    layer_type = "transformer" if "encoder_position_embedding.weight" in state_dict else "gru"
+    if "encoder_position_embedding.weight" in state_dict:
+        layer_type = "transformer"
+    else:
+        hidden_dim = state_dict["encoder.weight_hh_l0"].shape[1]
+        gate_count = state_dict["encoder.weight_hh_l0"].shape[0] // hidden_dim
+        layer_type = "lstm" if gate_count == 4 else "gru"
 
     if layer_type == "transformer":
         params.update(

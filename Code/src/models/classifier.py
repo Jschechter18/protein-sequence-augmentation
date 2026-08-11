@@ -195,6 +195,13 @@ class ESM2Embedding(nn.Module):
         self.model.eval()
         self.is_frozen = True
 
+    def unfreeze_all_params(self) -> None:
+        """Unfreeze all ESM-2 parameters and put the model in training mode."""
+        for parameter in self.model.parameters():
+            parameter.requires_grad = True
+        self.is_frozen = False
+        self.model.train()
+
     def train(self, mode: bool = True):
         super().train(mode)
         if self.is_frozen:
@@ -296,6 +303,7 @@ class TrainedAutoencoderEncoder(nn.Module):
         kernel_size: int,
         device: str,
         freeze: bool = True,
+        layer_type: str = "gru",
     ):
         super().__init__()
 
@@ -309,6 +317,7 @@ class TrainedAutoencoderEncoder(nn.Module):
             latent_dim=latent_dim,
             num_layers=num_layers,
             kernel_size=kernel_size,
+            layer_type=layer_type,
         )
 
         try:
@@ -328,12 +337,11 @@ class TrainedAutoencoderEncoder(nn.Module):
 
         self.autoencoder.load_state_dict(state_dict)
 
-        if freeze:
-            for parameter in self.autoencoder.parameters():
-                parameter.requires_grad = False
-            self.autoencoder.eval()
-
         self.autoencoder.to(device)
+        if freeze:
+            self.freeze_encoder()
+        else:
+            self.unfreeze_encoder()
 
     def train(self, mode: bool = True):
         super().train(mode)
@@ -360,6 +368,22 @@ class TrainedAutoencoderEncoder(nn.Module):
                 if id(parameter) not in seen:
                     seen.add(id(parameter))
                     yield parameter
+
+    def freeze_encoder(self) -> None:
+        """Freeze the complete autoencoder and keep it in evaluation mode."""
+        for parameter in self.autoencoder.parameters():
+            parameter.requires_grad = False
+        self.is_frozen = True
+        self.autoencoder.eval()
+
+    def unfreeze_encoder(self) -> None:
+        """Unfreeze only the modules used by ``encode``; keep the decoder frozen."""
+        for parameter in self.autoencoder.parameters():
+            parameter.requires_grad = False
+        for parameter in self.encoder_parameters():
+            parameter.requires_grad = True
+        self.is_frozen = False
+        self.autoencoder.train()
 
     def forward(
         self,
@@ -389,11 +413,13 @@ class RandomAutoencoderEncoder(nn.Module):
         num_layers: int,
         kernel_size: int,
         device: str,
+        layer_type: str = "gru",
+        freeze: bool = True,
     ):
         super().__init__()
 
         self.output_dim = latent_dim
-        self.is_frozen = True
+        self.is_frozen = freeze
 
         self.autoencoder = ProteinSequenceAutoencoder(
             embedding_dim=embedding_dim,
@@ -402,12 +428,14 @@ class RandomAutoencoderEncoder(nn.Module):
             latent_dim=latent_dim,
             num_layers=num_layers,
             kernel_size=kernel_size,
+            layer_type=layer_type,
         )
 
-        for parameter in self.autoencoder.parameters():
-            parameter.requires_grad = False
         self.autoencoder.to(device)
-        self.autoencoder.eval()
+        if freeze:
+            self.freeze_encoder()
+        else:
+            self.unfreeze_encoder()
 
     def train(self, mode: bool = True):
         super().train(mode)
@@ -434,6 +462,22 @@ class RandomAutoencoderEncoder(nn.Module):
                 if id(parameter) not in seen:
                     seen.add(id(parameter))
                     yield parameter
+
+    def freeze_encoder(self) -> None:
+        """Freeze the complete autoencoder and keep it in evaluation mode."""
+        for parameter in self.autoencoder.parameters():
+            parameter.requires_grad = False
+        self.is_frozen = True
+        self.autoencoder.eval()
+
+    def unfreeze_encoder(self) -> None:
+        """Unfreeze only the modules used by ``encode``; keep the decoder frozen."""
+        for parameter in self.autoencoder.parameters():
+            parameter.requires_grad = False
+        for parameter in self.encoder_parameters():
+            parameter.requires_grad = True
+        self.is_frozen = False
+        self.autoencoder.train()
 
     def forward(
         self,
@@ -508,6 +552,8 @@ class ProteinSequenceClassifier(nn.Module):
         esm_max_sequence_length: int = 1022,
         head_type: str = "linear",
         dropout: float = 0.1,
+        autoencoder_embedding_dropout: float = 0.0,
+        esm_embedding_dropout: float = 0.0,
         head_seed: int | None = None,
         autoencoder_checkpoint: str | None = None,
         autoencoder_embedding_dim: int = 128,
@@ -518,6 +564,9 @@ class ProteinSequenceClassifier(nn.Module):
         autoencoder_kernel_size: int = 3,
         device: str = "cpu",
         pad_idx: int = PAD_IDX,
+        autoencoder_layer_type: str = "gru",
+        freeze_autoencoder: bool = True,
+        freeze_esm2: bool = True,
     ):
         super().__init__()
         embedding_type = normalize_embedding_type(embedding_type)
@@ -526,6 +575,16 @@ class ProteinSequenceClassifier(nn.Module):
         self.head_type = head_type
         self.esm_model_name = esm_model_name
         self.esm_max_sequence_length = esm_max_sequence_length
+        self.freeze_autoencoder = freeze_autoencoder
+        self.freeze_esm2 = freeze_esm2
+        for name, value in (
+            ("autoencoder_embedding_dropout", autoencoder_embedding_dropout),
+            ("esm_embedding_dropout", esm_embedding_dropout),
+        ):
+            if not 0.0 <= value < 1.0:
+                raise ValueError(f"{name} must be in the range [0, 1).")
+        self.autoencoder_embedding_dropout = nn.Dropout(autoencoder_embedding_dropout)
+        self.esm_embedding_dropout = nn.Dropout(esm_embedding_dropout)
 
         if self.embedding_type == "random_autoencoder":
             self.embedded_representation = RandomAutoencoderEncoder(
@@ -536,6 +595,8 @@ class ProteinSequenceClassifier(nn.Module):
                 num_layers=autoencoder_num_layers,
                 kernel_size=autoencoder_kernel_size,
                 device=self.device,
+                layer_type=autoencoder_layer_type,
+                freeze=freeze_autoencoder,
             ).to(self.device)
         elif self.embedding_type == "esm2":
             # CASE 2: Baseline 2: ESM-2 Encoder
@@ -544,7 +605,10 @@ class ProteinSequenceClassifier(nn.Module):
                 device=self.device,
                 esm_max_sequence_length=esm_max_sequence_length,
             ).to(self.device)
-            self.embedded_representation.freeze_all_params()
+            if freeze_esm2:
+                self.embedded_representation.freeze_all_params()
+            else:
+                self.embedded_representation.unfreeze_all_params()
             logger.info(
                 "Using ESM-2 encoder on %s",
                 next(self.embedded_representation.parameters()).device,
@@ -566,7 +630,8 @@ class ProteinSequenceClassifier(nn.Module):
                 num_layers=autoencoder_num_layers,
                 kernel_size=autoencoder_kernel_size,
                 device=self.device,
-                freeze=True,
+                layer_type=autoencoder_layer_type,
+                freeze=freeze_autoencoder,
             ).to(self.device)
         elif self.embedding_type == "trained_autoencoder+esm2":
             # CASE 4: Combined Autoencoder + ESM-2 Encoder
@@ -584,14 +649,18 @@ class ProteinSequenceClassifier(nn.Module):
                 num_layers=autoencoder_num_layers,
                 kernel_size=autoencoder_kernel_size,
                 device=self.device,
-                freeze=True,
+                layer_type=autoencoder_layer_type,
+                freeze=freeze_autoencoder,
             ).to(self.device)
             esm_encoder = ESM2Embedding(
                 model_name=esm_model_name,
                 device=self.device,
                 esm_max_sequence_length=esm_max_sequence_length,
             ).to(self.device)
-            esm_encoder.freeze_all_params()
+            if freeze_esm2:
+                esm_encoder.freeze_all_params()
+            else:
+                esm_encoder.unfreeze_all_params()
             self.embedded_representation = CombinedAutoencoderESM2Encoder(
                 autoencoder_encoder=autoencoder_encoder,
                 esm_encoder=esm_encoder,
@@ -630,6 +699,24 @@ class ProteinSequenceClassifier(nn.Module):
             embeddings = self.embedded_representation(input_ids, lengths, batch["sequence"])
         else:
             raise ValueError(f"Unsupported embedding type: {self.embedding_type}")
+        if self.embedding_type in {"random_autoencoder", "trained_autoencoder"}:
+            return self.autoencoder_embedding_dropout(embeddings)
+        if self.embedding_type == "esm2":
+            return self.esm_embedding_dropout(embeddings)
+        if self.embedding_type == "trained_autoencoder+esm2":
+            autoencoder_dim = self.embedded_representation.autoencoder_encoder.output_dim
+            autoencoder_embeddings, esm_embeddings = torch.split(
+                embeddings,
+                [autoencoder_dim, embeddings.shape[-1] - autoencoder_dim],
+                dim=-1,
+            )
+            return torch.cat(
+                [
+                    self.autoencoder_embedding_dropout(autoencoder_embeddings),
+                    self.esm_embedding_dropout(esm_embeddings),
+                ],
+                dim=-1,
+            )
         return embeddings
 
     def forward(self, batch: dict) -> torch.Tensor:
@@ -701,6 +788,7 @@ class CachedEmbeddingClassifier(nn.Module):
         self.embedding_type = normalize_embedding_type(embedding_type)
         self.head_type = head_type
         self.device = device
+        self.uses_cached_embeddings = True
         self.encoder_output_dim = int(embedding_dim)
         self.output_dim = self.encoder_output_dim
         self.embedded_representation = nn.Identity()

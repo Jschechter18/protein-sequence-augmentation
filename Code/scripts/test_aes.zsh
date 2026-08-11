@@ -22,10 +22,10 @@ if [[ -x ".venv/bin/python" ]]; then
 fi
 
 checkpoint_dir="Code/results/autoencoder/${task}/${version_dir}"
-checkpoints=("${checkpoint_dir}"/model_ae_length_*_"${task}"_latent*_tfd*.pt)
+checkpoints=("${checkpoint_dir}"/model_ae_length_*_"${task}"_*.pt)
 if (( ${#checkpoints[@]} == 0 )); then
   checkpoint_dir="checkpoints/autoencoder/${task}/${version_dir}"
-  checkpoints=("${checkpoint_dir}"/model_ae_length_*_"${task}"_latent*_tfd*.pt)
+  checkpoints=("${checkpoint_dir}"/model_ae_length_*_"${task}"_*.pt)
 fi
 if (( ${#checkpoints[@]} == 0 )); then
   echo "No swept length-bin autoencoder checkpoints found in Code/results or checkpoints for: ${task}/${version_dir}"
@@ -42,14 +42,18 @@ fi
 for ckpt in "${checkpoints[@]}"; do
   name=${ckpt:t}
 
-  if [[ $name =~ 'length_([0-9]+)_of_([0-9]+)_.*_latent([0-9]+)_tfd([0-9]+)p([0-9]+)' ]]; then
+  if [[ $name =~ 'length_([0-9]+)_of_([0-9]+)_' ]]; then
     bin=$match[1]
     total=$match[2]
-    latent=$match[3]
-    tfd="$match[4].$match[5]"
+    sweep_args=()
     scheduler_args=()
-    if [[ $name =~ '_sf([0-9]+)p([0-9]+)' ]]; then
-      scheduler_args=(--scheduler_factor "$match[1].$match[2]")
+    if [[ $name =~ '_latent([0-9]+)_tfd([0-9]+)p([0-9]+)' ]]; then
+      latent=$match[1]
+      tfd="$match[2].$match[3]"
+      sweep_args=(--latent_dim "$latent" --teacher_forcing_dropout_rate "$tfd")
+      if [[ $name =~ '_sf([0-9]+)p([0-9]+)' ]]; then
+        scheduler_args=(--scheduler_factor "$match[1].$match[2]")
+      fi
     fi
 
     case $total in
@@ -59,14 +63,14 @@ for ckpt in "${checkpoints[@]}"; do
       *) echo "Unknown split count: $total for $ckpt"; continue ;;
     esac
 
+    PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}" \
     "$python_cmd" Code/src/testing/test_autoencoder.py \
       --task "$task" \
       --version "$version_dir" \
       --checkpoint "$ckpt" \
       --length_options "$length_options" \
       --length_bin "$bin" \
-      --latent_dim "$latent" \
-      --teacher_forcing_dropout_rate "$tfd" \
+      "${sweep_args[@]}" \
       "${scheduler_args[@]}" \
       "${cumulative_args[@]}" \
       --output_path "outputs/autoencoder/${version_dir}/${name:r}.csv"

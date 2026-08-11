@@ -1,0 +1,49 @@
+{
+  "created_at": "2026-08-11T20:47:13.097847+00:00",
+  "dataset": "solubility",
+  "expected_full_frozen_grid": false,
+  "expected_head_learning_rate": null,
+  "expected_trials": 18,
+  "input_dirs": [
+    "/Users/josh/GWU/research/v5/encoder_lr_1e-4/frozen/tuning"
+  ],
+  "num_attempts": 18,
+  "num_copied_trials": 18,
+  "num_filtered_attempts": 6,
+  "num_unique_trials": 18,
+  "partition_runtime_audit": {
+    "torch_cuda_versions": [
+      "13.0"
+    ]
+  },
+  "partition_runtime_mismatch_allowed": false,
+  "partition_source_audit": {
+    "git_commits": [
+      "6fe131667ef3768b9f8aecb962e5bb3e71d5d4b6",
+      "b358ac6ab132bb03e907c2fb895238ac61ce85d0"
+    ],
+    "train_classifier_sha256": [
+      "b8509113e150e3dae8aa80973acc89b61e3800597b05e0aafa8ef9c4a332d7af"
+    ]
+  },
+  "partition_source_mismatch_allowed": true,
+  "phase": "tuning",
+  "provenance_signatures": [
+    "630d8580a0990d625056e65e10ebc159b4d77d5d7d4c52fe15ed0cd6d1b86078"
+  ],
+  "requested_representations": [
+    "esm2",
+    "trained_autoencoder",
+    "trained_autoencoder+esm2"
+  ],
+  "require_complete": true,
+  "require_tied_representation_learning_rates": false,
+  "schema_version": 1,
+  "source_trial_counts": {
+    "source_1": 24
+  },
+  "status_counts": {
+    "complete": 18
+  },
+  "version": "v5"
+}
