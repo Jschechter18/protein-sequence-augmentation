@@ -35,7 +35,7 @@ class SelectedModel:
 
 SELECTED_MODELS = (
     SelectedModel(
-        display_name="Baseline GRU",
+        display_name="Baseline 512 Latent GRU",
         version="v5",
         distinguishing_feature="Initial full-dataset baseline; length curriculum",
         training_data="Full dataset",
@@ -43,7 +43,7 @@ SELECTED_MODELS = (
         checkpoint_path="checkpoints/autoencoder/solubility/v5/model_ae_solubility.pt",
     ),
     SelectedModel(
-        display_name="Compact GRU",
+        display_name="Compact 256 Latent GRU",
         version="v12",
         distinguishing_feature="Lower-cost 2-layer, 512-hidden model",
         training_data="Cumulative length bins 1-2 of 3",
@@ -53,7 +53,7 @@ SELECTED_MODELS = (
         checkpoint_path="checkpoints/autoencoder/solubility/v12/model_ae_length_2_of_3_solubility_lr0p0003_num_layers2_hidden_dim512.pt",
     ),
     SelectedModel(
-        display_name="High-capacity GRU",
+        display_name="High-capacity 256 Latent GRU",
         version="v12",
         distinguishing_feature="3-layer, 1024-hidden model",
         training_data="Cumulative length bins 1-2 of 3",
@@ -63,7 +63,7 @@ SELECTED_MODELS = (
         checkpoint_path="checkpoints/autoencoder/solubility/v12/model_ae_length_2_of_3_solubility_lr0p0001_num_layers3_hidden_dim1024.pt",
     ),
     SelectedModel(
-        display_name="Final full-data GRU",
+        display_name="Full-data 256 Latent GRU",
         version="v23",
         distinguishing_feature="Final model trained with all three length bins",
         training_data="Full dataset (length bins 1-3 of 3)",
@@ -71,18 +71,31 @@ SELECTED_MODELS = (
         checkpoint_path="checkpoints/autoencoder/solubility/v23/model_ae_length_3_of_3_solubility.pt",
     ),
     SelectedModel(
-    display_name="Final AE",
-    version="v27",
-    distinguishing_feature="Final 512-dimensional latent model",
-    training_data="Full dataset (length bins 1-3 of 3)",
-    history_path=RESULTS_ROOT
-    / "v27"
-    / "v27_model_ae_length_3_of_3_solubility_history.json",
-    checkpoint_path=(
-        "checkpoints/autoencoder/solubility/v27/"
-        "model_ae_length_3_of_3_solubility.pt"
+        display_name="Full-data 256 Latent LSTM",
+        version="v26",
+        distinguishing_feature="LSTM comparison with the full-data 256-latent GRU",
+        training_data="Full dataset (length bins 1-3 of 3)",
+        history_path=RESULTS_ROOT
+        / "v26"
+        / "v26_model_ae_length_3_of_3_solubility_lstm_history.json",
+        checkpoint_path=(
+            "checkpoints/autoencoder/solubility/v26/"
+            "model_ae_length_3_of_3_solubility_lstm.pt"
+        ),
     ),
-),
+    SelectedModel(
+        display_name="Final 512 Latent AE",
+        version="v27",
+        distinguishing_feature="Final 512-dimensional latent model",
+        training_data="Full dataset (length bins 1-3 of 3)",
+        history_path=RESULTS_ROOT
+        / "v27"
+        / "v27_model_ae_length_3_of_3_solubility_history.json",
+        checkpoint_path=(
+            "checkpoints/autoencoder/solubility/v27/"
+            "model_ae_length_3_of_3_solubility.pt"
+        ),
+    ),
 )
 
 
@@ -148,7 +161,7 @@ def main() -> None:
     rows = [build_row(model) for model in SELECTED_MODELS]
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with OUTPUT_PATH.open("w", newline="", encoding="utf-8") as output_file:
-        writer = csv.DictWriter(output_file, fieldnames=FIELDNAMES)
+        writer = csv.DictWriter(output_file, fieldnames=FIELDNAMES, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
     print(f"Wrote {len(rows)} selected autoencoder results to {OUTPUT_PATH}")
