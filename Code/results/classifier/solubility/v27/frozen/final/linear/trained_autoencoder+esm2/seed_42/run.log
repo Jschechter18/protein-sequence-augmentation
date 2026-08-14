@@ -1,0 +1,64 @@
+2026-08-11 21:53:18,406 INFO Code.src.utils.embedding_cache: Saved frozen embeddings: /home/ubuntu/research/protein-sequence-augmentation/data/processed/embeddings/solubility/trained_autoencoder+esm2/shared/train_96fa211b3bbf6cf7.pt
+2026-08-11 21:54:33,661 INFO Code.src.utils.embedding_cache: Saved frozen embeddings: /home/ubuntu/research/protein-sequence-augmentation/data/processed/embeddings/solubility/trained_autoencoder+esm2/shared/valid_79c081a8345c1dff.pt
+2026-08-11 21:54:59,929 INFO Code.src.utils.embedding_cache: Saved frozen embeddings: /home/ubuntu/research/protein-sequence-augmentation/data/processed/embeddings/solubility/trained_autoencoder+esm2/shared/test_85297b14fb704769.pt
+2026-08-11 21:55:00,195 INFO Code.src.training.classification_pipeline: Epoch 1/30
+2026-08-11 21:55:08,427 INFO Code.src.training.classification_pipeline: Epoch 1: train loss 0.6172, val loss 0.5883, val accuracy 0.6684
+2026-08-11 21:55:08,427 INFO Code.src.training.classification_pipeline: Epoch 2/30
+2026-08-11 21:55:16,530 INFO Code.src.training.classification_pipeline: Epoch 2: train loss 0.5816, val loss 0.5785, val accuracy 0.6860
+2026-08-11 21:55:16,530 INFO Code.src.training.classification_pipeline: Epoch 3/30
+2026-08-11 21:55:24,695 INFO Code.src.training.classification_pipeline: Epoch 3: train loss 0.5750, val loss 0.5748, val accuracy 0.6893
+2026-08-11 21:55:24,695 INFO Code.src.training.classification_pipeline: Epoch 4/30
+2026-08-11 21:55:32,809 INFO Code.src.training.classification_pipeline: Epoch 4: train loss 0.5715, val loss 0.5732, val accuracy 0.6910
+2026-08-11 21:55:32,809 INFO Code.src.training.classification_pipeline: Epoch 5/30
+2026-08-11 21:55:40,943 INFO Code.src.training.classification_pipeline: Epoch 5: train loss 0.5691, val loss 0.5702, val accuracy 0.6939
+2026-08-11 21:55:40,943 INFO Code.src.training.classification_pipeline: Epoch 6/30
+2026-08-11 21:55:49,059 INFO Code.src.training.classification_pipeline: Epoch 6: train loss 0.5676, val loss 0.5721, val accuracy 0.6916
+2026-08-11 21:55:49,059 INFO Code.src.training.classification_pipeline: Epoch 7/30
+2026-08-11 21:55:57,318 INFO Code.src.training.classification_pipeline: Epoch 7: train loss 0.5665, val loss 0.5700, val accuracy 0.6926
+2026-08-11 21:55:57,318 INFO Code.src.training.classification_pipeline: Epoch 8/30
+2026-08-11 21:56:05,479 INFO Code.src.training.classification_pipeline: Epoch 8: train loss 0.5655, val loss 0.5685, val accuracy 0.6932
+2026-08-11 21:56:05,479 INFO Code.src.training.classification_pipeline: Epoch 9/30
+2026-08-11 21:56:13,648 INFO Code.src.training.classification_pipeline: Epoch 9: train loss 0.5647, val loss 0.5683, val accuracy 0.6985
+2026-08-11 21:56:13,648 INFO Code.src.training.classification_pipeline: Epoch 10/30
+2026-08-11 21:56:21,800 INFO Code.src.training.classification_pipeline: Epoch 10: train loss 0.5642, val loss 0.5697, val accuracy 0.6932
+2026-08-11 21:56:21,800 INFO Code.src.training.classification_pipeline: Epoch 11/30
+2026-08-11 21:56:29,922 INFO Code.src.training.classification_pipeline: Epoch 11: train loss 0.5634, val loss 0.5681, val accuracy 0.6953
+2026-08-11 21:56:29,922 INFO Code.src.training.classification_pipeline: Epoch 12/30
+2026-08-11 21:56:37,957 INFO Code.src.training.classification_pipeline: Epoch 12: train loss 0.5629, val loss 0.5674, val accuracy 0.6966
+2026-08-11 21:56:37,957 INFO Code.src.training.classification_pipeline: Epoch 13/30
+2026-08-11 21:56:46,235 INFO Code.src.training.classification_pipeline: Epoch 13: train loss 0.5625, val loss 0.5659, val accuracy 0.7008
+2026-08-11 21:56:46,235 INFO Code.src.training.classification_pipeline: Epoch 14/30
+2026-08-11 21:56:54,381 INFO Code.src.training.classification_pipeline: Epoch 14: train loss 0.5618, val loss 0.5667, val accuracy 0.6961
+2026-08-11 21:56:54,381 INFO Code.src.training.classification_pipeline: Epoch 15/30
+2026-08-11 21:57:02,519 INFO Code.src.training.classification_pipeline: Epoch 15: train loss 0.5614, val loss 0.5687, val accuracy 0.6965
+2026-08-11 21:57:02,519 INFO Code.src.training.classification_pipeline: Epoch 16/30
+2026-08-11 21:57:10,632 INFO Code.src.training.classification_pipeline: Epoch 16: train loss 0.5610, val loss 0.5654, val accuracy 0.6991
+2026-08-11 21:57:10,632 INFO Code.src.training.classification_pipeline: Epoch 17/30
+2026-08-11 21:57:18,622 INFO Code.src.training.classification_pipeline: Epoch 17: train loss 0.5607, val loss 0.5656, val accuracy 0.7011
+2026-08-11 21:57:18,622 INFO Code.src.training.classification_pipeline: Epoch 18/30
+2026-08-11 21:57:26,863 INFO Code.src.training.classification_pipeline: Epoch 18: train loss 0.5604, val loss 0.5634, val accuracy 0.7014
+2026-08-11 21:57:26,864 INFO Code.src.training.classification_pipeline: Epoch 19/30
+2026-08-11 21:57:34,971 INFO Code.src.training.classification_pipeline: Epoch 19: train loss 0.5601, val loss 0.5641, val accuracy 0.6997
+2026-08-11 21:57:34,971 INFO Code.src.training.classification_pipeline: Epoch 20/30
+2026-08-11 21:57:43,067 INFO Code.src.training.classification_pipeline: Epoch 20: train loss 0.5597, val loss 0.5661, val accuracy 0.6978
+2026-08-11 21:57:43,067 INFO Code.src.training.classification_pipeline: Epoch 21/30
+2026-08-11 21:57:51,079 INFO Code.src.training.classification_pipeline: Epoch 21: train loss 0.5595, val loss 0.5633, val accuracy 0.7015
+2026-08-11 21:57:51,079 INFO Code.src.training.classification_pipeline: Epoch 22/30
+2026-08-11 21:57:59,119 INFO Code.src.training.classification_pipeline: Epoch 22: train loss 0.5594, val loss 0.5643, val accuracy 0.7020
+2026-08-11 21:57:59,119 INFO Code.src.training.classification_pipeline: Epoch 23/30
+2026-08-11 21:58:07,190 INFO Code.src.training.classification_pipeline: Epoch 23: train loss 0.5588, val loss 0.5633, val accuracy 0.7005
+2026-08-11 21:58:07,190 INFO Code.src.training.classification_pipeline: Epoch 24/30
+2026-08-11 21:58:15,241 INFO Code.src.training.classification_pipeline: Epoch 24: train loss 0.5589, val loss 0.5642, val accuracy 0.7018
+2026-08-11 21:58:15,241 INFO Code.src.training.classification_pipeline: Epoch 25/30
+2026-08-11 21:58:23,281 INFO Code.src.training.classification_pipeline: Epoch 25: train loss 0.5586, val loss 0.5640, val accuracy 0.6981
+2026-08-11 21:58:23,281 INFO Code.src.training.classification_pipeline: Epoch 26/30
+2026-08-11 21:58:31,357 INFO Code.src.training.classification_pipeline: Epoch 26: train loss 0.5584, val loss 0.5624, val accuracy 0.6997
+2026-08-11 21:58:31,357 INFO Code.src.training.classification_pipeline: Epoch 27/30
+2026-08-11 21:58:39,664 INFO Code.src.training.classification_pipeline: Epoch 27: train loss 0.5581, val loss 0.5622, val accuracy 0.7033
+2026-08-11 21:58:39,664 INFO Code.src.training.classification_pipeline: Epoch 28/30
+2026-08-11 21:58:47,948 INFO Code.src.training.classification_pipeline: Epoch 28: train loss 0.5580, val loss 0.5636, val accuracy 0.7046
+2026-08-11 21:58:47,948 INFO Code.src.training.classification_pipeline: Epoch 29/30
+2026-08-11 21:58:56,080 INFO Code.src.training.classification_pipeline: Epoch 29: train loss 0.5573, val loss 0.5632, val accuracy 0.6998
+2026-08-11 21:58:56,080 INFO Code.src.training.classification_pipeline: Epoch 30/30
+2026-08-11 21:59:04,213 INFO Code.src.training.classification_pipeline: Epoch 30: train loss 0.5573, val loss 0.5614, val accuracy 0.7025
+2026-08-11 21:59:04,358 INFO Code.src.training.classification_pipeline: Test Loss: 0.6150 | Test Acc: 0.6648 | Test F1 (Macro): 0.6572
