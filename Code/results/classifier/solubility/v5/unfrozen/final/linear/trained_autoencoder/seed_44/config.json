@@ -14,7 +14,8 @@
   "cache_embeddings": false,
   "checkpoint_dir": "/home/ubuntu/protein-sequence-augmentation/checkpoints/classifier/solubility/v5/unfrozen/final/linear/trained_autoencoder/seed_44",
   "checkpoint_root": "/home/ubuntu/protein-sequence-augmentation/checkpoints/classifier",
-  "configuration_fingerprint": "c487857ec09282dbba36595faf6f9dfb5a7063591e97f3474d7969616a770243",
+  "completed_at": "2026-08-16T21:17:36.709636+00:00",
+  "configuration_fingerprint": "1739cda7ae98d23922afe00ff2ed7f493a1f7fe5d9466c0710b8ab9e99cfd1d6",
   "data_dir": "data/processed/peer",
   "data_sources": {
     "test": {
@@ -53,7 +54,7 @@
   "evaluate_test": true,
   "freeze_autoencoder": false,
   "freeze_esm2": true,
-  "git_commit": "f927a650cebc47345cf8135c18f5c9159cd6ccc8",
+  "git_commit": "4a79a9feefeb8970b186d3c1ccdf45a873266fb3",
   "git_dirty": true,
   "head_type": "linear",
   "learning_rate": 0.0001,
@@ -78,7 +79,7 @@
   },
   "representation": "trained_autoencoder",
   "results_dir": "Code/results/classifier",
-  "resume_fingerprint": "617cb85d52f2122af90ad5219e07c6666238057b1be2807f2b898dca5136499e",
+  "resume_fingerprint": "145b35c85e14f5cbf2f0d9e3696caf9c08d3d2f73ba4a7493a25d052575b249f",
   "run_dir": "Code/results/classifier/solubility/v5/unfrozen/final/linear/trained_autoencoder/seed_44",
   "runtime": {
     "packages": {
@@ -96,7 +97,7 @@
   "source_file_sha256": {
     "Code/src/models/autoencoder.py": "01cabfdf2b083469b573e0e108d2e230bab757347a083556f049020b578b7e1b",
     "Code/src/models/classifier.py": "2a25c41e275865bcd5079323508914b5ab7d9d1dce5e6cf53f20b876f01b0bf4",
-    "Code/src/training/classification_pipeline.py": "45d994168cd36a06b8c21bd05d79e410d78a4be95801bba535d7593a923d1059",
+    "Code/src/training/classification_pipeline.py": "e6e03b154ce8884f8b5957bd4e4c6263e3c13452b73d7498e863b42c452f4ec5",
     "Code/src/training/train_classifier.py": "b7514e847414fe4973f23afc425e192d15c7504cbda3426e8fd83e8930244b8a",
     "Code/src/utils/classifier_data.py": "218060f49ca49bfda84db5a799491f5901c90abce8a20ae14aa499b457763db1",
     "Code/src/utils/classifier_tuning_results.py": "2fe8c684dcd0d95e0f429c720418bc4b4b03e92b3924fa3b256ec95c7676a268",
@@ -105,7 +106,8 @@
     "Code/src/utils/experiment_artifacts.py": "0acf2e83e2114f65680fa1429d88559b906fcbc4539cdda3b59bcda7ca3be715",
     "Code/src/utils/sequence_dataset.py": "40f450bebdbfd39fe9132ce82aaf1015e4f70b4f03009c341e18b9d83da5513c"
   },
-  "started_at": "2026-08-16T12:37:27.335897+00:00",
+  "started_at": "2026-08-16T20:17:17.148503+00:00",
+  "total_runtime_seconds": 3619.561142206192,
   "unfreeze_all_esm": false,
   "unfreeze_esm": false,
   "unfreeze_layers": 0,

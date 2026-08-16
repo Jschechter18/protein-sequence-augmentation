@@ -1,9 +1,6 @@
 {
-  "error": "Non-finite gradient norm in training batch 782.",
-  "error_type": "FloatingPointError",
-  "failed_at": "2026-08-16T12:44:38.267176+00:00",
-  "runtime_seconds": 430.9313335418701,
-  "started_at": "2026-08-16T12:37:27.335897+00:00",
-  "status": "failed",
-  "traceback": "Traceback (most recent call last):\n  File \"/home/ubuntu/protein-sequence-augmentation/Code/src/training/classification_pipeline.py\", line 609, in _collect_split\n    nn.utils.clip_grad_norm_(\n  File \"/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.12/site-packages/torch/nn/utils/clip_grad.py\", line 41, in _no_grad_wrapper\n    return func(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.12/site-packages/torch/nn/utils/clip_grad.py\", line 230, in clip_grad_norm_\n    total_norm = _get_total_norm(grads, norm_type, error_if_nonfinite, foreach)\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.12/site-packages/torch/nn/utils/clip_grad.py\", line 41, in _no_grad_wrapper\n    return func(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.12/site-packages/torch/nn/utils/clip_grad.py\", line 110, in _get_total_norm\n    raise RuntimeError(\nRuntimeError: The total norm of order 2.0 for gradients from `parameters` is non-finite, so it cannot be clipped. To disable this error and scale the gradients by the non-finite norm anyway, set `error_if_nonfinite=False`\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/home/ubuntu/protein-sequence-augmentation/Code/src/training/train_classifier.py\", line 1484, in run_one\n    history = pipeline.fit(\n              ^^^^^^^^^^^^^\n  File \"/home/ubuntu/protein-sequence-augmentation/Code/src/training/classification_pipeline.py\", line 775, in fit\n    train_metrics = self.train_epoch(train_loader)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/ubuntu/protein-sequence-augmentation/Code/src/training/classification_pipeline.py\", line 728, in train_epoch\n    metrics, _ = self._collect_split(\n                 ^^^^^^^^^^^^^^^^^^^^\n  File \"/home/ubuntu/protein-sequence-augmentation/Code/src/training/classification_pipeline.py\", line 617, in _collect_split\n    raise FloatingPointError(\nFloatingPointError: Non-finite gradient norm in training batch 782.\n"
+  "completed_at": "2026-08-16T21:17:36.709636+00:00",
+  "runtime_seconds": 3619.561142206192,
+  "started_at": "2026-08-16T20:17:17.148503+00:00",
+  "status": "complete"
 }
