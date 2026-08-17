@@ -1,0 +1,16 @@
+2026-08-15 14:11:04,594 INFO Code.src.training.classification_pipeline: Unfreezing the autoencoder encoding path.
+2026-08-15 14:11:04,595 INFO Code.src.training.classification_pipeline: Unfreezing the complete ESM-2 encoder.
+2026-08-15 14:11:04,596 INFO Code.src.training.classification_pipeline: Epoch 1/10
+2026-08-15 14:37:28,472 INFO Code.src.training.classification_pipeline: Epoch 1: train loss 0.5209, val loss 0.4784, val accuracy 0.7597
+2026-08-15 14:37:28,472 INFO Code.src.training.classification_pipeline: Epoch 2/10
+2026-08-15 15:03:46,109 INFO Code.src.training.classification_pipeline: Epoch 2: train loss 0.4606, val loss 0.4893, val accuracy 0.7545
+2026-08-15 15:03:46,109 INFO Code.src.training.classification_pipeline: Epoch 3/10
+2026-08-15 15:30:03,981 INFO Code.src.training.classification_pipeline: Epoch 3: train loss 0.4367, val loss 0.4716, val accuracy 0.7695
+2026-08-15 15:30:03,981 INFO Code.src.training.classification_pipeline: Epoch 4/10
+2026-08-15 15:56:19,861 INFO Code.src.training.classification_pipeline: Epoch 4: train loss 0.4146, val loss 0.4758, val accuracy 0.7723
+2026-08-15 15:56:19,861 INFO Code.src.training.classification_pipeline: Epoch 5/10
+2026-08-15 16:22:36,618 INFO Code.src.training.classification_pipeline: Epoch 5: train loss 0.3913, val loss 0.4736, val accuracy 0.7730
+2026-08-15 16:22:36,619 INFO Code.src.training.classification_pipeline: Epoch 6/10
+2026-08-15 16:48:48,856 INFO Code.src.training.classification_pipeline: Epoch 6: train loss 0.3641, val loss 0.5111, val accuracy 0.7652
+2026-08-15 16:48:48,856 INFO Code.src.training.classification_pipeline: Early stopping at epoch 6.
+2026-08-15 16:49:15,414 INFO Code.src.training.classification_pipeline: Test Loss: 0.5299 | Test Acc: 0.7349 | Test F1 (Macro): 0.7334
