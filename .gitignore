@@ -79,11 +79,11 @@ figures/*
 # Results
 # =========================================================
 Code/results/*
+Code/results/figures
 !Code/results/.gitkeep
 !Code/results/README.md
 !Code/results/autoencoder
 !Code/results/classifier
-!Code/results/figures
 !Code/results/tables
 
 # =========================================================
