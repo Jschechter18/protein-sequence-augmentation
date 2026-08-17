@@ -1,0 +1,67 @@
+2026-08-05 01:00:08,650 INFO Code.src.training.classification_pipeline: Unfreezing the autoencoder encoding path.
+2026-08-05 01:00:08,650 INFO Code.src.training.classification_pipeline: Epoch 1/30
+2026-08-05 01:06:03,663 INFO Code.src.training.classification_pipeline: Epoch 1: train loss 0.5430, val loss 0.5155, val accuracy 0.7279
+2026-08-05 01:06:03,663 INFO Code.src.training.classification_pipeline: Epoch 2/30
+2026-08-05 01:11:52,409 INFO Code.src.training.classification_pipeline: Epoch 2: train loss 0.5143, val loss 0.5068, val accuracy 0.7204
+2026-08-05 01:11:52,409 INFO Code.src.training.classification_pipeline: Epoch 3/30
+2026-08-05 01:17:40,513 INFO Code.src.training.classification_pipeline: Epoch 3: train loss 0.5038, val loss 0.5066, val accuracy 0.7358
+2026-08-05 01:17:40,514 INFO Code.src.training.classification_pipeline: Epoch 4/30
+2026-08-05 01:23:28,138 INFO Code.src.training.classification_pipeline: Epoch 4: train loss 0.4930, val loss 0.4970, val accuracy 0.7413
+2026-08-05 01:23:28,139 INFO Code.src.training.classification_pipeline: Epoch 5/30
+2026-08-05 01:29:15,361 INFO Code.src.training.classification_pipeline: Epoch 5: train loss 0.4809, val loss 0.4992, val accuracy 0.7316
+2026-08-05 01:29:15,361 INFO Code.src.training.classification_pipeline: Epoch 6/30
+2026-08-05 01:35:01,605 INFO Code.src.training.classification_pipeline: Epoch 6: train loss 0.4657, val loss 0.4898, val accuracy 0.7419
+2026-08-05 01:35:01,605 INFO Code.src.training.classification_pipeline: Epoch 7/30
+2026-08-05 01:40:31,219 ERROR __main__: Run failed: Code/results/classifier/solubility/v0/end_to_end/linear/trained_autoencoder/seed_44
+Traceback (most recent call last):
+  File "/home/ubuntu/protein-sequence-augmentation/Code/src/training/train_classifier.py", line 1059, in run_one
+    history = pipeline.fit(
+        train_loader=train_loader,
+    ...<3 lines>...
+        resume_from=resume_path if resume_path and resume_path.is_file() else None,
+    )
+  File "/home/ubuntu/protein-sequence-augmentation/Code/src/training/classification_pipeline.py", line 666, in fit
+    train_metrics = self.train_epoch(train_loader)
+  File "/home/ubuntu/protein-sequence-augmentation/Code/src/training/classification_pipeline.py", line 619, in train_epoch
+    metrics, _ = self._collect_split(
+                 ~~~~~~~~~~~~~~~~~~~^
+        train_loader, training=True, description="Training"
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/ubuntu/protein-sequence-augmentation/Code/src/training/classification_pipeline.py", line 538, in _collect_split
+    metrics = self._calculate_metrics(
+        labels_array,
+    ...<2 lines>...
+        loss=total_loss / total_samples,
+    )
+  File "/home/ubuntu/protein-sequence-augmentation/Code/src/training/classification_pipeline.py", line 580, in _calculate_metrics
+    auroc = float(roc_auc_score(positive_labels, positive_probabilities))
+                  ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.14/site-packages/sklearn/utils/_param_validation.py", line 218, in wrapper
+    return func(*args, **kwargs)
+  File "/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.14/site-packages/sklearn/metrics/_ranking.py", line 710, in roc_auc_score
+    y_score = check_array(y_score, ensure_2d=False)
+  File "/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.14/site-packages/sklearn/utils/validation.py", line 1087, in check_array
+    _assert_all_finite(
+    ~~~~~~~~~~~~~~~~~~^
+        array,
+        ^^^^^^
+    ...<2 lines>...
+        allow_nan=ensure_all_finite == "allow-nan",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.14/site-packages/sklearn/utils/validation.py", line 137, in _assert_all_finite
+    _assert_all_finite_element_wise(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        X,
+        ^^
+    ...<4 lines>...
+        input_name=input_name,
+        ^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/ubuntu/protein-sequence-augmentation/.venv/lib/python3.14/site-packages/sklearn/utils/validation.py", line 186, in _assert_all_finite_element_wise
+    raise ValueError(msg_err)
+ValueError: Input contains NaN.

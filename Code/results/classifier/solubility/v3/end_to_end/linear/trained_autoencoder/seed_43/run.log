@@ -1,0 +1,19 @@
+2026-08-04 11:31:16,965 INFO Code.src.training.classification_pipeline: Unfreezing the autoencoder encoding path.
+2026-08-04 11:31:16,966 INFO Code.src.training.classification_pipeline: Epoch 1/30
+2026-08-04 11:37:16,103 INFO Code.src.training.classification_pipeline: Epoch 1: train loss 0.5331, val loss 0.5022, val accuracy 0.7286
+2026-08-04 11:37:16,103 INFO Code.src.training.classification_pipeline: Epoch 2/30
+2026-08-04 11:43:14,522 INFO Code.src.training.classification_pipeline: Epoch 2: train loss 0.5019, val loss 0.4910, val accuracy 0.7391
+2026-08-04 11:43:14,522 INFO Code.src.training.classification_pipeline: Epoch 3/30
+2026-08-04 11:49:10,786 INFO Code.src.training.classification_pipeline: Epoch 3: train loss 0.4886, val loss 0.4858, val accuracy 0.7420
+2026-08-04 11:49:10,786 INFO Code.src.training.classification_pipeline: Epoch 4/30
+2026-08-04 11:55:07,900 INFO Code.src.training.classification_pipeline: Epoch 4: train loss 0.4796, val loss 0.4875, val accuracy 0.7388
+2026-08-04 11:55:07,900 INFO Code.src.training.classification_pipeline: Epoch 5/30
+2026-08-04 12:01:04,948 INFO Code.src.training.classification_pipeline: Epoch 5: train loss 0.4713, val loss 0.4950, val accuracy 0.7371
+2026-08-04 12:01:04,948 INFO Code.src.training.classification_pipeline: Epoch 6/30
+2026-08-04 12:07:01,110 INFO Code.src.training.classification_pipeline: Epoch 6: train loss 0.4657, val loss 0.4899, val accuracy 0.7475
+2026-08-04 12:07:01,110 INFO Code.src.training.classification_pipeline: Epoch 7/30
+2026-08-04 12:12:57,915 INFO Code.src.training.classification_pipeline: Epoch 7: train loss 0.4592, val loss 0.4981, val accuracy 0.7326
+2026-08-04 12:12:57,915 INFO Code.src.training.classification_pipeline: Epoch 8/30
+2026-08-04 12:18:54,294 INFO Code.src.training.classification_pipeline: Epoch 8: train loss 0.4531, val loss 0.5029, val accuracy 0.7404
+2026-08-04 12:18:54,294 INFO Code.src.training.classification_pipeline: Early stopping at epoch 8.
+2026-08-04 12:18:59,179 INFO Code.src.training.classification_pipeline: Test Loss: 0.5234 | Test Acc: 0.7004 | Test F1 (Macro): 0.6869
