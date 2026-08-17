@@ -1,0 +1,35 @@
+2026-08-06 03:01:49,569 INFO Code.src.utils.embedding_cache: Using cached frozen embeddings: /home/ubuntu/protein-sequence-augmentation/data/processed/embeddings/solubility/trained_autoencoder/shared/train_32ec744182962352.pt
+2026-08-06 03:01:49,613 INFO Code.src.utils.embedding_cache: Using cached frozen embeddings: /home/ubuntu/protein-sequence-augmentation/data/processed/embeddings/solubility/trained_autoencoder/shared/valid_c5a14ca0fc6e5426.pt
+2026-08-06 03:01:49,746 INFO Code.src.training.classification_pipeline: Epoch 1/30
+2026-08-06 03:01:59,533 INFO Code.src.training.classification_pipeline: Epoch 1: train loss 0.6059, val loss 0.5773, val accuracy 0.6778
+2026-08-06 03:01:59,533 INFO Code.src.training.classification_pipeline: Epoch 2/30
+2026-08-06 03:02:09,293 INFO Code.src.training.classification_pipeline: Epoch 2: train loss 0.5674, val loss 0.5571, val accuracy 0.6966
+2026-08-06 03:02:09,293 INFO Code.src.training.classification_pipeline: Epoch 3/30
+2026-08-06 03:02:18,980 INFO Code.src.training.classification_pipeline: Epoch 3: train loss 0.5437, val loss 0.5429, val accuracy 0.7057
+2026-08-06 03:02:18,980 INFO Code.src.training.classification_pipeline: Epoch 4/30
+2026-08-06 03:02:28,722 INFO Code.src.training.classification_pipeline: Epoch 4: train loss 0.5259, val loss 0.5355, val accuracy 0.7141
+2026-08-06 03:02:28,722 INFO Code.src.training.classification_pipeline: Epoch 5/30
+2026-08-06 03:02:38,407 INFO Code.src.training.classification_pipeline: Epoch 5: train loss 0.5134, val loss 0.5319, val accuracy 0.7200
+2026-08-06 03:02:38,407 INFO Code.src.training.classification_pipeline: Epoch 6/30
+2026-08-06 03:02:48,136 INFO Code.src.training.classification_pipeline: Epoch 6: train loss 0.5033, val loss 0.5281, val accuracy 0.7226
+2026-08-06 03:02:48,137 INFO Code.src.training.classification_pipeline: Epoch 7/30
+2026-08-06 03:02:57,891 INFO Code.src.training.classification_pipeline: Epoch 7: train loss 0.4942, val loss 0.5268, val accuracy 0.7256
+2026-08-06 03:02:57,891 INFO Code.src.training.classification_pipeline: Epoch 8/30
+2026-08-06 03:03:07,553 INFO Code.src.training.classification_pipeline: Epoch 8: train loss 0.4855, val loss 0.5275, val accuracy 0.7256
+2026-08-06 03:03:07,554 INFO Code.src.training.classification_pipeline: Epoch 9/30
+2026-08-06 03:03:17,315 INFO Code.src.training.classification_pipeline: Epoch 9: train loss 0.4776, val loss 0.5277, val accuracy 0.7253
+2026-08-06 03:03:17,315 INFO Code.src.training.classification_pipeline: Epoch 10/30
+2026-08-06 03:03:27,067 INFO Code.src.training.classification_pipeline: Epoch 10: train loss 0.4704, val loss 0.5295, val accuracy 0.7259
+2026-08-06 03:03:27,067 INFO Code.src.training.classification_pipeline: Epoch 11/30
+2026-08-06 03:03:36,871 INFO Code.src.training.classification_pipeline: Epoch 11: train loss 0.4624, val loss 0.5267, val accuracy 0.7324
+2026-08-06 03:03:36,871 INFO Code.src.training.classification_pipeline: Epoch 12/30
+2026-08-06 03:03:46,603 INFO Code.src.training.classification_pipeline: Epoch 12: train loss 0.4556, val loss 0.5306, val accuracy 0.7315
+2026-08-06 03:03:46,604 INFO Code.src.training.classification_pipeline: Epoch 13/30
+2026-08-06 03:03:56,320 INFO Code.src.training.classification_pipeline: Epoch 13: train loss 0.4472, val loss 0.5309, val accuracy 0.7267
+2026-08-06 03:03:56,320 INFO Code.src.training.classification_pipeline: Epoch 14/30
+2026-08-06 03:04:06,037 INFO Code.src.training.classification_pipeline: Epoch 14: train loss 0.4404, val loss 0.5338, val accuracy 0.7308
+2026-08-06 03:04:06,037 INFO Code.src.training.classification_pipeline: Epoch 15/30
+2026-08-06 03:04:15,835 INFO Code.src.training.classification_pipeline: Epoch 15: train loss 0.4343, val loss 0.5393, val accuracy 0.7267
+2026-08-06 03:04:15,835 INFO Code.src.training.classification_pipeline: Epoch 16/30
+2026-08-06 03:04:25,597 INFO Code.src.training.classification_pipeline: Epoch 16: train loss 0.4284, val loss 0.5390, val accuracy 0.7269
+2026-08-06 03:04:25,597 INFO Code.src.training.classification_pipeline: Early stopping at epoch 16.

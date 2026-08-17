@@ -1,0 +1,69 @@
+{
+  "linear": {
+    "esm2": {
+      "autoencoder_embedding_dropout": 0.0,
+      "best_val_f1": 0.7221943468807492,
+      "esm_embedding_dropout": 0.1,
+      "learning_rate": 0.0001,
+      "selection_epoch": 3,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.4718167770324472,
+      "weight_decay": 0.0
+    },
+    "trained_autoencoder": {
+      "autoencoder_embedding_dropout": 0.2,
+      "best_val_f1": 0.6975308641975309,
+      "esm_embedding_dropout": 0.0,
+      "learning_rate": 0.0001,
+      "selection_epoch": 8,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.509157955655101,
+      "weight_decay": 0.0001
+    },
+    "trained_autoencoder+esm2": {
+      "autoencoder_embedding_dropout": 0.1,
+      "best_val_f1": 0.7200502433663055,
+      "esm_embedding_dropout": 0.05,
+      "learning_rate": 0.0001,
+      "selection_epoch": 8,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.4884098392764487,
+      "weight_decay": 0.0001
+    }
+  },
+  "mlp": {
+    "esm2": {
+      "autoencoder_embedding_dropout": 0.0,
+      "best_val_f1": 0.7156091592378955,
+      "dropout": 0.1,
+      "esm_embedding_dropout": 0.0,
+      "learning_rate": 0.0001,
+      "selection_epoch": 3,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.45667064718814104,
+      "weight_decay": 0.0
+    },
+    "trained_autoencoder": {
+      "autoencoder_embedding_dropout": 0.0,
+      "best_val_f1": 0.704152528679916,
+      "dropout": 0.1,
+      "esm_embedding_dropout": 0.0,
+      "learning_rate": 0.0001,
+      "selection_epoch": 8,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.4965654736858594,
+      "weight_decay": 0.0001
+    },
+    "trained_autoencoder+esm2": {
+      "autoencoder_embedding_dropout": 0.0,
+      "best_val_f1": 0.72,
+      "dropout": 0.1,
+      "esm_embedding_dropout": 0.0,
+      "learning_rate": 0.0001,
+      "selection_epoch": 3,
+      "selection_seed": 42,
+      "val_loss_at_selection": 0.4642001873768224,
+      "weight_decay": 0.0
+    }
+  }
+}
