@@ -14,8 +14,8 @@
   "cache_embeddings": true,
   "checkpoint_dir": "/home/ubuntu/protein-sequence-augmentation/checkpoints/classifier/solubility/v5/frozen/final/mlp/esm2/seed_42",
   "checkpoint_root": "/home/ubuntu/protein-sequence-augmentation/checkpoints/classifier",
-  "completed_at": "2026-08-11T23:26:32.311486+00:00",
-  "configuration_fingerprint": "b5d860c02a603be875c26c95ccaada9e9e222c602ca29d1f811963457c921358",
+  "completed_at": "2026-08-15T05:33:33.236034+00:00",
+  "configuration_fingerprint": "419bd4c52511343b18568dff9f11897d3917dc9733e2a642f4c64d80cd5acf15",
   "data_dir": "data/processed/peer",
   "data_sources": {
     "test": {
@@ -47,14 +47,14 @@
   "encoder_mode": "frozen",
   "end_to_end": false,
   "epochs": 30,
-  "esm_embedding_dropout": 0.0,
+  "esm_embedding_dropout": 0.1,
   "esm_learning_rate": 1e-05,
   "esm_max_sequence_length": 1022,
   "esm_model_name": "esm2_t6_8M_UR50D",
   "evaluate_test": true,
   "freeze_autoencoder": true,
   "freeze_esm2": true,
-  "git_commit": "6da36448b2fb115192a102a61040c3b1f89b54a5",
+  "git_commit": "f927a650cebc47345cf8135c18f5c9159cd6ccc8",
   "git_dirty": true,
   "head_type": "mlp",
   "learning_rate": 0.0001,
@@ -83,7 +83,7 @@
   },
   "representation": "esm2",
   "results_dir": "Code/results/classifier",
-  "resume_fingerprint": "e13f34aae39c6137892dc01e033b418679cce9067192c8c98f8f657133c83ace",
+  "resume_fingerprint": "3d192b81a08e991238f3dc38074b5e0fa422884b6a972a312c5aa7b40b0d741b",
   "run_dir": "Code/results/classifier/solubility/v5/frozen/final/mlp/esm2/seed_42",
   "runtime": {
     "packages": {
@@ -93,8 +93,8 @@
       "scikit-learn": "1.9.0",
       "torch": "2.13.0"
     },
-    "platform": "Linux-7.0.0-1010-aws-x86_64-with-glibc2.39",
-    "python": "3.12.3",
+    "platform": "Linux-7.0.0-1010-aws-x86_64-with-glibc2.43",
+    "python": "3.14.4",
     "torch_cuda_version": "13.0"
   },
   "seed": 42,
@@ -110,8 +110,8 @@
     "Code/src/utils/experiment_artifacts.py": "0acf2e83e2114f65680fa1429d88559b906fcbc4539cdda3b59bcda7ca3be715",
     "Code/src/utils/sequence_dataset.py": "40f450bebdbfd39fe9132ce82aaf1015e4f70b4f03009c341e18b9d83da5513c"
   },
-  "started_at": "2026-08-11T23:21:15.977731+00:00",
-  "total_runtime_seconds": 316.33378434181213,
+  "started_at": "2026-08-15T05:28:42.169472+00:00",
+  "total_runtime_seconds": 291.0665876865387,
   "unfreeze_all_esm": false,
   "unfreeze_esm": false,
   "unfreeze_layers": 0,

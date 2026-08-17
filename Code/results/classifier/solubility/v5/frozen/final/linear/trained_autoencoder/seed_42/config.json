@@ -3,7 +3,7 @@
   "autoencoder_checkpoint_sha256": "e17904ed8813f9489126f4cb91054f36c83ad0e2de3f44e463aa896bb00c6d51",
   "autoencoder_cnn_channels": 256,
   "autoencoder_embedding_dim": 256,
-  "autoencoder_embedding_dropout": 0.0,
+  "autoencoder_embedding_dropout": 0.2,
   "autoencoder_hidden_dim": 512,
   "autoencoder_kernel_size": 5,
   "autoencoder_latent_dim": 512,
@@ -14,8 +14,8 @@
   "cache_embeddings": true,
   "checkpoint_dir": "/home/ubuntu/protein-sequence-augmentation/checkpoints/classifier/solubility/v5/frozen/final/linear/trained_autoencoder/seed_42",
   "checkpoint_root": "/home/ubuntu/protein-sequence-augmentation/checkpoints/classifier",
-  "completed_at": "2026-08-11T23:45:31.513987+00:00",
-  "configuration_fingerprint": "396b85591e8234f9a41699f39429a881719d317f44b486f9b7b78977d9b7dee7",
+  "completed_at": "2026-08-15T05:52:31.855736+00:00",
+  "configuration_fingerprint": "e2e6e1242951592e1d361712e35fbc4d6799a1faaca2f66c4a7157d1c2c005a8",
   "data_dir": "data/processed/peer",
   "data_sources": {
     "test": {
@@ -54,7 +54,7 @@
   "evaluate_test": true,
   "freeze_autoencoder": true,
   "freeze_esm2": true,
-  "git_commit": "6da36448b2fb115192a102a61040c3b1f89b54a5",
+  "git_commit": "f927a650cebc47345cf8135c18f5c9159cd6ccc8",
   "git_dirty": true,
   "head_type": "linear",
   "learning_rate": 0.0001,
@@ -83,7 +83,7 @@
   },
   "representation": "trained_autoencoder",
   "results_dir": "Code/results/classifier",
-  "resume_fingerprint": "00ec0fc2e58c2949df1a9465700e48fe16672139f276d19b8252755489dc7784",
+  "resume_fingerprint": "579ff38b4661f20cbd6646964d731937faec4234a90bffa333d19ba5497326d5",
   "run_dir": "Code/results/classifier/solubility/v5/frozen/final/linear/trained_autoencoder/seed_42",
   "runtime": {
     "packages": {
@@ -93,8 +93,8 @@
       "scikit-learn": "1.9.0",
       "torch": "2.13.0"
     },
-    "platform": "Linux-7.0.0-1010-aws-x86_64-with-glibc2.39",
-    "python": "3.12.3",
+    "platform": "Linux-7.0.0-1010-aws-x86_64-with-glibc2.43",
+    "python": "3.14.4",
     "torch_cuda_version": "13.0"
   },
   "seed": 42,
@@ -110,12 +110,12 @@
     "Code/src/utils/experiment_artifacts.py": "0acf2e83e2114f65680fa1429d88559b906fcbc4539cdda3b59bcda7ca3be715",
     "Code/src/utils/sequence_dataset.py": "40f450bebdbfd39fe9132ce82aaf1015e4f70b4f03009c341e18b9d83da5513c"
   },
-  "started_at": "2026-08-11T23:38:41.052108+00:00",
-  "total_runtime_seconds": 410.4619023799896,
+  "started_at": "2026-08-15T05:45:29.489392+00:00",
+  "total_runtime_seconds": 422.3663649559021,
   "unfreeze_all_esm": false,
   "unfreeze_esm": false,
   "unfreeze_layers": 0,
   "use_cache": true,
   "version": "v5",
-  "weight_decay": 0.0
+  "weight_decay": 0.0001
 }

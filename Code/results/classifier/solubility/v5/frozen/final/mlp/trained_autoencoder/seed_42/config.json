@@ -14,8 +14,8 @@
   "cache_embeddings": true,
   "checkpoint_dir": "/home/ubuntu/protein-sequence-augmentation/checkpoints/classifier/solubility/v5/frozen/final/mlp/trained_autoencoder/seed_42",
   "checkpoint_root": "/home/ubuntu/protein-sequence-augmentation/checkpoints/classifier",
-  "completed_at": "2026-08-11T23:48:14.555989+00:00",
-  "configuration_fingerprint": "c548899532ac9b1186c6a79401ae53e264da83521f8495df41a10cdd3abb067a",
+  "completed_at": "2026-08-15T05:55:13.666638+00:00",
+  "configuration_fingerprint": "795cfe4f29f1aaef5af4938ead07628edeed5f86ec5dd7718d6af0f205716e7c",
   "data_dir": "data/processed/peer",
   "data_sources": {
     "test": {
@@ -54,7 +54,7 @@
   "evaluate_test": true,
   "freeze_autoencoder": true,
   "freeze_esm2": true,
-  "git_commit": "6da36448b2fb115192a102a61040c3b1f89b54a5",
+  "git_commit": "f927a650cebc47345cf8135c18f5c9159cd6ccc8",
   "git_dirty": true,
   "head_type": "mlp",
   "learning_rate": 0.0001,
@@ -83,7 +83,7 @@
   },
   "representation": "trained_autoencoder",
   "results_dir": "Code/results/classifier",
-  "resume_fingerprint": "f44cb5ca4d08622512b12a18a32378a81df397a91522c7dfa04a7909acd7e23d",
+  "resume_fingerprint": "5e073fc1951025d8caa6092bb8c4afd348e8e123010b2d4e77ae8d67af1f5ca7",
   "run_dir": "Code/results/classifier/solubility/v5/frozen/final/mlp/trained_autoencoder/seed_42",
   "runtime": {
     "packages": {
@@ -93,8 +93,8 @@
       "scikit-learn": "1.9.0",
       "torch": "2.13.0"
     },
-    "platform": "Linux-7.0.0-1010-aws-x86_64-with-glibc2.39",
-    "python": "3.12.3",
+    "platform": "Linux-7.0.0-1010-aws-x86_64-with-glibc2.43",
+    "python": "3.14.4",
     "torch_cuda_version": "13.0"
   },
   "seed": 42,
@@ -110,12 +110,12 @@
     "Code/src/utils/experiment_artifacts.py": "0acf2e83e2114f65680fa1429d88559b906fcbc4539cdda3b59bcda7ca3be715",
     "Code/src/utils/sequence_dataset.py": "40f450bebdbfd39fe9132ce82aaf1015e4f70b4f03009c341e18b9d83da5513c"
   },
-  "started_at": "2026-08-11T23:45:31.576208+00:00",
-  "total_runtime_seconds": 162.979811668396,
+  "started_at": "2026-08-15T05:52:31.907735+00:00",
+  "total_runtime_seconds": 161.75892686843872,
   "unfreeze_all_esm": false,
   "unfreeze_esm": false,
   "unfreeze_layers": 0,
   "use_cache": true,
   "version": "v5",
-  "weight_decay": 0.0
+  "weight_decay": 0.0001
 }
